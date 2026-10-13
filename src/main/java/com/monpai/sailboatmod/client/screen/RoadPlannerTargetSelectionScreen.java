@@ -1,26 +1,26 @@
 package com.monpai.sailboatmod.client.screen;
 
+import com.lowdragmc.lowdraglib2.gui.ui.UIElement;
+import com.lowdragmc.lowdraglib2.gui.ui.elements.Button;
+import com.lowdragmc.lowdraglib2.gui.ui.elements.ScrollerView;
 import com.monpai.sailboatmod.client.RoadPlannerClientHooks;
+import com.monpai.sailboatmod.client.ui.kit.ThemedScreen;
+import com.monpai.sailboatmod.client.ui.kit.Ui;
 import com.monpai.sailboatmod.network.ModNetwork;
 import com.monpai.sailboatmod.network.packet.SelectRoadPlannerTargetPacket;
-import net.minecraft.client.gui.GuiGraphics;
-import net.minecraft.client.gui.components.Button;
-import net.minecraft.client.gui.screens.Screen;
 import net.minecraft.network.chat.Component;
-import net.minecraft.util.Mth;
+import net.minecraft.world.item.ItemStack;
+import net.minecraft.world.item.Items;
 
+import java.util.ArrayList;
 import java.util.List;
 
-public class RoadPlannerTargetSelectionScreen extends Screen {
-    private static final int SCREEN_W = 300;
-    private static final int SCREEN_H = 224;
-    private static final int ROW_H = 20;
-    private static final int VISIBLE_ROWS = 8;
-
+/** Chooses the destination town for a planned road; sends {@link SelectRoadPlannerTargetPacket} as before. */
+public class RoadPlannerTargetSelectionScreen extends ThemedScreen {
     private final boolean offhand;
     private final String sourceTownName;
     private final List<RoadPlannerClientHooks.TargetEntry> targets;
-    private int scroll = 0;
+    private final List<UIElement> rows = new ArrayList<>();
     private int selectedIndex = -1;
     private Button selectButton;
 
@@ -41,89 +41,46 @@ public class RoadPlannerTargetSelectionScreen extends Screen {
     }
 
     @Override
-    protected void init() {
-        int left = (this.width - SCREEN_W) / 2;
-        int top = (this.height - SCREEN_H) / 2;
-        this.selectButton = this.addRenderableWidget(Button.builder(Component.translatable("screen.sailboatmod.road_planner.target.select"), b -> choose())
-                .bounds(left + 14, top + SCREEN_H - 28, 96, 18).build());
-        this.selectButton.active = this.selectedIndex >= 0;
-        this.addRenderableWidget(Button.builder(Component.translatable("screen.sailboatmod.route_name.cancel"), b -> onClose())
-                .bounds(left + SCREEN_W - 74, top + SCREEN_H - 28, 60, 18).build());
+    protected float windowWidth() {
+        return 280;
     }
 
     @Override
-    public void render(GuiGraphics guiGraphics, int mouseX, int mouseY, float partialTick) {
-        renderBackground(guiGraphics, mouseX, mouseY, partialTick);
-        int left = (this.width - SCREEN_W) / 2;
-        int top = (this.height - SCREEN_H) / 2;
-        guiGraphics.fill(left, top, left + SCREEN_W, top + SCREEN_H, 0xD1141920);
-        guiGraphics.fill(left + 1, top + 1, left + SCREEN_W - 1, top + SCREEN_H - 1, 0xEE202933);
-        guiGraphics.drawString(this.font, this.title, left + 14, top + 10, 0xFFF2DEAF);
-        guiGraphics.drawString(this.font,
-                Component.translatable("screen.sailboatmod.road_planner.target.source", safeTownName(sourceTownName)),
-                left + 14, top + 24, 0xFFB9CAD9);
-        guiGraphics.drawString(this.font,
-                Component.translatable("screen.sailboatmod.road_planner.target.hint"),
-                left + 14, top + 36, 0xFF8FA4B5);
-
-        int listTop = top + 48;
-        guiGraphics.fill(left + 14, listTop, left + SCREEN_W - 14, listTop + VISIBLE_ROWS * ROW_H, 0x55000000);
+    protected UIElement buildBody() {
+        UIElement body = Ui.column();
+        body.addChildren(Ui.text(Component.translatable("screen.sailboatmod.road_planner.target.source", safeTownName(sourceTownName))),
+                Ui.paragraph(Component.translatable("screen.sailboatmod.road_planner.target.hint"), "sm-muted"));
+        ScrollerView list = Ui.scroller();
+        list.layout(l -> l.height(160).flexGrow(0));
         if (targets.isEmpty()) {
-            guiGraphics.drawCenteredString(this.font,
-                    Component.translatable("screen.sailboatmod.road_planner.target.empty"),
-                    left + SCREEN_W / 2, listTop + 68, 0xFF9EACB7);
-        } else {
-            for (int row = 0; row < VISIBLE_ROWS && (scroll + row) < targets.size(); row++) {
-                int index = scroll + row;
-                int rowY = listTop + row * ROW_H;
-                RoadPlannerClientHooks.TargetEntry entry = targets.get(index);
-                if (index == selectedIndex) {
-                    guiGraphics.fill(left + 14, rowY, left + SCREEN_W - 14, rowY + ROW_H, 0x44E4C46B);
-                }
-                guiGraphics.drawString(this.font,
-                        Component.translatable("screen.sailboatmod.road_planner.target.entry",
-                                safeTownName(entry.townName()),
-                                entry.distanceBlocks()),
-                        left + 18, rowY + 6, 0xFFE5EEF5);
-            }
+            list.addScrollViewChild(Ui.emptyState(Component.translatable("screen.sailboatmod.road_planner.target.empty")));
         }
-        com.monpai.sailboatmod.client.screen.ScreenRenderSupport.renderWidgets(this, guiGraphics, mouseX, mouseY, partialTick);
-    }
-
-    @Override
-    public boolean mouseClicked(double mouseX, double mouseY, int button) {
-        int left = (this.width - SCREEN_W) / 2;
-        int top = (this.height - SCREEN_H) / 2;
-        int listTop = top + 48;
-        if (mouseX >= left + 14 && mouseX < left + SCREEN_W - 14 && mouseY >= listTop && mouseY < listTop + VISIBLE_ROWS * ROW_H) {
-            int row = (int) ((mouseY - listTop) / ROW_H);
-            int index = scroll + row;
-            if (index >= 0 && index < targets.size()) {
+        for (int i = 0; i < targets.size(); i++) {
+            int index = i;
+            RoadPlannerClientHooks.TargetEntry entry = targets.get(i);
+            UIElement row = Ui.itemRow(new ItemStack(Items.BELL), safeTownName(entry.townName()),
+                    Component.literal(entry.distanceBlocks() + "m"), "sm-price");
+            Ui.clickable(row, () -> {
                 selectedIndex = index;
-                if (selectButton != null) {
-                    selectButton.active = true;
-                }
-                return true;
-            }
+                refresh();
+            });
+            rows.add(row);
+            list.addScrollViewChild(row);
         }
-        return super.mouseClicked(mouseX, mouseY, button);
+        selectButton = Ui.button(Component.translatable("screen.sailboatmod.road_planner.target.select"), Ui.Tone.PRIMARY, this::choose);
+        UIElement actions = Ui.row();
+        actions.layout(l -> l.gapAll(Ui.GAP_S));
+        actions.addChildren(Ui.spacer(), Ui.button(Component.translatable("screen.sailboatmod.route_name.cancel"), Ui.Tone.SECONDARY, this::onClose), selectButton);
+        body.addChildren(list, actions);
+        refresh();
+        return body;
     }
 
-    @Override
-    public boolean mouseScrolled(double mouseX, double mouseY, double scrollX, double delta) {
-        int left = (this.width - SCREEN_W) / 2;
-        int top = (this.height - SCREEN_H) / 2;
-        int listTop = top + 48;
-        if (mouseX < left + 14 || mouseX >= left + SCREEN_W - 14 || mouseY < listTop || mouseY >= listTop + VISIBLE_ROWS * ROW_H) {
-            return super.mouseScrolled(mouseX, mouseY, scrollX, delta);
+    private void refresh() {
+        for (int i = 0; i < rows.size(); i++) {
+            Ui.setClass(rows.get(i), "selected", i == selectedIndex);
         }
-        scroll = Mth.clamp(scroll - (int) delta, 0, Math.max(0, targets.size() - VISIBLE_ROWS));
-        return true;
-    }
-
-    @Override
-    public boolean isPauseScreen() {
-        return false;
+        selectButton.setActive(selectedIndex >= 0 && selectedIndex < targets.size());
     }
 
     private void choose() {

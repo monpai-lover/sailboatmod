@@ -1,38 +1,47 @@
 package com.monpai.sailboatmod.client.screen;
 
+import com.lowdragmc.lowdraglib2.gui.ui.UIElement;
+import com.lowdragmc.lowdraglib2.gui.ui.elements.Label;
+import com.lowdragmc.lowdraglib2.gui.ui.elements.ScrollerView;
+import com.lowdragmc.lowdraglib2.gui.ui.rendering.GUIContext;
+import com.monpai.sailboatmod.client.ui.kit.ThemedScreen;
+import com.monpai.sailboatmod.client.ui.kit.Ui;
+import com.monpai.sailboatmod.client.ui.theme.UiPreferences;
+import com.monpai.sailboatmod.client.ui.theme.UiTheme;
 import com.monpai.sailboatmod.item.BankConstructorItem;
 import com.monpai.sailboatmod.nation.service.StructureConstructionManager.StructureType;
 import com.monpai.sailboatmod.registry.ModBlocks;
+import dev.vfyjxf.taffy.style.AlignItems;
+import net.minecraft.client.Minecraft;
 import net.minecraft.client.gui.GuiGraphics;
-import net.minecraft.client.gui.components.Button;
-import net.minecraft.client.gui.screens.Screen;
 import net.minecraft.network.chat.Component;
-import net.minecraft.util.FormattedCharSequence;
 import net.minecraft.util.Mth;
 import net.minecraft.world.item.ItemStack;
 import org.lwjgl.glfw.GLFW;
 
+import java.util.ArrayList;
 import java.util.List;
 
-public class StructureSelectionScreen extends Screen {
-    private static final int SCREEN_W = 392;
-    private static final int SCREEN_H = 252;
-    private static final int HEADER_H = 32;
-    private static final int LIST_X = 14;
-    private static final int LIST_Y = 44;
-    private static final int LIST_W = 156;
-    private static final int LIST_H = 156;
-    private static final int ROW_H = 24;
-    private static final int VISIBLE_ROWS = 6;
-    private static final int DETAIL_X = 180;
-    private static final int DETAIL_Y = 44;
-    private static final int DETAIL_W = 198;
-    private static final int DETAIL_H = 156;
-    private static final int FOOTER_Y = 208;
+/**
+ * Structure catalog for the constructor item: pick a building on the left, read its size and role on the right,
+ * "Done" (or Enter) stores the choice on the held item exactly as before. Arrow keys and Page Up/Down still move the
+ * selection.
+ */
+public class StructureSelectionScreen extends ThemedScreen {
+    private static final int PAGE = 6;
 
     private final ItemStack constructorStack;
     private int selectedIndex;
-    private int scrollOffset;
+    private final List<UIElement> rows = new ArrayList<>();
+    private ScrollerView list;
+    private final UIElement detailSlot = Ui.row();
+    private final Label detailName = Ui.text("", "sm-title");
+    private final Label detailRole = Ui.text("", "sm-muted");
+    private final Label width = Ui.text("", "sm-price");
+    private final Label height = Ui.text("", "sm-price");
+    private final Label depth = Ui.text("", "sm-price");
+    private final Label description = Ui.paragraph(Component.empty());
+    private final Footprint footprint = new Footprint();
 
     public StructureSelectionScreen(ItemStack constructorStack) {
         super(Component.translatable("screen.sailboatmod.structure_selection"));
@@ -41,245 +50,120 @@ public class StructureSelectionScreen extends Screen {
     }
 
     @Override
-    protected void init() {
+    protected float windowWidth() {
+        return 392;
+    }
+
+    @Override
+    protected UIElement buildBody() {
         clampSelection();
-        ensureSelectionVisible();
+        UIElement body = Ui.column();
+        body.addChild(Ui.text(Component.translatable("screen.sailboatmod.structure_selection.subtitle"), "sm-muted"));
 
-        int left = left();
-        int top = top();
-        this.addRenderableWidget(Button.builder(Component.translatable("gui.cancel"), b -> onClose())
-                .bounds(left + SCREEN_W - 136, top + SCREEN_H - 24, 58, 18).build());
-        this.addRenderableWidget(Button.builder(Component.translatable("gui.done"), b -> saveAndClose())
-                .bounds(left + SCREEN_W - 72, top + SCREEN_H - 24, 58, 18).build());
-    }
+        UIElement main = Ui.row();
+        main.layout(l -> l.gapAll(Ui.GAP_M).alignItems(AlignItems.STRETCH).height(168));
 
-    @Override
-    public void render(GuiGraphics g, int mouseX, int mouseY, float partialTick) {
-        this.renderBackground(g, mouseX, mouseY, partialTick);
-
-        int left = left();
-        int top = top();
-        int right = left + SCREEN_W;
-        int bottom = top + SCREEN_H;
-
-        g.fill(left, top, right, bottom, 0xD0101822);
-        g.fill(left + 1, top + 1, right - 1, bottom - 1, 0xE4172531);
-        g.fill(left + 2, top + 2, right - 2, top + HEADER_H, 0xE12A3948);
-        g.fill(left + 2, top + HEADER_H, right - 2, bottom - 28, 0xD0121A23);
-        g.fill(left + 2, top + FOOTER_Y, right - 2, bottom - 28, 0xCC0F151D);
-
-        g.drawString(this.font, this.title, left + 14, top + 11, 0xFFF1D98A);
-        g.drawString(this.font, Component.translatable("screen.sailboatmod.structure_selection.subtitle"),
-                left + 14, top + 22, 0xFF91A4B7);
-
-        renderListPanel(g, mouseX, mouseY);
-        renderDetailPanel(g);
-        renderFooter(g);
-
-        com.monpai.sailboatmod.client.screen.ScreenRenderSupport.renderWidgets(this, g, mouseX, mouseY, partialTick);
-    }
-
-    private void renderListPanel(GuiGraphics g, int mouseX, int mouseY) {
-        int x = left() + LIST_X;
-        int y = top() + LIST_Y;
-        int x2 = x + LIST_W;
-        int y2 = y + LIST_H;
-
-        g.fill(x, y, x2, y2, 0xAA10171E);
-        g.fill(x + 1, y + 1, x2 - 1, y2 - 1, 0x99222F3B);
-        g.drawString(this.font, Component.translatable("screen.sailboatmod.structure_selection.catalog"), x + 8, y - 12, 0xFFBFD1E2);
-
-        int start = clampScroll(this.scrollOffset);
-        int end = Math.min(start + VISIBLE_ROWS, StructureType.ALL.size());
-        for (int index = start; index < end; index++) {
-            int row = index - start;
-            int rowY = y + 4 + row * ROW_H;
-            StructureType type = StructureType.ALL.get(index);
-            boolean selected = index == this.selectedIndex;
-            boolean hovered = isMouseOverRow(mouseX, mouseY, rowY);
-
-            int background = selected ? 0xCC31546C : hovered ? 0x66354657 : 0x44212D39;
-            g.fill(x + 4, rowY, x2 - 10, rowY + ROW_H - 2, background);
-            if (selected) {
-                g.fill(x + 4, rowY, x + 7, rowY + ROW_H - 2, 0xFFF1D98A);
-            }
-
-            ItemStack icon = iconFor(type);
-            if (!icon.isEmpty()) {
-                g.renderItem(icon, x + 10, rowY + 3);
-            }
-
-            g.drawString(this.font, Component.translatable(type.translationKey()), x + 30, rowY + 5,
-                    selected ? 0xFFF7F3D0 : 0xFFD8E4EF);
-            g.drawString(this.font, Component.literal(type.w() + "x" + type.h() + "x" + type.d()), x + 30, rowY + 14,
-                    0xFF91A4B7);
-            g.drawString(this.font, sizeLabel(type), x2 - 54, rowY + 9, 0xFFE7C977);
+        UIElement catalog = Ui.column();
+        catalog.layout(l -> l.width(160).flexShrink(0).gapAll(Ui.GAP_XS));
+        list = Ui.scroller();
+        for (int i = 0; i < StructureType.ALL.size(); i++) {
+            int index = i;
+            StructureType type = StructureType.ALL.get(i);
+            UIElement row = Ui.row("sm-row");
+            row.layout(l -> l.widthPercent(100).height(24).paddingHorizontal(Ui.GAP_S).gapAll(Ui.GAP_S).flexShrink(0));
+            UIElement names = Ui.column();
+            names.layout(l -> l.flexGrow(1).minWidth(0));
+            names.addChildren(Ui.text(Component.translatable(type.translationKey())),
+                    Ui.text(type.w() + "×" + type.h() + "×" + type.d(), "sm-muted"));
+            row.addChildren(Ui.slot(iconFor(type), Ui.SLOT), names, Ui.text(sizeLabel(type), "sm-warn"));
+            Ui.clickable(row, () -> select(index));
+            rows.add(row);
+            list.addScrollViewChild(row);
         }
+        catalog.addChildren(Ui.text(Component.translatable("screen.sailboatmod.structure_selection.catalog"), "sm-muted"), list);
 
-        renderScrollBar(g, x2 - 7, y + 4, LIST_H - 8, StructureType.ALL.size(), VISIBLE_ROWS, start);
+        UIElement detail = Ui.column("sm-pane");
+        detail.layout(l -> l.flexGrow(1).minWidth(0).paddingAll(Ui.GAP_M).gapAll(Ui.GAP_S));
+        UIElement head = Ui.row();
+        head.layout(l -> l.gapAll(Ui.GAP_M));
+        UIElement names = Ui.column();
+        names.layout(l -> l.flexGrow(1).minWidth(0));
+        names.addChildren(detailName, detailRole);
+        head.addChildren(detailSlot, names);
+
+        UIElement metrics = Ui.row();
+        metrics.layout(l -> l.gapAll(Ui.GAP_S));
+        metrics.addChildren(metric("width", width), metric("height", height), metric("depth", depth));
+
+        UIElement lower = Ui.row();
+        lower.layout(l -> l.gapAll(Ui.GAP_M).alignItems(AlignItems.STRETCH).flexGrow(1).minHeight(0));
+        footprint.layout(l -> l.width(96).flexShrink(0));
+        description.layout(l -> l.flexGrow(1).minWidth(0));
+        lower.addChildren(footprint, description);
+
+        UIElement placement = Ui.row();
+        placement.layout(l -> l.gapAll(Ui.GAP_S));
+        placement.addChildren(Ui.text(Component.translatable("screen.sailboatmod.structure_selection.placement"), "sm-warn"),
+                Ui.text(Component.translatable("screen.sailboatmod.structure_selection.placement_hint"), "sm-muted"));
+        detail.addChildren(head, metrics, lower, placement);
+        main.addChildren(catalog, detail);
+
+        UIElement footer = Ui.row();
+        footer.layout(l -> l.gapAll(Ui.GAP_S));
+        UIElement hints = Ui.column();
+        hints.layout(l -> l.flexGrow(1).minWidth(0));
+        hints.addChildren(Ui.text(Component.translatable("screen.sailboatmod.structure_selection.controls_hint"), "sm-muted"),
+                Ui.text(Component.translatable("screen.sailboatmod.structure_selection.controls_hint_2"), "sm-muted"));
+        footer.addChildren(hints,
+                Ui.button(Component.translatable("gui.cancel"), Ui.Tone.SECONDARY, this::onClose),
+                Ui.button(Component.translatable("gui.done"), Ui.Tone.PRIMARY, this::saveAndClose));
+        body.addChildren(main, footer);
+        refresh();
+        return body;
     }
 
-    private void renderDetailPanel(GuiGraphics g) {
-        StructureType type = selectedType();
-        int x = left() + DETAIL_X;
-        int y = top() + DETAIL_Y;
-        int x2 = x + DETAIL_W;
-        int y2 = y + DETAIL_H;
-
-        g.fill(x, y, x2, y2, 0xAA10171E);
-        g.fill(x + 1, y + 1, x2 - 1, y2 - 1, 0x9924303D);
-
-        g.drawString(this.font, Component.translatable(type.translationKey()), x + 12, y + 10, 0xFFF5E7AF);
-        g.drawString(this.font, roleLabel(type), x + 12, y + 22, 0xFF8CB5C1);
-
-        renderHeroIcon(g, type, x + DETAIL_W - 42, y + 10);
-        renderMetricChip(g, x + 12, y + 38, 50, Component.translatable("screen.sailboatmod.structure_selection.metric.width"), Integer.toString(type.w()));
-        renderMetricChip(g, x + 68, y + 38, 50, Component.translatable("screen.sailboatmod.structure_selection.metric.height"), Integer.toString(type.h()));
-        renderMetricChip(g, x + 124, y + 38, 50, Component.translatable("screen.sailboatmod.structure_selection.metric.depth"), Integer.toString(type.d()));
-
-        renderFootprintPreview(g, type, x + 12, y + 68, 90, 72);
-        renderHeightPreview(g, type, x + 112, y + 68, 20, 72);
-
-        drawWrappedText(g, description(type), x + 140, y + 70, 48, 0xFFD5E0E9);
-        g.drawString(this.font, Component.translatable("screen.sailboatmod.structure_selection.placement"), x + 12, y + 146, 0xFFE7C977);
-        g.drawString(this.font, Component.translatable("screen.sailboatmod.structure_selection.placement_hint"), x + 68, y + 146, 0xFFB4C2CD);
+    private static UIElement metric(String key, Label value) {
+        UIElement chip = Ui.column("sm-chip");
+        chip.layout(l -> l.height(26).flexGrow(1).flexBasis(0).alignItems(AlignItems.CENTER).paddingVertical(Ui.GAP_XS));
+        chip.addChildren(Ui.text(Component.translatable("screen.sailboatmod.structure_selection.metric." + key), "sm-muted"), value);
+        return chip;
     }
 
-    private void renderFooter(GuiGraphics g) {
-        int x = left() + 14;
-        int y = top() + FOOTER_Y + 8;
-        g.drawString(this.font, Component.translatable("screen.sailboatmod.structure_selection.controls"), x, y, 0xFFF1D98A);
-        g.drawString(this.font, Component.translatable("screen.sailboatmod.structure_selection.controls_hint"),
-                x + 54, y, 0xFFB9C6D2);
-        g.drawString(this.font, Component.translatable("screen.sailboatmod.structure_selection.controls_hint_2"),
-                x, y + 12, 0xFF8798A7);
+    private void select(int index) {
+        selectedIndex = index;
+        refresh();
     }
 
-    private void renderMetricChip(GuiGraphics g, int x, int y, int w, Component label, String value) {
-        g.fill(x, y, x + w, y + 18, 0x5532404D);
-        g.drawCenteredString(this.font, label, x + w / 2, y + 3, 0xFF96A8B7);
-        g.drawCenteredString(this.font, Component.literal(value), x + w / 2, y + 10, 0xFFF4E2A0);
-    }
-
-    private void renderFootprintPreview(GuiGraphics g, StructureType type, int x, int y, int w, int h) {
-        g.fill(x, y, x + w, y + h, 0x66111A22);
-        g.drawString(this.font, Component.translatable("screen.sailboatmod.structure_selection.footprint"), x + 4, y + 4, 0xFFBFD1E2);
-
-        int previewX = x + 12;
-        int previewY = y + 18;
-        int previewW = w - 24;
-        int previewH = h - 28;
-        g.fill(previewX, previewY, previewX + previewW, previewY + previewH, 0x4430404E);
-
-        float scale = Math.min(previewW / (float) type.w(), previewH / (float) type.d());
-        int rectW = Math.max(14, Mth.floor(type.w() * scale));
-        int rectH = Math.max(14, Mth.floor(type.d() * scale));
-        int rectX = previewX + (previewW - rectW) / 2;
-        int rectY = previewY + (previewH - rectH) / 2;
-        g.fill(rectX, rectY, rectX + rectW, rectY + rectH, 0xAA4E87A0);
-        g.fill(rectX, rectY + rectH - 3, rectX + rectW, rectY + rectH, 0xFFF1D98A);
-        g.drawCenteredString(this.font, Component.literal(type.w() + " x " + type.d()), previewX + previewW / 2, previewY + previewH / 2 - 4, 0xFFF6F8FB);
-    }
-
-    private void renderHeightPreview(GuiGraphics g, StructureType type, int x, int y, int w, int h) {
-        g.fill(x, y, x + w, y + h, 0x66111A22);
-        int barBottom = y + h - 10;
-        int maxHeight = 14;
-        int barHeight = Math.max(12, Mth.floor((h - 22) * (type.h() / (float) maxHeight)));
-        g.fill(x + 6, barBottom - barHeight, x + w - 6, barBottom, 0xAA6E8D9D);
-        g.fill(x + 6, barBottom - barHeight, x + w - 6, barBottom - barHeight + 2, 0xFFF1D98A);
-        g.drawCenteredString(this.font, Component.literal(Integer.toString(type.h())), x + w / 2, y + 4, 0xFFE7C977);
-    }
-
-    private void renderHeroIcon(GuiGraphics g, StructureType type, int x, int y) {
-        ItemStack stack = iconFor(type);
-        if (stack.isEmpty()) {
-            return;
+    private void refresh() {
+        clampSelection();
+        for (int i = 0; i < rows.size(); i++) {
+            Ui.setClass(rows.get(i), "selected", i == selectedIndex);
         }
-        g.fill(x - 2, y - 2, x + 34, y + 34, 0x55384654);
-        g.pose().pushPose();
-        g.pose().translate(x, y, 0);
-        g.pose().scale(2.0F, 2.0F, 1.0F);
-        g.renderItem(stack, 0, 0);
-        g.pose().popPose();
-    }
-
-    private void renderScrollBar(GuiGraphics g, int x, int y, int h, int total, int visible, int scroll) {
-        g.fill(x, y, x + 3, y + h, 0x5524323F);
-        if (total <= visible) {
-            g.fill(x, y, x + 3, y + h, 0xAA6C8598);
-            return;
-        }
-        int maxScroll = Math.max(1, total - visible);
-        int thumbH = Math.max(18, h * visible / total);
-        int thumbY = y + (h - thumbH) * scroll / maxScroll;
-        g.fill(x, thumbY, x + 3, thumbY + thumbH, 0xFFF1D98A);
-    }
-
-    private void drawWrappedText(GuiGraphics g, Component text, int x, int y, int maxWidth, int color) {
-        List<FormattedCharSequence> lines = this.font.split(text, maxWidth);
-        int drawY = y;
-        for (FormattedCharSequence line : lines) {
-            g.drawString(this.font, line, x, drawY, color);
-            drawY += 10;
-            if (drawY > y + 66) {
-                break;
-            }
-        }
-    }
-
-    @Override
-    public boolean mouseClicked(double mouseX, double mouseY, int button) {
-        if (button == 0) {
-            int clicked = rowIndexAt(mouseX, mouseY);
-            if (clicked >= 0) {
-                this.selectedIndex = clicked;
-                ensureSelectionVisible();
-                return true;
-            }
-        }
-        return super.mouseClicked(mouseX, mouseY, button);
-    }
-
-    @Override
-    public boolean mouseScrolled(double mouseX, double mouseY, double scrollX, double delta) {
-        int x = left() + LIST_X;
-        int y = top() + LIST_Y;
-        if (mouseX >= x && mouseX < x + LIST_W && mouseY >= y && mouseY < y + LIST_H) {
-            this.scrollOffset = clampScroll(this.scrollOffset - (delta > 0 ? 1 : -1));
-            return true;
-        }
-        return super.mouseScrolled(mouseX, mouseY, scrollX, delta);
+        StructureType type = StructureType.ALL.get(selectedIndex);
+        detailSlot.clearAllChildren();
+        detailSlot.addChild(Ui.slot(iconFor(type), 36));
+        detailName.setValue(Component.translatable(type.translationKey()));
+        detailRole.setValue(roleLabel(type));
+        width.setValue(Component.literal(Integer.toString(type.w())));
+        height.setValue(Component.literal(Integer.toString(type.h())));
+        depth.setValue(Component.literal(Integer.toString(type.d())));
+        description.setValue(description(type));
+        footprint.type = type;
     }
 
     @Override
     public boolean keyPressed(int keyCode, int scanCode, int modifiers) {
-        if (keyCode == GLFW.GLFW_KEY_UP) {
-            cycleSelection(-1);
-            return true;
+        switch (keyCode) {
+            case GLFW.GLFW_KEY_UP -> cycleSelection(-1);
+            case GLFW.GLFW_KEY_DOWN -> cycleSelection(1);
+            case GLFW.GLFW_KEY_PAGE_UP -> cycleSelection(-PAGE);
+            case GLFW.GLFW_KEY_PAGE_DOWN -> cycleSelection(PAGE);
+            case GLFW.GLFW_KEY_ENTER, GLFW.GLFW_KEY_KP_ENTER -> saveAndClose();
+            default -> {
+                return super.keyPressed(keyCode, scanCode, modifiers);
+            }
         }
-        if (keyCode == GLFW.GLFW_KEY_DOWN) {
-            cycleSelection(1);
-            return true;
-        }
-        if (keyCode == GLFW.GLFW_KEY_PAGE_UP) {
-            cycleSelection(-VISIBLE_ROWS);
-            return true;
-        }
-        if (keyCode == GLFW.GLFW_KEY_PAGE_DOWN) {
-            cycleSelection(VISIBLE_ROWS);
-            return true;
-        }
-        if (keyCode == GLFW.GLFW_KEY_ENTER || keyCode == GLFW.GLFW_KEY_KP_ENTER) {
-            saveAndClose();
-            return true;
-        }
-        return super.keyPressed(keyCode, scanCode, modifiers);
-    }
-
-    @Override
-    public boolean isPauseScreen() {
-        return false;
+        return true;
     }
 
     private void cycleSelection(int delta) {
@@ -287,8 +171,9 @@ public class StructureSelectionScreen extends Screen {
         if (size <= 0) {
             return;
         }
-        this.selectedIndex = Math.floorMod(this.selectedIndex + delta, size);
-        ensureSelectionVisible();
+        selectedIndex = Math.floorMod(selectedIndex + delta, size);
+        refresh();
+        list.scrollToChild(rows.get(selectedIndex));
     }
 
     private void saveAndClose() {
@@ -300,45 +185,52 @@ public class StructureSelectionScreen extends Screen {
     private void clampSelection() {
         int size = StructureType.ALL.size();
         this.selectedIndex = size <= 0 ? 0 : Mth.clamp(this.selectedIndex, 0, size - 1);
-        this.scrollOffset = clampScroll(this.scrollOffset);
     }
 
-    private void ensureSelectionVisible() {
-        this.scrollOffset = clampScroll(this.scrollOffset);
-        if (this.selectedIndex < this.scrollOffset) {
-            this.scrollOffset = this.selectedIndex;
-        } else if (this.selectedIndex >= this.scrollOffset + VISIBLE_ROWS) {
-            this.scrollOffset = this.selectedIndex - VISIBLE_ROWS + 1;
+    /** Top-down footprint with the front edge marked, beside a height bar. */
+    private static final class Footprint extends UIElement {
+        private StructureType type;
+
+        Footprint() {
+            addClass("sm-chart");
         }
-        this.scrollOffset = clampScroll(this.scrollOffset);
-    }
 
-    private int clampScroll(int value) {
-        return Mth.clamp(value, 0, Math.max(0, StructureType.ALL.size() - VISIBLE_ROWS));
-    }
+        @Override
+        public void drawContents(GUIContext context) {
+            super.drawContents(context);
+            if (type == null) {
+                return;
+            }
+            boolean ledger = UiPreferences.get().theme() == UiTheme.LEDGER;
+            int fill = ledger ? 0xAA8B7146 : 0xAA4E87A0;
+            int edge = ledger ? 0xFF9B2C24 : 0xFF34D399;
+            int text = ledger ? 0xFF2B1D10 : 0xFFF6F8FB;
+            GuiGraphics g = context.graphics;
+            int x = Math.round(getContentX()) + 4;
+            int y = Math.round(getContentY()) + 4;
+            int w = Math.round(getContentWidth()) - 8;
+            int h = Math.round(getContentHeight()) - 8;
+            int barW = 12;
+            int areaW = w - barW - 6;
+            if (areaW < 16 || h < 16) {
+                return;
+            }
+            float scale = Math.min(areaW / (float) type.w(), h / (float) type.d());
+            int rectW = Math.max(14, Mth.floor(type.w() * scale));
+            int rectH = Math.max(14, Mth.floor(type.d() * scale));
+            int rx = x + (areaW - rectW) / 2;
+            int ry = y + (h - rectH) / 2;
+            g.fill(rx, ry, rx + rectW, ry + rectH, fill);
+            g.fill(rx, ry + rectH - 2, rx + rectW, ry + rectH, edge);
+            var font = Minecraft.getInstance().font;
+            String size = type.w() + "×" + type.d();
+            g.drawString(font, size, rx + (rectW - font.width(size)) / 2, ry + rectH / 2 - 4, text, false);
 
-    private int rowIndexAt(double mouseX, double mouseY) {
-        int x = left() + LIST_X;
-        int y = top() + LIST_Y + 4;
-        if (mouseX < x + 4 || mouseX >= x + LIST_W - 10 || mouseY < y) {
-            return -1;
+            int barX = x + areaW + 6;
+            int barHeight = Math.max(8, Mth.floor((h - 10) * Math.min(1f, type.h() / 14f)));
+            g.fill(barX, y + h - barHeight, barX + barW, y + h, fill);
+            g.fill(barX, y + h - barHeight, barX + barW, y + h - barHeight + 2, edge);
         }
-        int row = (int) ((mouseY - y) / ROW_H);
-        if (row < 0 || row >= VISIBLE_ROWS) {
-            return -1;
-        }
-        int index = this.scrollOffset + row;
-        return index >= 0 && index < StructureType.ALL.size() ? index : -1;
-    }
-
-    private boolean isMouseOverRow(int mouseX, int mouseY, int rowY) {
-        int x = left() + LIST_X;
-        return mouseX >= x + 4 && mouseX < x + LIST_W - 10 && mouseY >= rowY && mouseY < rowY + ROW_H - 2;
-    }
-
-    private StructureType selectedType() {
-        clampSelection();
-        return StructureType.ALL.get(this.selectedIndex);
     }
 
     private ItemStack iconFor(StructureType type) {
@@ -369,36 +261,23 @@ public class StructureSelectionScreen extends Screen {
     }
 
     private Component roleLabel(StructureType type) {
-        return switch (type) {
-            case VICTORIAN_BANK -> Component.translatable("screen.sailboatmod.structure_selection.role.victorian_bank");
-            case VICTORIAN_TOWN_HALL -> Component.translatable("screen.sailboatmod.structure_selection.role.victorian_town_hall");
-            case NATION_CAPITOL -> Component.translatable("screen.sailboatmod.structure_selection.role.nation_capitol");
-            case OPEN_AIR_MARKETPLACE -> Component.translatable("screen.sailboatmod.structure_selection.role.open_air_marketplace");
-            case WATERFRONT_DOCK -> Component.translatable("screen.sailboatmod.structure_selection.role.waterfront_dock");
-            case COTTAGE -> Component.translatable("screen.sailboatmod.structure_selection.role.cottage");
-            case TAVERN -> Component.translatable("screen.sailboatmod.structure_selection.role.tavern");
-            case SCHOOL -> Component.translatable("screen.sailboatmod.structure_selection.role.school");
-        };
+        return Component.translatable("screen.sailboatmod.structure_selection.role." + typeKey(type));
     }
 
     private Component description(StructureType type) {
+        return Component.translatable("screen.sailboatmod.structure_selection.description." + typeKey(type));
+    }
+
+    private static String typeKey(StructureType type) {
         return switch (type) {
-            case VICTORIAN_BANK -> Component.translatable("screen.sailboatmod.structure_selection.description.victorian_bank");
-            case VICTORIAN_TOWN_HALL -> Component.translatable("screen.sailboatmod.structure_selection.description.victorian_town_hall");
-            case NATION_CAPITOL -> Component.translatable("screen.sailboatmod.structure_selection.description.nation_capitol");
-            case OPEN_AIR_MARKETPLACE -> Component.translatable("screen.sailboatmod.structure_selection.description.open_air_marketplace");
-            case WATERFRONT_DOCK -> Component.translatable("screen.sailboatmod.structure_selection.description.waterfront_dock");
-            case COTTAGE -> Component.translatable("screen.sailboatmod.structure_selection.description.cottage");
-            case TAVERN -> Component.translatable("screen.sailboatmod.structure_selection.description.tavern");
-            case SCHOOL -> Component.translatable("screen.sailboatmod.structure_selection.description.school");
+            case VICTORIAN_BANK -> "victorian_bank";
+            case VICTORIAN_TOWN_HALL -> "victorian_town_hall";
+            case NATION_CAPITOL -> "nation_capitol";
+            case OPEN_AIR_MARKETPLACE -> "open_air_marketplace";
+            case WATERFRONT_DOCK -> "waterfront_dock";
+            case COTTAGE -> "cottage";
+            case TAVERN -> "tavern";
+            case SCHOOL -> "school";
         };
-    }
-
-    private int left() {
-        return (this.width - SCREEN_W) / 2;
-    }
-
-    private int top() {
-        return (this.height - SCREEN_H) / 2;
     }
 }

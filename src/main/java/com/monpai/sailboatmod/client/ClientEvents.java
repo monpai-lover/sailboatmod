@@ -27,27 +27,15 @@ import com.monpai.sailboatmod.client.integration.xaero.SailboatXaeroCompat;
 import com.monpai.sailboatmod.registry.ModBlockEntities;
 import com.monpai.sailboatmod.registry.ModEntities;
 import com.monpai.sailboatmod.registry.ModMenus;
-import net.neoforged.neoforge.client.event.RegisterClientReloadListenersEvent;
 import net.neoforged.neoforge.client.event.RegisterMenuScreensEvent;
 import net.neoforged.api.distmarker.Dist;
 import net.neoforged.neoforge.client.event.EntityRenderersEvent;
 import net.neoforged.bus.api.SubscribeEvent;
-import net.neoforged.fml.ModList;
 import net.neoforged.fml.common.EventBusSubscriber;
 import net.neoforged.fml.event.lifecycle.FMLClientSetupEvent;
 
 @EventBusSubscriber(modid = SailboatMod.MODID, bus = EventBusSubscriber.Bus.MOD, value = Dist.CLIENT)
 public final class ClientEvents {
-    @SubscribeEvent
-    public static void registerClientReloadListeners(RegisterClientReloadListenersEvent event) {
-        if (shouldRegisterEmbeddedBlockUiLoader(ModList.get().isLoaded("blockui"))) {
-            try {
-                event.registerReloadListener((net.minecraft.server.packs.resources.PreparableReloadListener)
-                        Class.forName("com.ldtteam.blockui.Loader").getField("INSTANCE").get(null));
-            } catch (Exception ignored) {}
-        }
-    }
-
     @SubscribeEvent
     public static void registerRenderers(EntityRenderersEvent.RegisterRenderers event) {
         event.registerEntityRenderer(ModEntities.SAILBOAT.get(), SailboatEntityRenderer::new);
@@ -82,10 +70,6 @@ public final class ClientEvents {
         event.enqueueWork(() -> {
             SailboatXaeroCompat.onClientSetup();
         });
-    }
-
-    static boolean shouldRegisterEmbeddedBlockUiLoader(boolean blockUiModLoaded) {
-        return !blockUiModLoaded;
     }
 
     private ClientEvents() {

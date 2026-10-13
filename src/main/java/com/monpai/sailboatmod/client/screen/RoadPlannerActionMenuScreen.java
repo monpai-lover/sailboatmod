@@ -1,73 +1,93 @@
 package com.monpai.sailboatmod.client.screen;
 
+import com.lowdragmc.lowdraglib2.gui.ui.UIElement;
 import com.monpai.sailboatmod.client.RoadPlannerClientHooks;
+import com.monpai.sailboatmod.client.ui.kit.ActionButton;
+import com.monpai.sailboatmod.client.ui.kit.ThemedScreen;
+import com.monpai.sailboatmod.client.ui.kit.Ui;
+import com.monpai.sailboatmod.client.ui.state.ConfirmGate;
 import com.monpai.sailboatmod.network.ModNetwork;
-import com.monpai.sailboatmod.network.packet.roadplanner.RoadPlannerCancelJobPacket;
 import com.monpai.sailboatmod.network.packet.roadplanner.RoadPlannerActionMenuMode;
+import com.monpai.sailboatmod.network.packet.roadplanner.RoadPlannerCancelJobPacket;
 import com.monpai.sailboatmod.network.packet.roadplanner.RoadPlannerConfirmBuildPacket;
-import com.monpai.sailboatmod.network.packet.roadplanner.RoadPlannerDemolishRoadPacket;
 import com.monpai.sailboatmod.network.packet.roadplanner.RoadPlannerMenuActionPacket;
+import com.monpai.sailboatmod.network.packet.roadplanner.RoadPlannerPauseBuildPacket;
 import net.minecraft.client.Minecraft;
-import net.minecraft.client.gui.GuiGraphics;
-import net.minecraft.client.gui.components.Button;
-import net.minecraft.client.gui.screens.Screen;
 import net.minecraft.network.chat.Component;
+import net.minecraft.world.item.ItemStack;
+import net.minecraft.world.item.Items;
+import net.minecraft.world.level.ItemLike;
 
 import java.util.UUID;
 
-public class RoadPlannerActionMenuScreen extends Screen {
+/**
+ * Road planner hub opened from the planner item: main actions, the preview decision, or managing a running build.
+ * Sends the same packets as before. Cancelling a running build (which rolls it back) needs a second press.
+ */
+public class RoadPlannerActionMenuScreen extends ThemedScreen {
     private static final UUID EMPTY_ID = new UUID(0L, 0L);
+    private static final String CONFIRM_ROLLBACK = "rollback";
 
     private final RoadPlannerActionMenuMode mode;
     private final UUID sessionId;
+    private final ConfirmGate confirm = new ConfirmGate();
+    private ActionButton rollbackButton;
 
     public RoadPlannerActionMenuScreen(RoadPlannerActionMenuMode mode, UUID sessionId) {
-        super(Component.literal(titleFor(mode)));
+        super(Component.translatable(titleKey(mode)));
         this.mode = mode == null ? RoadPlannerActionMenuMode.MAIN : mode;
         this.sessionId = sessionId == null ? EMPTY_ID : sessionId;
     }
 
     @Override
-    protected void init() {
-        int left = width / 2 - 90;
-        int top = height / 2 - 70;
-        int row = 24;
-        if (mode == RoadPlannerActionMenuMode.PREVIEW) {
-            addButton(left, top, "\u786e\u8ba4\u5efa\u9020", button -> confirmBuild());
-            addButton(left, top + row, "\u8fd4\u56de\u89c4\u5212\u5668", button -> returnToPlanner());
-            addButton(left, top + row * 2, "\u53d6\u6d88\u9884\u89c8", button -> cancelPreview());
-            addButton(left, top + row * 3, "\u5173\u95ed", button -> onClose());
-            return;
-        }
-        if (mode == RoadPlannerActionMenuMode.BUILDING) {
-            addButton(left, top, "\u67e5\u770b\u65bd\u5de5\u8fdb\u5ea6", button -> closeOnly());
-            addButton(left, top + row, "\u53d6\u6d88\u5efa\u9020\u5e76\u56de\u6eda", button -> cancelBuildAndRollback());
-            addButton(left, top + row * 2, "\u6682\u505c/\u7ee7\u7eed\u65bd\u5de5", button -> togglePauseBuild());
-            addButton(left, top + row * 3, "\u5173\u95ed", button -> onClose());
-            return;
-        }
-        addButton(left, top, "\u6253\u5f00\u9053\u8def\u89c4\u5212", button -> openPlannerFromServer());
-        addButton(left, top + row, "\u9009\u62e9\u76ee\u7684\u5730 Town", button -> openTargetSelection());
-        addButton(left, top + row * 2, "\u7f16\u8f91\u73b0\u6709\u9053\u8def", button -> openEditRoadSelection());
-        addButton(left, top + row * 3, "\u62c6\u9664\u5df2\u6709\u9053\u8def", button -> openDemolitionPlanner());
-        addButton(left, top + row * 4, "\u67e5\u770b\u65bd\u5de5\u961f\u5217", button -> closeOnly());
-        addButton(left, top + row * 5, "\u5173\u95ed", button -> onClose());
-    }
-
-    private void addButton(int x, int y, String label, Button.OnPress onPress) {
-        addRenderableWidget(Button.builder(Component.literal(label), onPress).bounds(x, y, 180, 20).build());
+    protected float windowWidth() {
+        return 220;
     }
 
     @Override
-    public void render(GuiGraphics graphics, int mouseX, int mouseY, float partialTick) {
-        renderBackground(graphics, mouseX, mouseY, partialTick);
-        graphics.drawCenteredString(font, title, width / 2, height / 2 - 86, 0xFFF1D9A0);
-        if (mode == RoadPlannerActionMenuMode.PREVIEW) {
-            graphics.drawCenteredString(font, Component.literal("\u5f53\u524d\u6709\u9053\u8def\u5e7d\u7075\u9884\u89c8\uff0c\u8bf7\u9009\u62e9\u4e0b\u4e00\u6b65\u64cd\u4f5c"), width / 2, height / 2 - 70, 0xFFB7C8D6);
-        } else if (mode == RoadPlannerActionMenuMode.BUILDING) {
-            graphics.drawCenteredString(font, Component.literal("\u5f53\u524d\u5b58\u5728\u65bd\u5de5\u4efb\u52a1\uff0c\u53ef\u53d6\u6d88\u5e76\u56de\u6eda"), width / 2, height / 2 - 70, 0xFFB7C8D6);
+    protected UIElement buildBody() {
+        UIElement body = Ui.column();
+        body.layout(l -> l.gapAll(Ui.GAP_S));
+        switch (mode) {
+            case PREVIEW -> {
+                body.addChild(Ui.paragraph(Component.translatable("screen.sailboatmod.ui.road.menu.preview_hint"), "sm-muted"));
+                body.addChild(item(Items.BRICKS, "confirm_build", Ui.Tone.PRIMARY, this::confirmBuild));
+                body.addChild(item(Items.MAP, "return_to_planner", Ui.Tone.SECONDARY, this::returnToPlanner));
+                body.addChild(item(Items.BARRIER, "cancel_preview", Ui.Tone.DANGER, this::cancelPreview));
+            }
+            case BUILDING -> {
+                body.addChild(Ui.paragraph(Component.translatable("screen.sailboatmod.ui.road.menu.building_hint"), "sm-muted"));
+                body.addChild(item(Items.SPYGLASS, "view_progress", Ui.Tone.SECONDARY, this::onClose));
+                body.addChild(item(Items.CLOCK, "toggle_pause", Ui.Tone.SECONDARY, this::togglePauseBuild));
+                rollbackButton = new ActionButton(Component.translatable("screen.sailboatmod.ui.road.menu.cancel_rollback"),
+                        Ui.Tone.DANGER, this::cancelBuildAndRollback);
+                rollbackButton.element().layout(l -> l.widthPercent(100).height(20));
+                body.addChild(rollbackButton.element());
+            }
+            case MAIN -> {
+                body.addChild(item(Items.MAP, "open_planner", Ui.Tone.PRIMARY, this::openPlannerFromServer));
+                body.addChild(item(Items.COMPASS, "choose_target", Ui.Tone.SECONDARY, () -> menuAction(RoadPlannerMenuActionPacket.Action.OPEN_TARGET_SELECTION)));
+                body.addChild(item(Items.DIRT_PATH, "edit_road", Ui.Tone.SECONDARY, () -> menuAction(RoadPlannerMenuActionPacket.Action.OPEN_EDIT_ROAD_SELECTION)));
+                body.addChild(item(Items.IRON_PICKAXE, "demolish_road", Ui.Tone.SECONDARY, () -> menuAction(RoadPlannerMenuActionPacket.Action.OPEN_DEMOLITION_PLANNER)));
+                body.addChild(item(Items.SPYGLASS, "view_queue", Ui.Tone.SECONDARY, this::onClose));
+            }
         }
-        com.monpai.sailboatmod.client.screen.ScreenRenderSupport.renderWidgets(this, graphics, mouseX, mouseY, partialTick);
+        return body;
+    }
+
+    private UIElement item(ItemLike icon, String key, Ui.Tone tone, Runnable action) {
+        com.lowdragmc.lowdraglib2.gui.ui.elements.Button button =
+                Ui.button(Component.translatable("screen.sailboatmod.ui.road.menu." + key), tone, action);
+        button.addPreIcon(new com.lowdragmc.lowdraglib2.gui.texture.ItemStackTexture(new ItemStack(icon)));
+        button.layout(l -> l.widthPercent(100).height(20));
+        return button;
+    }
+
+    @Override
+    protected void onUiTick() {
+        if (rollbackButton != null) {
+            rollbackButton.sync(true, false, confirm.isArmed(CONFIRM_ROLLBACK, ticks()));
+        }
     }
 
     private void confirmBuild() {
@@ -96,46 +116,29 @@ public class RoadPlannerActionMenuScreen extends Screen {
     }
 
     private void cancelBuildAndRollback() {
+        if (!confirm.press(CONFIRM_ROLLBACK, ticks())) {
+            onUiTick();
+            return;
+        }
         ModNetwork.CHANNEL.sendToServer(new RoadPlannerCancelJobPacket(sessionId));
         onClose();
     }
 
     private void togglePauseBuild() {
-        ModNetwork.CHANNEL.sendToServer(
-                new com.monpai.sailboatmod.network.packet.roadplanner.RoadPlannerPauseBuildPacket(sessionId));
+        ModNetwork.CHANNEL.sendToServer(new RoadPlannerPauseBuildPacket(sessionId));
         onClose();
     }
 
-    private void openTargetSelection() {
-        ModNetwork.CHANNEL.sendToServer(new RoadPlannerMenuActionPacket(RoadPlannerMenuActionPacket.Action.OPEN_TARGET_SELECTION));
+    private void menuAction(RoadPlannerMenuActionPacket.Action action) {
+        ModNetwork.CHANNEL.sendToServer(new RoadPlannerMenuActionPacket(action));
         onClose();
     }
 
-    private void openEditRoadSelection() {
-        ModNetwork.CHANNEL.sendToServer(new RoadPlannerMenuActionPacket(RoadPlannerMenuActionPacket.Action.OPEN_EDIT_ROAD_SELECTION));
-        onClose();
-    }
-
-    private void openDemolitionPlanner() {
-        ModNetwork.CHANNEL.sendToServer(new RoadPlannerMenuActionPacket(RoadPlannerMenuActionPacket.Action.OPEN_DEMOLITION_PLANNER));
-        onClose();
-    }
-
-    private void closeOnly() {
-        onClose();
-    }
-
-    private static String titleFor(RoadPlannerActionMenuMode mode) {
+    private static String titleKey(RoadPlannerActionMenuMode mode) {
         return switch (mode == null ? RoadPlannerActionMenuMode.MAIN : mode) {
-            case PREVIEW -> "\u9053\u8def\u9884\u89c8\u786e\u8ba4";
-            case BUILDING -> "\u9053\u8def\u65bd\u5de5\u7ba1\u7406";
-            case MAIN -> "\u9053\u8def\u89c4\u5212\u5668";
+            case PREVIEW -> "screen.sailboatmod.ui.road.menu.title_preview";
+            case BUILDING -> "screen.sailboatmod.ui.road.menu.title_building";
+            case MAIN -> "screen.sailboatmod.ui.road.menu.title_main";
         };
     }
-
-    @Override
-    public boolean isPauseScreen() {
-        return false;
-    }
-
 }

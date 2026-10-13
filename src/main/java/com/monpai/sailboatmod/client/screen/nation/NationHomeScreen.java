@@ -1,17 +1,30 @@
 package com.monpai.sailboatmod.client.screen.nation;
 
+import com.lowdragmc.lowdraglib2.gui.texture.ColorRectTexture;
+import com.lowdragmc.lowdraglib2.gui.ui.UIElement;
+import com.lowdragmc.lowdraglib2.gui.ui.elements.Button;
+import com.lowdragmc.lowdraglib2.gui.ui.elements.Label;
+import com.lowdragmc.lowdraglib2.gui.ui.elements.ScrollerView;
+import com.lowdragmc.lowdraglib2.gui.ui.elements.TextField;
 import com.mojang.logging.LogUtils;
 import com.monpai.sailboatmod.client.NationClientHooks;
 import com.monpai.sailboatmod.client.roadplanner.RoadPlannerTileSyncReceiver;
 import com.monpai.sailboatmod.client.screen.ClaimMapViewport;
 import com.monpai.sailboatmod.client.screen.ClaimWorldMapView;
-import com.monpai.sailboatmod.client.screen.ClaimsMapVisibility;
-import com.monpai.sailboatmod.client.screen.ScreenInputGuards;
-import com.monpai.sailboatmod.economy.GoldStandardEconomy;
 import com.monpai.sailboatmod.client.texture.NationFlagTextureCache;
 import com.monpai.sailboatmod.client.texture.NationFlagUploadClient;
-import com.monpai.sailboatmod.nation.menu.NationOverviewClaim;
+import com.monpai.sailboatmod.client.ui.kit.ActionButton;
+import com.monpai.sailboatmod.client.ui.kit.MeterBar;
+import com.monpai.sailboatmod.client.ui.kit.TabBar;
+import com.monpai.sailboatmod.client.ui.kit.ThemedScreen;
+import com.monpai.sailboatmod.client.ui.kit.Ui;
+import com.monpai.sailboatmod.client.ui.state.ConfirmGate;
+import com.monpai.sailboatmod.client.ui.territory.ClaimMapElement;
+import com.monpai.sailboatmod.client.ui.territory.ClaimMapPainter;
+import com.monpai.sailboatmod.client.ui.territory.FlagPreview;
+import com.monpai.sailboatmod.economy.GoldStandardEconomy;
 import com.monpai.sailboatmod.nation.menu.ClaimPreviewMapState;
+import com.monpai.sailboatmod.nation.menu.NationOverviewClaim;
 import com.monpai.sailboatmod.nation.menu.NationOverviewData;
 import com.monpai.sailboatmod.nation.menu.NationOverviewDiplomacyEntry;
 import com.monpai.sailboatmod.nation.menu.NationOverviewDiplomacyRequest;
@@ -30,46 +43,1134 @@ import com.monpai.sailboatmod.network.packet.RequestClaimMapViewportPacket;
 import com.monpai.sailboatmod.network.packet.SetClaimPermissionPacket;
 import com.monpai.sailboatmod.network.packet.roadplanner.RoadPlannerMapPreloadRequestPacket;
 import com.monpai.sailboatmod.network.packet.roadplanner.RoadPlannerMapTileSyncPacket;
+import dev.vfyjxf.taffy.style.AlignItems;
+import dev.vfyjxf.taffy.style.FlexWrap;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.gui.GuiGraphics;
-import net.minecraft.client.gui.components.AbstractWidget;
-import net.minecraft.client.gui.components.Button;
-import net.minecraft.client.gui.components.EditBox;
-import net.minecraft.client.gui.screens.Screen;
 import net.minecraft.core.BlockPos;
 import net.minecraft.network.chat.Component;
-import net.minecraft.resources.ResourceLocation;
 import net.minecraft.util.FormattedCharSequence;
+import net.minecraft.world.item.ItemStack;
+import net.minecraft.world.item.Items;
 import net.minecraft.world.level.ChunkPos;
 import org.slf4j.Logger;
 
 import java.util.ArrayList;
+import java.util.EnumMap;
 import java.util.HashMap;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
 
-public class NationHomeScreen extends Screen implements RoadPlannerTileSyncReceiver {
+/**
+ * Nation home: overview, members, territory, war, diplomacy, treasury and flag, on a left page rail.
+ *
+ * <p>The element tree is built once; {@link #refresh()} re-reads {@link NationOverviewData} into it, so typed names,
+ * selections and the map position survive the periodic refresh. Every action sends the same
+ * {@link NationGuiActionPacket} / {@link SetClaimPermissionPacket} / chat command as the previous screen, and the
+ * server keeps checking ranks and permissions. Removing the core, declaring war and releasing territory need a second
+ * press. The territory map keeps the previous viewport protocol (request, retry, queued centre, prefetch and forced
+ * tile render) unchanged; only its drawing moved into {@link ClaimMapElement}.</p>
+ */
+public class NationHomeScreen extends ThemedScreen implements RoadPlannerTileSyncReceiver {
     private static final Logger LOGGER = LogUtils.getLogger();
     private static final boolean CLAIM_TRACE_ENABLED = true;
     private static final int AUTO_REFRESH_INTERVAL_TICKS = 40;
     private static final int PENDING_RETRY_INTERVAL_TICKS = 8;
     private static final int ACTIVE_WAR_REFRESH_INTERVAL_TICKS = 20;
-    private static final int SCREEN_W = 468;
-    private static final int SCREEN_H = 330;
-    private static final int TAB_W = 62;
-    private static final int BODY_X = 12;
-    private static final int BODY_Y = 64;
-    private static final int BODY_W = SCREEN_W - 24;
-    private static final int BODY_H = 232;
-    private static final int MEMBER_LIST_W = 192;
-    private static final int MEMBER_ROW_H = 14;
     private static final int MEMBER_VISIBLE_ROWS = 12;
-    private static final int TREASURY_ITEM_ROW_H = 20;
-    private static final int TREASURY_ITEM_VISIBLE_ROWS = 4;
     private static final int CLAIM_MAP_W = 164;
     private static final int CLAIM_MAP_H = 164;
     private static final int VIEWPORT_PREFETCH_RADIUS = 2;
+    private static final String CONFIRM_REMOVE_CORE = "remove-core";
+    private static final String CONFIRM_DECLARE_WAR = "declare-war";
+    private static final String CONFIRM_DIP_WAR = "dip-war";
+    private static final String CONFIRM_UNCLAIM = "unclaim";
+    private static final String[] PERMISSION_ACTIONS = {"break", "place", "use", "container", "redstone", "entity_use", "entity_damage"};
+
+    private NationOverviewData data;
+    private Page currentPage = Page.OVERVIEW;
+    private Component statusLine = Component.empty();
+    private int memberScroll;
+    private int autoRefreshTicks;
+    private String selectedMemberUuid = "";
+    private String selectedTownId = "";
+    private int selectedClaimChunkX = Integer.MIN_VALUE;
+    private int selectedClaimChunkZ = Integer.MIN_VALUE;
+    private int areaCorner1X = Integer.MIN_VALUE;
+    private int areaCorner1Z = Integer.MIN_VALUE;
+    private int areaCorner2X = Integer.MIN_VALUE;
+    private int areaCorner2Z = Integer.MIN_VALUE;
+    private int claimsSubPage;
+    private String selectedDiplomacyNationId = "";
+    private boolean showTreasuryCommands;
+    private int mapOffsetX = 0;
+    private int mapOffsetZ = 0;
+    private int lastKnownClaimRadius = -1;
+    private int pendingPreviewCenterX = Integer.MIN_VALUE;
+    private int pendingPreviewCenterZ = Integer.MIN_VALUE;
+    private long pendingPreviewRevision = Long.MIN_VALUE;
+    private int queuedPreviewCenterX = Integer.MIN_VALUE;
+    private int queuedPreviewCenterZ = Integer.MIN_VALUE;
+    private boolean resetPending = false;
+    private boolean refreshPending;
+    private final ClaimWorldMapView claimWorldMapView = new ClaimWorldMapView();
+    private final Map<Long, NationOverviewClaim> cachedClaimOverlays = new HashMap<>();
+    private final ConfirmGate confirm = new ConfirmGate();
+
+    // ---- UI (created in buildBody; null until the screen is first initialised)
+    private boolean built;
+    private TabBar<Page> tabs;
+    private final Map<Page, UIElement> pages = new EnumMap<>(Page.class);
+    private Label pageTitle;
+    private Label statusLabel;
+    private Label headerLabel;
+    private Label economyLabel;
+
+    // overview
+    private UIElement overviewLines;
+    private UIElement noNationForm;
+    private UIElement nationForm;
+    private TextField nationNameInput;
+    private TextField createNameInput;
+    private TextField shortNameInput;
+    private TextField joinNationInput;
+    private ActionButton saveNationInfoButton;
+    private ActionButton createNationButton;
+    private ActionButton joinNationButton;
+    private Button previousTownButton;
+    private Button nextTownButton;
+    private ActionButton openCapitalTownButton;
+    private ActionButton removeCoreButton;
+    private Label townSelected;
+    private Label townMayor;
+    private Label townClaims;
+    private Label townColony;
+
+    // members
+    private ScrollerView memberList;
+    private Label memberCountLabel;
+    private Label memberName;
+    private Label memberRole;
+    private Label memberStatus;
+    private Label memberUuid;
+    private TextField officerTitleInput;
+    private ActionButton saveOfficerTitleButton;
+    private ActionButton appointOfficerButton;
+    private ActionButton removeOfficerButton;
+    private ActionButton appointMayorButton;
+    private Object shownMembers;
+    private String shownMemberSelection;
+
+    // claims
+    private TabBar<Integer> claimsTabs;
+    private UIElement claimsMapView;
+    private UIElement claimsPermView;
+    private UIElement claimLines;
+    private ClaimMapElement claimMap;
+    private ActionButton claimButton;
+    private ActionButton unclaimButton;
+    private final Map<String, ActionButton> permissionButtons = new LinkedHashMap<>();
+    private Label permissionChunk;
+    private Label permissionOwner;
+
+    // war
+    private UIElement warLines;
+    private UIElement peacePanel;
+    private UIElement peaceProposeRow;
+    private UIElement peaceAnswerRow;
+    private ActionButton warInfoButton;
+    private TextField warTargetInput;
+    private ActionButton declareWarButton;
+    private Label warHint;
+
+    // diplomacy
+    private ScrollerView nationList;
+    private UIElement diplomacyDetail;
+    private UIElement diplomacyEmpty;
+    private Label dipSelected;
+    private Label dipStatus;
+    private ActionButton dipAllyButton;
+    private ActionButton dipTradeButton;
+    private ActionButton dipEnemyButton;
+    private ActionButton dipNeutralButton;
+    private ActionButton dipDeclareWarButton;
+    private ActionButton dipAcceptAllyButton;
+    private ActionButton dipRejectAllyButton;
+    private ActionButton dipOpenTradeButton;
+    private UIElement dipRequests;
+    private Object shownNations;
+    private String shownNationSelection;
+
+    // treasury
+    private Label metricBalance;
+    private Label metricTowns;
+    private Label metricTrades;
+    private Label metricItems;
+    private MeterBar salesTaxBar;
+    private MeterBar tariffBar;
+    private Label salesTaxValue;
+    private Label tariffValue;
+    private final List<Button> taxButtons = new ArrayList<>();
+    private ScrollerView treasuryItemList;
+    private Label treasuryHint;
+    private Button treasuryCommandsButton;
+    private Object shownTreasuryItems;
+
+    // flag
+    private FlagPreview flagPreview;
+    private Label flagLine1;
+    private Label flagLine2;
+    private Label flagLine3;
+    private ActionButton toggleMirrorButton;
+    private TextField primaryColorInput;
+    private TextField secondaryColorInput;
+    private UIElement primarySwatch;
+    private UIElement secondarySwatch;
+    private ActionButton applyColorsButton;
+    private TextField flagPathInput;
+    private Button browseButton;
+    private ActionButton uploadButton;
+
+
+    // =====================================================================================================
+    // UI construction
+    // =====================================================================================================
+
+    @Override
+    protected float windowWidth() {
+        return 480;
+    }
+
+    @Override
+    protected UIElement[] headerExtras() {
+        UIElement chip = Ui.row("sm-chip");
+        chip.layout(l -> l.height(Ui.CONTROL_HEIGHT).paddingHorizontal(Ui.GAP_S).gapAll(Ui.GAP_S).maxWidth(260));
+        headerLabel = Ui.text("");
+        economyLabel = Ui.text("", "sm-muted");
+        chip.addChildren(headerLabel, economyLabel);
+        return new UIElement[] {chip,
+                Ui.iconButton(new ItemStack(Items.COMPASS), Component.translatable("screen.sailboatmod.nation.action.refresh"), this::requestRefresh)};
+    }
+
+    @Override
+    protected UIElement buildBody() {
+        UIElement body = Ui.row();
+        body.layout(l -> l.alignItems(AlignItems.STRETCH).height(250).gapAll(Ui.GAP_M));
+        tabs = TabBar.rail(this::switchPage);
+        tabs.add(Page.OVERVIEW, new ItemStack(Items.WHITE_BANNER), Page.OVERVIEW.title())
+                .add(Page.MEMBERS, new ItemStack(Items.PLAYER_HEAD), Page.MEMBERS.title())
+                .add(Page.CLAIMS, new ItemStack(Items.FILLED_MAP), Page.CLAIMS.title())
+                .add(Page.WAR, new ItemStack(Items.IRON_SWORD), Page.WAR.title())
+                .add(Page.DIPLOMACY, new ItemStack(Items.WRITABLE_BOOK), Page.DIPLOMACY.title())
+                .add(Page.TREASURY, new ItemStack(Items.GOLD_INGOT), Page.TREASURY.title())
+                .add(Page.FLAG, new ItemStack(Items.PAINTING), Page.FLAG.title());
+        tabs.element().layout(l -> l.width(76));
+
+        UIElement content = Ui.column();
+        content.layout(l -> l.flexGrow(1).minWidth(0).gapAll(Ui.GAP_S));
+        pageTitle = Ui.text("", "sm-title");
+        content.addChild(pageTitle);
+        pages.put(Page.OVERVIEW, page(buildOverviewPage()));
+        pages.put(Page.MEMBERS, buildMembersPage());
+        pages.put(Page.CLAIMS, buildClaimsPage());
+        pages.put(Page.WAR, page(buildWarPage()));
+        pages.put(Page.DIPLOMACY, buildDiplomacyPage());
+        pages.put(Page.TREASURY, page(buildTreasuryPage()));
+        pages.put(Page.FLAG, page(buildFlagPage()));
+        pages.values().forEach(content::addChild);
+        statusLabel = Ui.text("", "sm-warn");
+        content.addChild(statusLabel);
+
+        body.addChildren(tabs.element(), content);
+        built = true;
+        refresh();
+        return body;
+    }
+
+    /** Wraps a page so it scrolls when the window is short (small GUI scale). */
+    private static UIElement page(UIElement content) {
+        ScrollerView scroller = Ui.scroller();
+        content.layout(l -> l.widthPercent(100));
+        scroller.addScrollViewChild(content);
+        return scroller;
+    }
+
+    private UIElement buildOverviewPage() {
+        UIElement page = Ui.column();
+        page.layout(l -> l.gapAll(Ui.GAP_S));
+        overviewLines = Ui.column("sm-pane");
+        overviewLines.layout(l -> l.paddingAll(Ui.GAP_M).gapAll(Ui.GAP_XS));
+
+        // no nation: create / join
+        noNationForm = Ui.column();
+        noNationForm.layout(l -> l.gapAll(Ui.GAP_S));
+        createNameInput = Ui.field("", Component.translatable("screen.sailboatmod.nation.name"), value -> refreshButtons());
+        createNameInput.layout(l -> l.flexGrow(1).flexBasis(0).flexShrink(1).minWidth(40));
+        createNationButton = new ActionButton(Component.translatable("screen.sailboatmod.nation.action.create"), Ui.Tone.PRIMARY, this::submitCreateNation);
+        joinNationInput = Ui.field("", Component.translatable("screen.sailboatmod.nation.overview.join_input"), value -> refreshButtons());
+        joinNationInput.layout(l -> l.flexGrow(1).flexBasis(0).flexShrink(1).minWidth(40));
+        joinNationButton = new ActionButton(Component.translatable("screen.sailboatmod.nation.action.join"), Ui.Tone.SECONDARY, this::submitJoinNation);
+        noNationForm.addChildren(
+                Ui.muted(Component.translatable("screen.sailboatmod.nation.overview.create_label")),
+                actionRow(createNameInput, createNationButton.inRow().element()),
+                Ui.muted(Component.translatable("screen.sailboatmod.nation.overview.join_label")),
+                actionRow(joinNationInput, joinNationButton.inRow().element()),
+                row(Ui.paragraph(Component.translatable("screen.sailboatmod.nation.overview.help_hint"), "sm-muted"),
+                        Ui.button(Component.translatable("screen.sailboatmod.nation.action.help"), Ui.Tone.SECONDARY, () -> runCommand("nation help"))));
+
+        // nation: name, towns, core
+        nationForm = Ui.column();
+        nationForm.layout(l -> l.gapAll(Ui.GAP_S));
+        nationNameInput = Ui.field("", Component.translatable("screen.sailboatmod.nation.name"), value -> refreshButtons());
+        nationNameInput.layout(l -> l.flexGrow(1).flexBasis(0).flexShrink(1).minWidth(40));
+        shortNameInput = Ui.field("", Component.translatable("screen.sailboatmod.nation.short_name"), value -> refreshButtons());
+        shortNameInput.layout(l -> l.width(80));
+        saveNationInfoButton = new ActionButton(Component.translatable("screen.sailboatmod.nation.action.save_info"), Ui.Tone.PRIMARY, this::submitNationInfoUpdate);
+        UIElement nameRow = Ui.row();
+        nameRow.layout(l -> l.widthPercent(100).minWidth(0).flexWrap(FlexWrap.WRAP).gapAll(Ui.GAP_S));
+        nameRow.addChildren(nationNameInput, shortNameInput, saveNationInfoButton.inRow().element());
+
+        UIElement towns = Ui.column("sm-pane");
+        towns.layout(l -> l.paddingAll(Ui.GAP_M).gapAll(Ui.GAP_XS));
+        previousTownButton = Ui.button(Component.literal("<"), Ui.Tone.SECONDARY, this::previousTownSelection);
+        nextTownButton = Ui.button(Component.literal(">"), Ui.Tone.SECONDARY, this::nextTownSelection);
+        townSelected = Ui.text("", "sm-title");
+        townSelected.layout(l -> l.flexGrow(1));
+        openCapitalTownButton = new ActionButton(Component.translatable("screen.sailboatmod.nation.action.open_town"), Ui.Tone.SECONDARY, this::openCapitalTown);
+        townMayor = Ui.text("", "sm-muted");
+        townClaims = Ui.text("", "sm-muted");
+        townColony = Ui.text("", "sm-muted");
+        towns.addChildren(actionRow(previousTownButton, townSelected, nextTownButton, openCapitalTownButton.inRow().element()), townMayor, townClaims, townColony);
+
+        removeCoreButton = new ActionButton(Component.translatable("screen.sailboatmod.nation.action.remove_core"), Ui.Tone.DANGER, () -> {
+            if (confirm.press(CONFIRM_REMOVE_CORE, ticks())) {
+                submitRemoveCore();
+            }
+            refresh();
+        });
+        nationForm.addChildren(
+                row(Ui.muted(Component.translatable("screen.sailboatmod.nation.name")), Ui.spacer(),
+                        Ui.muted(Component.translatable("screen.sailboatmod.nation.short_name"))),
+                nameRow, towns, actionRow(Ui.spacer(), removeCoreButton.inRow().element()));
+        page.addChildren(overviewLines, noNationForm, nationForm);
+        return page;
+    }
+
+    private UIElement buildMembersPage() {
+        UIElement page = Ui.row();
+        page.layout(l -> l.gapAll(Ui.GAP_M).alignItems(AlignItems.STRETCH).flexGrow(1).minHeight(0));
+        UIElement left = Ui.column();
+        left.layout(l -> l.width(190).flexShrink(0).gapAll(Ui.GAP_XS));
+        memberCountLabel = Ui.text("", "sm-muted");
+        memberList = Ui.scroller();
+        left.addChildren(memberCountLabel, memberList);
+
+        UIElement right = Ui.column("sm-pane");
+        right.layout(l -> l.flexGrow(1).minWidth(0).paddingAll(Ui.GAP_M).gapAll(Ui.GAP_S));
+        memberName = Ui.text("", "sm-title");
+        memberRole = Ui.text("");
+        memberStatus = Ui.text("");
+        memberUuid = Ui.text("", "sm-muted");
+        officerTitleInput = Ui.field("", Component.translatable("screen.sailboatmod.nation.members.title_input"), value -> refreshButtons());
+        officerTitleInput.layout(l -> l.flexGrow(1).flexBasis(0).flexShrink(1).minWidth(40));
+        saveOfficerTitleButton = new ActionButton(Component.translatable("screen.sailboatmod.nation.action.save_title"), Ui.Tone.SECONDARY, this::submitOfficerTitleUpdate);
+        appointOfficerButton = new ActionButton(Component.translatable("screen.sailboatmod.nation.action.appoint_officer"), Ui.Tone.PRIMARY, this::appointSelectedMember);
+        removeOfficerButton = new ActionButton(Component.translatable("screen.sailboatmod.nation.action.remove_officer"), Ui.Tone.DANGER, this::removeSelectedOfficer);
+        appointMayorButton = new ActionButton(Component.translatable("screen.sailboatmod.nation.action.appoint_mayor"), Ui.Tone.SECONDARY, this::appointSelectedMayor);
+        right.addChildren(Ui.muted(Component.translatable("screen.sailboatmod.nation.members.selected")),
+                memberName, memberRole, memberStatus, memberUuid, Ui.divider(),
+                Ui.muted(Component.translatable("screen.sailboatmod.nation.members.title_label")),
+                actionRow(officerTitleInput, saveOfficerTitleButton.inRow().element()),
+                actionRow(appointOfficerButton.inRow().element(), removeOfficerButton.inRow().element()),
+                appointMayorButton.element(),
+                Ui.spacer(),
+                Ui.paragraph(Component.translatable("screen.sailboatmod.nation.members.manage_hint"), "sm-muted"));
+        page.addChildren(left, right);
+        return page;
+    }
+
+    private UIElement buildClaimsPage() {
+        UIElement page = Ui.column();
+        page.layout(l -> l.gapAll(Ui.GAP_S).flexGrow(1).minHeight(0));
+        claimsTabs = TabBar.horizontal(sub -> {
+            claimsSubPage = sub;
+            refresh();
+        });
+        claimsTabs.add(0, new ItemStack(Items.FILLED_MAP), Component.translatable("screen.sailboatmod.nation.claims.show_map"))
+                .add(1, new ItemStack(Items.SHIELD), Component.translatable("screen.sailboatmod.nation.claims.show_perms"));
+
+        claimsMapView = Ui.row();
+        claimsMapView.layout(l -> l.gapAll(Ui.GAP_M).alignItems(AlignItems.STRETCH).flexGrow(1).minHeight(0));
+        UIElement info = Ui.column();
+        info.layout(l -> l.flexGrow(1).minWidth(0).gapAll(Ui.GAP_S));
+        claimLines = Ui.column("sm-pane");
+        claimLines.layout(l -> l.paddingAll(Ui.GAP_M).gapAll(Ui.GAP_XS));
+        claimButton = new ActionButton(Component.translatable("screen.sailboatmod.nation.action.claim"), Ui.Tone.PRIMARY, this::claimSelectedChunk);
+        unclaimButton = new ActionButton(Component.translatable("screen.sailboatmod.nation.action.unclaim"), Ui.Tone.DANGER, () -> {
+            if (confirm.press(CONFIRM_UNCLAIM, ticks())) {
+                unclaimSelectedChunk();
+            }
+            refresh();
+        });
+        info.addChildren(claimLines, actionRow(claimButton.inRow().element(), unclaimButton.inRow().element()),
+                Ui.paragraph(Component.translatable("screen.sailboatmod.ui.territory.map_hint"), "sm-muted"));
+
+        UIElement mapColumn = Ui.column();
+        mapColumn.layout(l -> l.width(CLAIM_MAP_W + 2).flexShrink(0).gapAll(Ui.GAP_XS));
+        UIElement mapTools = Ui.row();
+        mapTools.layout(l -> l.gapAll(Ui.GAP_XS));
+        mapTools.addChildren(Ui.muted(Component.translatable("screen.sailboatmod.nation.claims.map_title")), Ui.spacer(),
+                Ui.iconButton(new ItemStack(Items.COMPASS), Component.translatable("screen.sailboatmod.ui.territory.recenter"), this::resetMapOffset),
+                Ui.iconButton(new ItemStack(Items.CLOCK), Component.translatable("screen.sailboatmod.nation.action.refresh"), this::requestRefresh));
+        claimMap = new ClaimMapElement(mapHost());
+        claimMap.layout(l -> l.width(CLAIM_MAP_W + 2).height(CLAIM_MAP_H + 2).flexShrink(0));
+        mapColumn.addChildren(mapTools, claimMap);
+        claimsMapView.addChildren(info, mapColumn);
+
+        claimsPermView = Ui.column("sm-pane");
+        claimsPermView.layout(l -> l.paddingAll(Ui.GAP_M).gapAll(Ui.GAP_S));
+        UIElement grid = Ui.wrapRow(Ui.GAP_S);
+        grid.layout(l -> l.widthPercent(100));
+        for (String action : PERMISSION_ACTIONS) {
+            ActionButton button = new ActionButton(Component.empty(), Ui.Tone.SECONDARY,
+                    () -> cycleClaimPermission(action, selectedAccessLevel(action)));
+            button.element().layout(l -> l.width(150));
+            permissionButtons.put(action, button);
+            grid.addChild(button.element());
+        }
+        permissionChunk = Ui.text("");
+        permissionOwner = Ui.text("", "sm-muted");
+        claimsPermView.addChildren(Ui.muted(Component.translatable("screen.sailboatmod.nation.claims.perms_title")), grid,
+                Ui.divider(), permissionChunk, permissionOwner);
+        page.addChildren(claimsTabs.element(), claimsMapView, claimsPermView);
+        return page;
+    }
+
+    private UIElement buildWarPage() {
+        UIElement page = Ui.column();
+        page.layout(l -> l.gapAll(Ui.GAP_S));
+        warLines = Ui.column("sm-pane");
+        warLines.layout(l -> l.paddingAll(Ui.GAP_M).gapAll(Ui.GAP_XS));
+        peacePanel = Ui.column("sm-pane");
+        peacePanel.layout(l -> l.paddingAll(Ui.GAP_M).gapAll(Ui.GAP_XS));
+        peaceProposeRow = row(
+                Ui.button(Component.translatable("command.sailboatmod.nation.peace.type.ceasefire"), Ui.Tone.SECONDARY, () -> submitPeaceProposal("ceasefire", 0, 0)),
+                Ui.button(Component.translatable("command.sailboatmod.nation.peace.type.cede_territory"), Ui.Tone.SECONDARY, () -> submitPeaceProposal("cede_territory", 5, 0)),
+                Ui.button(Component.translatable("command.sailboatmod.nation.peace.type.reparation"), Ui.Tone.SECONDARY, () -> submitPeaceProposal("reparation", 0, 500)));
+        peaceAnswerRow = row(
+                Ui.button(Component.translatable("screen.sailboatmod.nation.action.accept"), Ui.Tone.PRIMARY,
+                        () -> sendNationAction(new NationGuiActionPacket(NationGuiActionPacket.Action.ACCEPT_PEACE), Component.translatable("command.sailboatmod.nation.peace.accepted_self"))),
+                Ui.button(Component.translatable("screen.sailboatmod.nation.action.reject"), Ui.Tone.DANGER,
+                        () -> sendNationAction(new NationGuiActionPacket(NationGuiActionPacket.Action.REJECT_PEACE), Component.translatable("command.sailboatmod.nation.peace.rejected"))));
+        warInfoButton = new ActionButton(Component.translatable("screen.sailboatmod.nation.action.war_info"), Ui.Tone.SECONDARY, () -> runCommand("nation war info"));
+        warTargetInput = Ui.field("", Component.translatable("screen.sailboatmod.nation.war.target_input"), value -> refreshButtons());
+        warTargetInput.layout(l -> l.flexGrow(1).flexBasis(0).flexShrink(1).minWidth(40));
+        declareWarButton = new ActionButton(Component.translatable("screen.sailboatmod.nation.action.declare_war"), Ui.Tone.DANGER, () -> {
+            if (confirm.press(CONFIRM_DECLARE_WAR, ticks())) {
+                submitDeclareWar();
+            }
+            refresh();
+        });
+        warHint = Ui.paragraph(Component.empty(), "sm-muted");
+        page.addChildren(warLines, peacePanel, peaceProposeRow, peaceAnswerRow, warInfoButton.element(),
+                actionRow(warTargetInput, declareWarButton.inRow().element()), warHint);
+        return page;
+    }
+
+    private UIElement buildDiplomacyPage() {
+        UIElement page = Ui.row();
+        page.layout(l -> l.gapAll(Ui.GAP_M).alignItems(AlignItems.STRETCH).flexGrow(1).minHeight(0));
+        nationList = Ui.scroller();
+        nationList.layout(l -> l.width(200).flexGrow(0).flexShrink(0));
+
+        UIElement right = Ui.column();
+        right.layout(l -> l.flexGrow(1).minWidth(0).gapAll(Ui.GAP_S));
+        diplomacyEmpty = Ui.emptyState(Component.translatable("screen.sailboatmod.nation.diplomacy.select_hint"));
+        diplomacyDetail = Ui.column("sm-pane");
+        diplomacyDetail.layout(l -> l.paddingAll(Ui.GAP_M).gapAll(Ui.GAP_S));
+        dipSelected = Ui.text("", "sm-title");
+        dipStatus = Ui.text("", "sm-muted");
+        dipAllyButton = dipButton("screen.sailboatmod.nation.action.ally", Ui.Tone.PRIMARY, NationGuiActionPacket.Action.DIPLOMACY_ALLY);
+        dipTradeButton = dipButton("screen.sailboatmod.nation.action.trade", Ui.Tone.SECONDARY, NationGuiActionPacket.Action.DIPLOMACY_TRADE);
+        dipEnemyButton = dipButton("screen.sailboatmod.nation.diplomacy.enemy", Ui.Tone.SECONDARY, NationGuiActionPacket.Action.DIPLOMACY_ENEMY);
+        dipNeutralButton = dipButton("screen.sailboatmod.nation.action.neutral", Ui.Tone.SECONDARY, NationGuiActionPacket.Action.DIPLOMACY_NEUTRAL);
+        dipAcceptAllyButton = dipButton("screen.sailboatmod.nation.action.accept", Ui.Tone.PRIMARY, NationGuiActionPacket.Action.DIPLOMACY_ACCEPT);
+        dipRejectAllyButton = dipButton("screen.sailboatmod.nation.action.reject", Ui.Tone.SECONDARY, NationGuiActionPacket.Action.DIPLOMACY_REJECT);
+        dipDeclareWarButton = new ActionButton(Component.translatable("screen.sailboatmod.nation.action.declare_war"), Ui.Tone.DANGER, () -> {
+            if (confirm.press(CONFIRM_DIP_WAR + ":" + selectedDiplomacyNationId, ticks())) {
+                submitDipAction(NationGuiActionPacket.Action.DECLARE_WAR);
+            }
+            refresh();
+        });
+        dipOpenTradeButton = new ActionButton(Component.translatable("screen.sailboatmod.trade.open"), Ui.Tone.PRIMARY, this::openSelectedTradeWindow);
+        Button back = Ui.button(Component.translatable("screen.sailboatmod.nation.diplomacy.back"), Ui.Tone.SECONDARY, () -> {
+            selectedDiplomacyNationId = "";
+            refresh();
+        });
+        diplomacyDetail.addChildren(dipSelected, dipStatus,
+                actionRow(dipAllyButton.inRow().element(), dipTradeButton.inRow().element()),
+                actionRow(dipEnemyButton.inRow().element(), dipNeutralButton.inRow().element()),
+                actionRow(dipAcceptAllyButton.inRow().element(), dipRejectAllyButton.inRow().element()),
+                actionRow(dipOpenTradeButton.inRow().element(), dipDeclareWarButton.inRow().element()),
+                row(Ui.spacer(), back));
+        dipRequests = Ui.column("sm-pane");
+        dipRequests.layout(l -> l.paddingAll(Ui.GAP_M).gapAll(Ui.GAP_XS));
+        right.addChildren(diplomacyEmpty, diplomacyDetail, dipRequests);
+        page.addChildren(nationList, right);
+        return page;
+    }
+
+    private ActionButton dipButton(String key, Ui.Tone tone, NationGuiActionPacket.Action action) {
+        ActionButton button = new ActionButton(Component.translatable(key), tone, () -> submitDipAction(action));
+        button.inRow();
+        return button;
+    }
+
+    private UIElement buildTreasuryPage() {
+        UIElement page = Ui.column();
+        page.layout(l -> l.gapAll(Ui.GAP_S));
+        UIElement metrics = Ui.row();
+        metrics.layout(l -> l.gapAll(Ui.GAP_S));
+        metricBalance = Ui.text("", "sm-price");
+        metricTowns = Ui.text("", "sm-price");
+        metricTrades = Ui.text("", "sm-price");
+        metricItems = Ui.text("", "sm-price");
+        metrics.addChildren(metric("screen.sailboatmod.nation.treasury.metric.balance", Items.GOLD_INGOT, metricBalance),
+                metric("screen.sailboatmod.nation.treasury.metric.towns", Items.BELL, metricTowns),
+                metric("screen.sailboatmod.nation.treasury.metric.trades", Items.EMERALD, metricTrades),
+                metric("screen.sailboatmod.nation.treasury.metric.items", Items.CHEST, metricItems));
+
+        UIElement policy = Ui.column("sm-pane");
+        policy.layout(l -> l.paddingAll(Ui.GAP_M).gapAll(Ui.GAP_S));
+        salesTaxBar = new MeterBar();
+        tariffBar = new MeterBar();
+        salesTaxValue = Ui.alignRight(Ui.text(""));
+        tariffValue = Ui.alignRight(Ui.text(""));
+        treasuryCommandsButton = Ui.button(Component.translatable("screen.sailboatmod.nation.treasury.commands"), Ui.Tone.SECONDARY, () -> {
+            showTreasuryCommands = !showTreasuryCommands;
+            refresh();
+        });
+        policy.addChildren(row(Ui.text(Component.translatable("screen.sailboatmod.nation.treasury.policy_title"), "sm-title"), Ui.spacer(), treasuryCommandsButton),
+                policyRow("screen.sailboatmod.nation.treasury.sales_tax_label", salesTaxBar, salesTaxValue, () -> adjustSalesTax(-100), () -> adjustSalesTax(100)),
+                policyRow("screen.sailboatmod.nation.treasury.import_tariff_label", tariffBar, tariffValue, () -> adjustTariff(-100), () -> adjustTariff(100)));
+
+        treasuryItemList = Ui.scroller();
+        treasuryItemList.layout(l -> l.height(84).flexGrow(0));
+        treasuryHint = Ui.paragraph(Component.empty(), "sm-muted");
+        page.addChildren(metrics, policy,
+                Ui.text(Component.translatable("screen.sailboatmod.nation.treasury.items_label"), "sm-muted"), treasuryItemList,
+                Ui.paragraph(Component.translatable("screen.sailboatmod.nation.treasury.bank_access_hint"), "sm-muted"),
+                Ui.paragraph(Component.translatable("screen.sailboatmod.nation.treasury.detail_hint"), "sm-muted"), treasuryHint);
+        return page;
+    }
+
+    private static UIElement metric(String key, net.minecraft.world.item.Item icon, Label value) {
+        UIElement card = Ui.column("sm-chip");
+        card.layout(l -> l.flexGrow(1).flexBasis(0).minWidth(0).height(30).paddingAll(Ui.GAP_XS).gapAll(Ui.GAP_XS));
+        UIElement head = Ui.row();
+        head.layout(l -> l.gapAll(Ui.GAP_XS));
+        head.addChildren(Ui.icon(new ItemStack(icon), 10), Ui.text(Component.translatable(key), "sm-muted"));
+        card.addChildren(head, value);
+        return card;
+    }
+
+    private UIElement policyRow(String labelKey, MeterBar bar, Label value, Runnable down, Runnable up) {
+        UIElement line = Ui.row();
+        line.layout(l -> l.gapAll(Ui.GAP_S));
+        Label label = Ui.text(Component.translatable(labelKey), "sm-muted");
+        label.layout(l -> l.width(90));
+        bar.layout(l -> l.flexGrow(1));
+        value.layout(l -> l.width(40));
+        Button minus = Ui.button(Component.literal("-"), Ui.Tone.SECONDARY, down);
+        Button plus = Ui.button(Component.literal("+"), Ui.Tone.SECONDARY, up);
+        taxButtons.add(minus);
+        taxButtons.add(plus);
+        line.addChildren(label, bar, value, minus, plus);
+        return line;
+    }
+
+    private UIElement buildFlagPage() {
+        UIElement page = Ui.column();
+        page.layout(l -> l.gapAll(Ui.GAP_S));
+        UIElement top = Ui.row();
+        top.layout(l -> l.gapAll(Ui.GAP_M).alignItems(AlignItems.STRETCH));
+        flagPreview = new FlagPreview();
+        flagPreview.layout(l -> l.width(130).height(70).flexShrink(0).paddingAll(Ui.GAP_XS));
+        UIElement meta = Ui.column();
+        meta.layout(l -> l.flexGrow(1).minWidth(0).gapAll(Ui.GAP_XS));
+        flagLine1 = Ui.text("");
+        flagLine2 = Ui.text("");
+        flagLine3 = Ui.text("", "sm-muted");
+        toggleMirrorButton = new ActionButton(Component.empty(), Ui.Tone.SECONDARY, this::submitMirrorToggle);
+        meta.addChildren(flagLine1, flagLine2, flagLine3, toggleMirrorButton.element());
+        top.addChildren(flagPreview, meta);
+
+        UIElement colors = Ui.column("sm-pane");
+        colors.layout(l -> l.paddingAll(Ui.GAP_M).gapAll(Ui.GAP_S));
+        primaryColorInput = Ui.field("", Component.translatable("screen.sailboatmod.nation.color.primary"), value -> refresh());
+        secondaryColorInput = Ui.field("", Component.translatable("screen.sailboatmod.nation.color.secondary"), value -> refresh());
+        primarySwatch = swatch();
+        secondarySwatch = swatch();
+        applyColorsButton = new ActionButton(Component.translatable("screen.sailboatmod.nation.action.apply_colors"), Ui.Tone.PRIMARY, this::submitColorUpdate);
+        colors.addChildren(
+                row(fixed(Ui.muted(Component.translatable("screen.sailboatmod.nation.color.primary")), 90), primarySwatch, primaryColorInput),
+                row(fixed(Ui.muted(Component.translatable("screen.sailboatmod.nation.color.secondary")), 90), secondarySwatch, secondaryColorInput),
+                actionRow(Ui.spacer(), applyColorsButton.inRow().element()));
+
+        UIElement upload = Ui.column("sm-pane");
+        upload.layout(l -> l.paddingAll(Ui.GAP_M).gapAll(Ui.GAP_S));
+        flagPathInput = Ui.field("", Component.translatable("screen.sailboatmod.nation.flag_path"), value -> { });
+        flagPathInput.layout(l -> l.flexGrow(1).flexBasis(0).flexShrink(1).minWidth(40));
+        browseButton = Ui.button(Component.translatable("screen.sailboatmod.nation.action.browse"), Ui.Tone.SECONDARY, this::browseForImage);
+        uploadButton = new ActionButton(Component.translatable("screen.sailboatmod.nation.action.upload"), Ui.Tone.PRIMARY, this::submitUpload);
+        upload.addChildren(Ui.muted(Component.translatable("screen.sailboatmod.nation.flag.upload_hint_short")),
+                actionRow(flagPathInput, browseButton, uploadButton.inRow().element()));
+        page.addChildren(top, colors, upload);
+        return page;
+    }
+
+    private static UIElement swatch() {
+        UIElement swatch = new UIElement();
+        swatch.addClass("sm-chip");
+        swatch.layout(l -> l.width(18).height(12).flexShrink(0));
+        return swatch;
+    }
+
+    private static <T extends UIElement> T fixed(T element, float width) {
+        element.layout(l -> l.width(width).flexShrink(0));
+        return element;
+    }
+
+    private static UIElement row(UIElement... children) {
+        UIElement row = Ui.row();
+        row.layout(l -> l.gapAll(Ui.GAP_S).widthPercent(100).minWidth(0));
+        row.addChildren(children);
+        return row;
+    }
+
+    private static UIElement actionRow(UIElement... children) {
+        return row(children).layout(l -> l.flexWrap(FlexWrap.WRAP));
+    }
+
+    // =====================================================================================================
+    // refresh
+    // =====================================================================================================
+
+    /** Re-reads the data and selection into the UI. Safe to call before the UI exists. */
+    private void refresh() {
+        if (!built) {
+            return;
+        }
+        headerLabel.setValue(Component.literal(headerText()));
+        economyLabel.setValue(Component.literal(buildEconomyHeaderLine()));
+        tabs.select(currentPage);
+        pageTitle.setValue(currentPage.title());
+        pages.forEach((page, element) -> element.setDisplay(page == currentPage));
+        statusLabel.setValue(statusLine);
+        switch (currentPage) {
+            case OVERVIEW -> refreshOverview();
+            case MEMBERS -> refreshMembers();
+            case CLAIMS -> refreshClaims();
+            case WAR -> refreshWar();
+            case DIPLOMACY -> refreshDiplomacy();
+            case TREASURY -> refreshTreasury();
+            case FLAG -> refreshFlag();
+        }
+        refreshButtons();
+    }
+
+    private void refreshOverview() {
+        fillLines(overviewLines, buildOverviewLines());
+        boolean hasNation = data.hasNation();
+        noNationForm.setDisplay(!hasNation);
+        nationForm.setDisplay(hasNation);
+        NationOverviewTown town = selectedTown();
+        if (town == null) {
+            townSelected.setValue(Component.translatable("screen.sailboatmod.nation.overview.town_none"));
+            townMayor.setValue(Component.empty());
+            townClaims.setValue(Component.empty());
+            townColony.setValue(Component.empty());
+        } else {
+            townSelected.setValue(Component.translatable("screen.sailboatmod.nation.overview.town_selected", town.townName()));
+            townMayor.setValue(Component.translatable("screen.sailboatmod.nation.overview.town_mayor", town.mayorName()));
+            townClaims.setValue(Component.translatable("screen.sailboatmod.nation.overview.town_claims", town.claimCount(),
+                    town.capital() ? Component.translatable("screen.sailboatmod.nation.overview.town_capital").getString() : ""));
+            if (town.externalColony().present()) {
+                String colonyName = town.externalColony().colonyName().isBlank()
+                        ? "#" + town.externalColony().colonyId()
+                        : town.externalColony().colonyName();
+                townColony.setValue(Component.translatable("screen.sailboatmod.nation.overview.town_minecolonies",
+                        colonyName, town.externalColony().population(), town.externalColony().maxPopulation()));
+            } else {
+                townColony.setValue(Component.empty());
+            }
+        }
+    }
+
+    private void refreshMembers() {
+        memberCountLabel.setValue(Component.translatable("screen.sailboatmod.nation.overview.members", data.memberCount()));
+        if (shownMembers != data.members() || !selectedMemberUuid.equals(shownMemberSelection)) {
+            shownMembers = data.members();
+            shownMemberSelection = selectedMemberUuid;
+            memberList.clearAllScrollViewChildren();
+            if (!data.hasNation()) {
+                memberList.addScrollViewChild(Ui.emptyState(Component.translatable("screen.sailboatmod.nation.members.none")));
+            } else if (data.members().isEmpty()) {
+                memberList.addScrollViewChild(Ui.emptyState(Component.translatable("screen.sailboatmod.nation.members.empty")));
+            }
+            for (NationOverviewMember member : data.members()) {
+                UIElement row = Ui.row("sm-row");
+                row.layout(l -> l.widthPercent(100).height(14).paddingHorizontal(Ui.GAP_S).gapAll(Ui.GAP_S).flexShrink(0));
+                UIElement dot = new UIElement();
+                dot.layout(l -> l.width(4).height(4).flexShrink(0));
+                dot.style(s -> s.background(new ColorRectTexture(member.online() ? 0xFF56DDB4 : 0xFF71808F)));
+                Label name = Ui.text(member.playerName());
+                name.layout(l -> l.flexGrow(1));
+                row.addChildren(dot, name, Ui.text(member.officeName(), "sm-warn"));
+                Ui.setClass(row, "selected", member.playerUuid().equals(selectedMemberUuid));
+                Ui.clickable(row, () -> {
+                    selectedMemberUuid = member.playerUuid();
+                    refresh();
+                });
+                memberList.addScrollViewChild(row);
+            }
+        }
+        NationOverviewMember selected = selectedMember();
+        if (selected == null) {
+            memberName.setValue(Component.translatable("screen.sailboatmod.nation.members.no_selection"));
+            memberRole.setValue(Component.empty());
+            memberStatus.setValue(Component.empty());
+            memberUuid.setValue(Component.empty());
+        } else {
+            memberName.setValue(Component.literal(selected.playerName()));
+            memberRole.setValue(Component.translatable("screen.sailboatmod.nation.overview.role", selected.officeName()));
+            memberStatus.setValue(Component.translatable(selected.online() ? "screen.sailboatmod.nation.members.status.online" : "screen.sailboatmod.nation.members.status.offline"));
+            Ui.setClass(memberStatus, "sm-up", selected.online());
+            Ui.setClass(memberStatus, "sm-muted", !selected.online());
+            memberUuid.setValue(Component.literal(selected.playerUuid()));
+        }
+    }
+
+    private void refreshClaims() {
+        claimsTabs.select(claimsSubPage);
+        boolean perms = claimsSubPage == 1;
+        claimsMapView.setDisplay(!perms);
+        claimsPermView.setDisplay(perms);
+        fillLines(claimLines, buildClaimLines());
+        NationOverviewClaim selected = selectedClaim();
+        if (selected == null) {
+            permissionChunk.setValue(Component.translatable("screen.sailboatmod.nation.claims.perms_select_hint"));
+            permissionOwner.setValue(Component.empty());
+        } else {
+            permissionChunk.setValue(Component.translatable("screen.sailboatmod.nation.claims.selected_chunk", selectedClaimChunkX, selectedClaimChunkZ));
+            permissionOwner.setValue(Component.translatable("screen.sailboatmod.nation.claims.owner", selected.nationName()));
+        }
+        for (Map.Entry<String, ActionButton> entry : permissionButtons.entrySet()) {
+            entry.getValue().setLabel(Component.translatable("screen.sailboatmod.nation.claims.button." + entry.getKey(),
+                    accessName(selectedAccessLevel(entry.getKey()))));
+        }
+    }
+
+    private void refreshWar() {
+        fillLines(warLines, buildWarLines());
+        boolean proposal = data.hasNation() && data.hasPeaceProposal();
+        peacePanel.setDisplay(proposal);
+        if (proposal) {
+            peacePanel.clearAllChildren();
+            peacePanel.addChild(row(Ui.text(Component.translatable("screen.sailboatmod.nation.peace.proposal_title"), "sm-title"), Ui.spacer(),
+                    Ui.text(Component.translatable("screen.sailboatmod.nation.peace.remaining", data.peaceProposalRemainingSeconds()), "sm-muted")));
+            peacePanel.addChild(Ui.text(Component.translatable("command.sailboatmod.nation.peace.type." + data.peaceProposalType())));
+            String details = "";
+            if (data.peaceProposalCede() > 0) details += Component.translatable("screen.sailboatmod.nation.peace.cede_count", data.peaceProposalCede()).getString() + "  ";
+            if (data.peaceProposalAmount() > 0) details += Component.translatable("screen.sailboatmod.nation.peace.reparation_amount", data.peaceProposalAmount()).getString();
+            if (!details.isBlank()) {
+                peacePanel.addChild(Ui.text(details, "sm-muted"));
+            }
+        }
+        warHint.setValue(data.canDeclareWar()
+                ? Component.translatable("screen.sailboatmod.nation.war.declare_hint")
+                : Component.translatable("command.sailboatmod.nation.diplomacy.no_permission"));
+    }
+
+    private void refreshDiplomacy() {
+        List<NationOverviewNationEntry> nations = data.allNations();
+        if (shownNations != nations || !selectedDiplomacyNationId.equals(shownNationSelection)) {
+            shownNations = nations;
+            shownNationSelection = selectedDiplomacyNationId;
+            nationList.clearAllScrollViewChildren();
+            if (!data.hasNation()) {
+                nationList.addScrollViewChild(Ui.emptyState(Component.translatable("screen.sailboatmod.nation.diplomacy.no_nation")));
+            } else if (nations.isEmpty()) {
+                nationList.addScrollViewChild(Ui.emptyState(Component.translatable("screen.sailboatmod.nation.diplomacy.no_nations")));
+            }
+            for (NationOverviewNationEntry entry : nations) {
+                UIElement row = Ui.row("sm-row");
+                row.layout(l -> l.widthPercent(100).height(20).paddingHorizontal(Ui.GAP_S).gapAll(Ui.GAP_S).flexShrink(0));
+                FlagPreview flag = new FlagPreview();
+                flag.layout(l -> l.width(16).height(16).flexShrink(0));
+                flag.set(entry.flagId().isBlank() ? null
+                                : NationFlagTextureCache.resolve(entry.flagId(), entry.primaryColorRgb(), entry.secondaryColorRgb(), entry.flagMirrored()),
+                        16, 16, entry.primaryColorRgb());
+                Label name = Ui.text(entry.nationName());
+                name.layout(l -> l.flexGrow(1));
+                row.addChildren(flag, name, Ui.text(statusName(entry.diplomacyStatusId()), statusClass(entry.diplomacyStatusId())));
+                Ui.setClass(row, "selected", entry.nationId().equals(selectedDiplomacyNationId));
+                Ui.clickable(row, () -> {
+                    selectedDiplomacyNationId = entry.nationId();
+                    confirm.disarm();
+                    refresh();
+                });
+                nationList.addScrollViewChild(row);
+            }
+        }
+        NationOverviewNationEntry selected = selectedDiplomacyNation();
+        diplomacyEmpty.setDisplay(selected == null);
+        diplomacyDetail.setDisplay(selected != null);
+        if (selected != null) {
+            dipSelected.setValue(Component.translatable("screen.sailboatmod.nation.diplomacy.selected", selected.nationName()));
+            dipStatus.setValue(Component.translatable("screen.sailboatmod.nation.diplomacy.status", statusName(selected.diplomacyStatusId())));
+        }
+        dipRequests.clearAllChildren();
+        dipRequests.addChild(Ui.text(Component.translatable("screen.sailboatmod.nation.war.requests_title"), "sm-title"));
+        for (Component line : buildIncomingRequestLines()) {
+            dipRequests.addChild(Ui.text(line));
+        }
+    }
+
+    private void refreshTreasury() {
+        metricBalance.setValue(Component.literal(formatCompactMoney(data.treasuryBalance())));
+        metricTowns.setValue(Component.literal(Integer.toString(data.towns().size())));
+        metricTrades.setValue(Component.literal(Integer.toString(data.recentTradeCount())));
+        metricItems.setValue(Component.literal(occupiedTreasurySlots() + " / " + data.treasuryItems().size()));
+        salesTaxBar.set(data.salesTaxBasisPoints() / 3000f, 0xFF7AA2C6);
+        tariffBar.set(data.importTariffBasisPoints() / 5000f, 0xFFC69263);
+        salesTaxValue.setValue(Component.literal(formatBasisPoints(data.salesTaxBasisPoints())));
+        tariffValue.setValue(Component.literal(formatBasisPoints(data.importTariffBasisPoints())));
+        treasuryHint.setValue(Component.translatable(showTreasuryCommands
+                ? (data.canManageTreasury() ? "screen.sailboatmod.nation.treasury.commands_hint" : "screen.sailboatmod.nation.treasury.bank_hint")
+                : "screen.sailboatmod.nation.treasury.policy_hint"));
+        if (shownTreasuryItems != data.treasuryItems()) {
+            shownTreasuryItems = data.treasuryItems();
+            treasuryItemList.clearAllScrollViewChildren();
+            boolean any = false;
+            for (ItemStack stack : data.treasuryItems()) {
+                if (stack.isEmpty()) {
+                    continue;
+                }
+                any = true;
+                treasuryItemList.addScrollViewChild(Ui.itemRow(stack, stack.getHoverName(), Component.literal("x" + stack.getCount()), "sm-price"));
+            }
+            if (!any) {
+                treasuryItemList.addScrollViewChild(Ui.emptyState(Component.translatable("screen.sailboatmod.market.empty")));
+            }
+        }
+    }
+
+    private void refreshFlag() {
+        List<Component> lines = buildFlagLines();
+        flagLine1.setValue(firstLine(lines));
+        flagLine2.setValue(secondLine(lines));
+        flagLine3.setValue(thirdLine(lines));
+        flagPreview.set(NationFlagTextureCache.resolve(data.flagId(), previewPrimaryColor(), previewSecondaryColor(), data.flagMirrored()),
+                data.flagWidth(), data.flagHeight(), previewPrimaryColor());
+        toggleMirrorButton.setLabel(Component.translatable(data.flagMirrored() ? "screen.sailboatmod.nation.action.unmirror" : "screen.sailboatmod.nation.action.mirror"));
+        setSwatch(primarySwatch, previewPrimaryColor(), parseHexColor(valueOf(primaryColorInput)) != null);
+        setSwatch(secondarySwatch, previewSecondaryColor(), parseHexColor(valueOf(secondaryColorInput)) != null);
+        Ui.setClass(primaryColorInput, "sm-invalid", parseHexColor(valueOf(primaryColorInput)) == null);
+        Ui.setClass(secondaryColorInput, "sm-invalid", parseHexColor(valueOf(secondaryColorInput)) == null);
+    }
+
+    private final Map<UIElement, Integer> shownSwatches = new HashMap<>();
+
+    private void setSwatch(UIElement swatch, int rgb, boolean valid) {
+        int argb = valid ? 0xFF000000 | (rgb & 0xFFFFFF) : 0xFF7A2020;
+        Integer previous = shownSwatches.put(swatch, argb);
+        if (previous == null || previous != argb) {
+            swatch.style(s -> s.background(new ColorRectTexture(argb)));
+        }
+    }
+
+    /** Enabled state of every action, from the same rules as before. */
+    private void refreshButtons() {
+        if (!built) {
+            return;
+        }
+        boolean hasNation = data.hasNation();
+        boolean canManageInfo = hasNation && data.canManageInfo();
+        boolean noNation = !hasNation;
+        long now = ticks();
+
+        // overview
+        nationNameInput.setActive(!hasNation || canManageInfo);
+        shortNameInput.setActive(canManageInfo);
+        saveNationInfoButton.sync(canManageInfo && nationInfoChanged(), false, false);
+        createNationButton.sync(noNation && !valueOf(createNameInput).trim().isBlank(), false, false);
+        joinNationButton.sync(noNation && !valueOf(joinNationInput).trim().isBlank(), false, false);
+        openCapitalTownButton.sync(hasNation && selectedTown() != null, false, false);
+        removeCoreButton.sync(hasNation && data.hasCore() && data.canManageClaims(), false, confirm.isArmed(CONFIRM_REMOVE_CORE, now));
+        previousTownButton.setActive(hasNation && data.towns().size() > 1);
+        nextTownButton.setActive(hasNation && data.towns().size() > 1);
+
+        // members
+        boolean leaderControls = hasNation && data.isLeader();
+        officerTitleInput.setActive(leaderControls);
+        saveOfficerTitleButton.sync(leaderControls && officerTitleChanged(), false, false);
+        appointOfficerButton.sync(leaderControls && canAppointSelectedMember(), false, false);
+        removeOfficerButton.sync(leaderControls && canRemoveSelectedOfficer(), false, false);
+        appointMayorButton.sync(leaderControls && canAssignSelectedMemberAsMayor(), false, false);
+
+        // claims
+        NationOverviewClaim selectedClaim = selectedClaim();
+        boolean ownClaim = selectedClaim != null && data.nationId().equals(selectedClaim.nationId());
+        boolean canClaims = hasNation && data.canManageClaims();
+        claimButton.sync(canClaims && selectedClaim == null, false, false);
+        unclaimButton.sync(canClaims && ownClaim, false, confirm.isArmed(CONFIRM_UNCLAIM, now));
+        for (ActionButton button : permissionButtons.values()) {
+            button.sync(canClaims && ownClaim, false, false);
+        }
+
+        // war
+        boolean canDiplomacy = hasNation && data.canDeclareWar();
+        boolean hasWar = data.hasActiveWar();
+        boolean incomingPeace = data.hasPeaceProposal() && data.peaceProposalIncoming();
+        peaceProposeRow.setDisplay(hasWar && !incomingPeace);
+        peaceAnswerRow.setDisplay(incomingPeace);
+        for (UIElement child : peaceProposeRow.getChildren()) {
+            child.setActive(canDiplomacy && hasWar);
+        }
+        for (UIElement child : peaceAnswerRow.getChildren()) {
+            child.setActive(canDiplomacy && hasWar && incomingPeace);
+        }
+        warInfoButton.sync(hasNation, false, false);
+        warTargetInput.setActive(canDiplomacy);
+        declareWarButton.sync(canDiplomacy && !valueOf(warTargetInput).trim().isBlank() && !hasWar && data.warCooldownRemainingSeconds() <= 0,
+                false, confirm.isArmed(CONFIRM_DECLARE_WAR, now));
+
+        // diplomacy
+        NationOverviewNationEntry selectedNation = selectedDiplomacyNation();
+        boolean dipSelection = selectedNation != null;
+        boolean allied = dipSelection && "allied".equals(selectedNation.diplomacyStatusId());
+        boolean pendingAlly = dipSelection && hasPendingAllianceRequest(selectedDiplomacyNationId);
+        dipAllyButton.sync(canDiplomacy && dipSelection && !allied, false, false);
+        dipTradeButton.sync(canDiplomacy && dipSelection, false, false);
+        dipEnemyButton.sync(canDiplomacy && dipSelection, false, false);
+        dipNeutralButton.sync(canDiplomacy && dipSelection, false, false);
+        dipAcceptAllyButton.element().setDisplay(pendingAlly);
+        dipRejectAllyButton.element().setDisplay(pendingAlly);
+        dipAcceptAllyButton.sync(canDiplomacy && pendingAlly, false, false);
+        dipRejectAllyButton.sync(canDiplomacy && pendingAlly, false, false);
+        dipDeclareWarButton.sync(canDiplomacy && dipSelection && !hasWar && data.warCooldownRemainingSeconds() <= 0,
+                false, confirm.isArmed(CONFIRM_DIP_WAR + ":" + selectedDiplomacyNationId, now));
+        dipOpenTradeButton.sync(canOpenTradeWindow(currentPage == Page.DIPLOMACY, hasNation, dipSelection, data.canDeclareWar(), data.canManageTreasury()), false, false);
+
+        // treasury
+        boolean canTreasury = hasNation && data.canManageTreasury();
+        for (Button button : taxButtons) {
+            button.setActive(canTreasury);
+        }
+        treasuryCommandsButton.setDisplay(hasNation);
+
+        // flag
+        primaryColorInput.setActive(canManageInfo);
+        secondaryColorInput.setActive(canManageInfo);
+        applyColorsButton.sync(canManageInfo && colorInputsValid(), false, false);
+        boolean canFlag = hasNation && data.canUploadFlag();
+        flagPathInput.setActive(canFlag);
+        browseButton.setActive(canFlag);
+        uploadButton.sync(canFlag, false, false);
+        toggleMirrorButton.sync(canFlag && !data.flagId().isBlank(), false, false);
+    }
+
+    private static void fillLines(UIElement container, List<Component> lines) {
+        container.clearAllChildren();
+        for (Component line : lines) {
+            container.addChild(Ui.paragraph(line));
+        }
+    }
+
+    private String selectedAccessLevel(String action) {
+        return switch (action) {
+            case "break" -> selectedBreakAccessLevel();
+            case "place" -> selectedPlaceAccessLevel();
+            case "use" -> selectedUseAccessLevel();
+            case "container" -> selectedContainerAccessLevel();
+            case "redstone" -> selectedRedstoneAccessLevel();
+            case "entity_use" -> selectedEntityUseAccessLevel();
+            default -> selectedEntityDamageAccessLevel();
+        };
+    }
+
+    private static String statusName(String statusId) {
+        String id = statusId == null || statusId.isBlank() ? "neutral" : statusId.toLowerCase(Locale.ROOT);
+        return Component.translatable("command.sailboatmod.nation.diplomacy.status." + id).getString();
+    }
+
+    private static String statusClass(String statusId) {
+        if (statusId == null) {
+            return "sm-muted";
+        }
+        return switch (statusId) {
+            case "allied", "trade" -> "sm-up";
+            case "enemy" -> "sm-down";
+            default -> "sm-muted";
+        };
+    }
+
+    // =====================================================================================================
+    // map host
+    // =====================================================================================================
+
+    private ClaimMapElement.Host mapHost() {
+        return new ClaimMapElement.Host() {
+            @Override
+            public void paintMap(GuiGraphics g, ClaimMapViewport viewport, int mouseX, int mouseY) {
+                claimWorldMapView.renderBase(g, font, viewport, mapCenterX(), mapCenterZ(), claimRadius());
+                requestInitialVisibleClaimMapForceRender(viewport);
+                ClaimMapPainter.drawClaims(g, claimWorldMapView, viewport, NationHomeScreen.this::findClaim, NationOverviewClaim::nationId);
+                ClaimMapPainter.drawMarker(g, claimWorldMapView, viewport, data.currentChunkX(), data.currentChunkZ(), 0xFFFFFFFF);
+                ClaimMapPainter.drawMarker(g, claimWorldMapView, viewport, selectedClaimChunkX, selectedClaimChunkZ, 0xFFFFD166);
+                ClaimMapPainter.drawArea(g, claimWorldMapView, viewport, areaCorner1X, areaCorner1Z, areaCorner2X, areaCorner2Z);
+                ClaimMapPainter.drawProgress(g, viewport, data.claimMapState(),
+                        claimMapProgressWidth(data.claimMapState(), viewport.width() - 2, true),
+                        claimMapProgressWidth(data.claimMapState(), viewport.width() - 2, false));
+                ClaimMapPainter.drawHoverLabel(g, font, claimWorldMapView, viewport, mouseX, mouseY, NationHomeScreen.this::findClaim,
+                        NationOverviewClaim::nationId, NationOverviewClaim::nationName, data.nearbyClaims());
+            }
+
+            @Override
+            public void zoomMap(double mouseX, double mouseY, double factor, ClaimMapViewport viewport) {
+                claimWorldMapView.zoomAround(mouseX, mouseY, factor, viewport.x(), viewport.y(), viewport.width(), viewport.height());
+                syncMapOffsetFromClaimWorldMap();
+            }
+
+            @Override
+            public void clickMap(double mouseX, double mouseY, ClaimMapViewport viewport, boolean extendArea) {
+                ChunkPos chunk = claimWorldMapView.screenToChunk(mouseX, mouseY, viewport);
+                if (extendArea && areaCorner1X != Integer.MIN_VALUE) {
+                    areaCorner2X = chunk.x;
+                    areaCorner2Z = chunk.z;
+                } else {
+                    selectedClaimChunkX = chunk.x;
+                    selectedClaimChunkZ = chunk.z;
+                    areaCorner1X = chunk.x;
+                    areaCorner1Z = chunk.z;
+                    areaCorner2X = Integer.MIN_VALUE;
+                    areaCorner2Z = Integer.MIN_VALUE;
+                }
+                confirm.disarm();
+                refresh();
+            }
+
+            @Override
+            public void panMap(double deltaX, double deltaY) {
+                claimWorldMapView.panByScreenDelta(deltaX, deltaY);
+                syncMapOffsetFromClaimWorldMap();
+            }
+
+            @Override
+            public void panFinished() {
+                requestRefresh(mapCenterX(), mapCenterZ());
+                requestVisibleClaimMapForceRender();
+            }
+        };
+    }
+
+    private ClaimMapViewport claimMapViewport() {
+        return claimMap == null ? new ClaimMapViewport(0, 0, CLAIM_MAP_W, CLAIM_MAP_H) : claimMap.viewport();
+    }
+
+    @Override
+    public boolean mouseDragged(double mouseX, double mouseY, int button, double dragX, double dragY) {
+        if (claimMap != null && claimMap.dragTo(mouseX, mouseY, button)) {
+            return true;
+        }
+        return super.mouseDragged(mouseX, mouseY, button, dragX, dragY);
+    }
+
+    @Override
+    public boolean mouseReleased(double mouseX, double mouseY, int button) {
+        if (claimMap != null && shouldRequestRefreshAfterMapDragRelease(button, claimMap.isDragging())) {
+            claimMap.release(button);
+            return true;
+        }
+        return super.mouseReleased(mouseX, mouseY, button);
+    }
+
+    // =====================================================================================================
+    // lifecycle and keys
+    // =====================================================================================================
+
+    @Override
+    protected void onUiTick() {
+        tickAutoRefresh();
+        if (built) {
+            statusLabel.setValue(statusLine);
+            refreshButtons();
+        }
+    }
+
+    @Override
+    protected boolean onTextFieldKey(UIElement field, int keyCode) {
+        if (!isEnter(keyCode)) {
+            return false;
+        }
+        if (field == createNameInput) return submitAndTrue(this::submitCreateNation);
+        if (field == nationNameInput) return submitAndTrue(this::submitNationInfoUpdate);
+        if (field == shortNameInput) return submitAndTrue(this::submitNationInfoUpdate);
+        if (field == joinNationInput) return submitAndTrue(this::submitJoinNation);
+        if (field == primaryColorInput || field == secondaryColorInput) return submitAndTrue(this::submitColorUpdate);
+        if (field == flagPathInput) return submitAndTrue(this::submitUpload);
+        if (field == officerTitleInput) return submitAndTrue(this::submitOfficerTitleUpdate);
+        return false;
+    }
+
+    @Override
+    public void removed() {
+        super.removed();
+        NationClientHooks.onScreenClosed(this.data.nationId());
+        this.claimWorldMapView.close();
+    }
+
+    private void switchPage(Page page) {
+        this.currentPage = page == null ? Page.OVERVIEW : page;
+        confirm.disarm();
+        if (this.currentPage == Page.CLAIMS) {
+            ensureClaimPreviewVisible();
+        }
+        refresh();
+    }
+
+    private void syncNationInfoInputs() {
+        if (!this.data.hasNation() || nationNameInput == null) return;
+        if (!this.nationNameInput.isFocused()) this.nationNameInput.setText(this.data.nationName(), false);
+        if (!this.shortNameInput.isFocused()) this.shortNameInput.setText(this.data.shortName(), false);
+    }
+
+    private void syncColorInputs() {
+        if (primaryColorInput == null) return;
+        if (!this.primaryColorInput.isFocused()) this.primaryColorInput.setText(hex(this.data.primaryColorRgb()), false);
+        if (!this.secondaryColorInput.isFocused()) this.secondaryColorInput.setText(hex(this.data.secondaryColorRgb()), false);
+    }
+
+    private void syncOfficerTitleInput() {
+        if (this.officerTitleInput != null && !this.officerTitleInput.isFocused()) this.officerTitleInput.setText(this.data.officerTitle(), false);
+    }
+
+    @Override
+    protected void afterInit() {
+        syncNationInfoInputs();
+        syncColorInputs();
+        syncOfficerTitleInput();
+        refresh();
+    }
+
+
+    // =====================================================================================================
+    // data, map protocol and actions (kept from the previous screen)
+    // =====================================================================================================
+
     private int claimRadius() {
         int stateRadius = this.data.claimMapState().radius();
         if (stateRadius > 0) {
@@ -88,108 +1189,6 @@ public class NationHomeScreen extends Screen implements RoadPlannerTileSyncRecei
         this.lastKnownClaimRadius = configuredRadius;
         return configuredRadius;
     }
-
-    private NationOverviewData data;
-    private Page currentPage = Page.OVERVIEW;
-    private EditBox nationNameInput;
-    private EditBox shortNameInput;
-    private EditBox joinNationInput;
-    private EditBox primaryColorInput;
-    private EditBox secondaryColorInput;
-    private EditBox flagPathInput;
-    private EditBox warTargetInput;
-    private EditBox officerTitleInput;
-    private Component statusLine = Component.empty();
-    private Button refreshButton;
-    private Button overviewTabButton;
-    private Button membersTabButton;
-    private Button claimsTabButton;
-    private Button warTabButton;
-    private Button flagTabButton;
-    private Button diplomacyTabButton;
-    private Button treasuryTabButton;
-    private Button claimButton;
-    private Button unclaimButton;
-    private Button warButton;
-    private Button declareWarButton;
-    private Button uploadButton;
-    private Button browseButton;
-    private Button applyColorsButton;
-    private Button saveNationInfoButton;
-    private Button createNationButton;
-    private Button joinNationButton;
-    private Button nationHelpButton;
-    private Button openCapitalTownButton;
-    private Button removeCoreButton;
-    private Button previousTownButton;
-    private Button nextTownButton;
-    private Button toggleMirrorButton;
-    private Button breakPermissionButton;
-    private Button placePermissionButton;
-    private Button usePermissionButton;
-    private Button containerPermissionButton;
-    private Button redstonePermissionButton;
-    private Button entityUsePermissionButton;
-    private Button entityDamagePermissionButton;
-    private Button appointOfficerButton;
-    private Button removeOfficerButton;
-    private Button appointMayorButton;
-    private Button saveOfficerTitleButton;
-    private int memberScroll;
-    private int treasuryItemScroll;
-    private int autoRefreshTicks;
-    private String selectedMemberUuid = "";
-    private String selectedTownId = "";
-    private int selectedClaimChunkX = Integer.MIN_VALUE;
-    private int selectedClaimChunkZ = Integer.MIN_VALUE;
-    private int areaCorner1X = Integer.MIN_VALUE;
-    private int areaCorner1Z = Integer.MIN_VALUE;
-    private int areaCorner2X = Integer.MIN_VALUE;
-    private int areaCorner2Z = Integer.MIN_VALUE;
-    private int claimsSubPage;
-    private Button claimsSubPageButton;
-    private int diplomacyScroll;
-    private int pageScroll;
-    private String selectedDiplomacyNationId = "";
-    private Button dipAllyButton;
-    private Button dipTradeButton;
-    private Button dipEnemyButton;
-    private Button dipNeutralButton;
-    private Button dipDeclareWarButton;
-    private Button dipAcceptAllyButton;
-    private Button dipRejectAllyButton;
-    private Button dipBackButton;
-    private Button dipOpenTradeButton;
-    private Button salesTaxUpButton;
-    private Button salesTaxDownButton;
-    private Button tariffUpButton;
-    private Button tariffDownButton;
-    private Button treasuryCommandsButton;
-    private boolean showTreasuryCommands;
-    private Button proposeCeasefireButton;
-    private Button proposeCedeButton;
-    private Button proposeReparationButton;
-    private Button acceptPeaceButton;
-    private Button rejectPeaceButton;
-    private Button resetMapButton;
-    private Button refreshMapButton;
-    private int mapOffsetX = 0;
-    private int mapOffsetZ = 0;
-    private boolean isDraggingMap = false;
-    private double dragStartX = 0;
-    private double dragStartY = 0;
-    private int lastKnownClaimRadius = -1;
-    private int pendingPreviewCenterX = Integer.MIN_VALUE;
-    private int pendingPreviewCenterZ = Integer.MIN_VALUE;
-    private long pendingPreviewRevision = Long.MIN_VALUE;
-    private int queuedPreviewCenterX = Integer.MIN_VALUE;
-    private int queuedPreviewCenterZ = Integer.MIN_VALUE;
-    private boolean resetPending = false;
-    private boolean refreshPending;
-    private final ClaimWorldMapView claimWorldMapView = new ClaimWorldMapView();
-    private final Map<Long, NationOverviewClaim> cachedClaimOverlays = new HashMap<>();
-    private static final int DIP_ROW_H = 20;
-    private static final int DIP_VISIBLE_ROWS = 9;
 
     public NationHomeScreen(NationOverviewData data) {
         super(Component.translatable("screen.sailboatmod.nation.home.title"));
@@ -257,137 +1256,8 @@ public class NationHomeScreen extends Screen implements RoadPlannerTileSyncRecei
         syncColorInputs();
         syncOfficerTitleInput();
         this.statusLine = Component.translatable("screen.sailboatmod.nation.status.synced");
-        updateButtonState();
+        refresh();
         flushQueuedPreviewRefresh();
-    }
-
-    @Override
-    protected void init() {
-        int left = left();
-        int top = top();
-        this.refreshButton = this.addRenderableWidget(Button.builder(Component.translatable("screen.sailboatmod.nation.action.refresh"), b -> requestRefresh()).bounds(left + SCREEN_W - 82, top + 12, 70, 18).build());
-        this.refreshButton.visible = false;
-        this.overviewTabButton = addTabButton(left + 12, top + 36, Page.OVERVIEW, Component.translatable("screen.sailboatmod.nation.section.overview"));
-        this.membersTabButton = addTabButton(left + 76, top + 36, Page.MEMBERS, Component.translatable("screen.sailboatmod.nation.section.members"));
-        this.claimsTabButton = addTabButton(left + 140, top + 36, Page.CLAIMS, Component.translatable("screen.sailboatmod.nation.section.claims"));
-        this.warTabButton = addTabButton(left + 204, top + 36, Page.WAR, Component.translatable("screen.sailboatmod.nation.section.war"));
-        this.diplomacyTabButton = addTabButton(left + 268, top + 36, Page.DIPLOMACY, Component.translatable("screen.sailboatmod.nation.section.diplomacy"));
-        this.treasuryTabButton = addTabButton(left + 332, top + 36, Page.TREASURY, Component.translatable("screen.sailboatmod.nation.section.treasury"));
-        this.flagTabButton = addTabButton(left + 396, top + 36, Page.FLAG, Component.translatable("screen.sailboatmod.nation.section.flag"));
-
-        this.claimButton = this.addRenderableWidget(Button.builder(Component.translatable("screen.sailboatmod.nation.action.claim"), b -> claimSelectedChunk()).bounds(left + BODY_X + 12, top + BODY_Y + BODY_H - 26, 72, 18).build());
-        this.unclaimButton = this.addRenderableWidget(Button.builder(Component.translatable("screen.sailboatmod.nation.action.unclaim"), b -> unclaimSelectedChunk()).bounds(left + BODY_X + 90, top + BODY_Y + BODY_H - 26, 86, 18).build());
-        this.claimsSubPageButton = this.addRenderableWidget(Button.builder(Component.translatable("screen.sailboatmod.nation.claims.toggle_perms"), b -> { this.claimsSubPage = this.claimsSubPage == 0 ? 1 : 0; updateButtonState(); }).bounds(left + BODY_X + 184, top + BODY_Y + BODY_H - 26, 120, 18).build());
-        this.breakPermissionButton = this.addRenderableWidget(Button.builder(Component.empty(), b -> cycleClaimPermission("break", selectedBreakAccessLevel())).bounds(left + BODY_X + 12, top + BODY_Y + 50, 100, 18).build());
-        this.placePermissionButton = this.addRenderableWidget(Button.builder(Component.empty(), b -> cycleClaimPermission("place", selectedPlaceAccessLevel())).bounds(left + BODY_X + 120, top + BODY_Y + 50, 100, 18).build());
-        this.usePermissionButton = this.addRenderableWidget(Button.builder(Component.empty(), b -> cycleClaimPermission("use", selectedUseAccessLevel())).bounds(left + BODY_X + 12, top + BODY_Y + 74, 100, 18).build());
-        this.containerPermissionButton = this.addRenderableWidget(Button.builder(Component.empty(), b -> cycleClaimPermission("container", selectedContainerAccessLevel())).bounds(left + BODY_X + 120, top + BODY_Y + 74, 100, 18).build());
-        this.redstonePermissionButton = this.addRenderableWidget(Button.builder(Component.empty(), b -> cycleClaimPermission("redstone", selectedRedstoneAccessLevel())).bounds(left + BODY_X + 12, top + BODY_Y + 98, 100, 18).build());
-        this.entityUsePermissionButton = this.addRenderableWidget(Button.builder(Component.empty(), b -> cycleClaimPermission("entity_use", selectedEntityUseAccessLevel())).bounds(left + BODY_X + 120, top + BODY_Y + 98, 100, 18).build());
-        this.entityDamagePermissionButton = this.addRenderableWidget(Button.builder(Component.empty(), b -> cycleClaimPermission("entity_damage", selectedEntityDamageAccessLevel())).bounds(left + BODY_X + 12, top + BODY_Y + 122, 208, 18).build());
-        this.warButton = this.addRenderableWidget(Button.builder(Component.translatable("screen.sailboatmod.nation.action.war_info"), b -> runCommand("nation war info")).bounds(left + BODY_X + 12, top + BODY_Y + 164, 184, 18).build());
-        this.warTargetInput = new EditBox(this.font, left + BODY_X + 12, top + BODY_Y + 192, 280, 18, Component.translatable("screen.sailboatmod.nation.war.target_input"));
-        this.warTargetInput.setMaxLength(48);
-        this.addRenderableWidget(this.warTargetInput);
-        this.declareWarButton = this.addRenderableWidget(Button.builder(Component.translatable("screen.sailboatmod.nation.action.declare_war"), b -> submitDeclareWar()).bounds(left + BODY_X + 300, top + BODY_Y + 192, 120, 18).build());
-
-        this.dipAllyButton = this.addRenderableWidget(Button.builder(Component.translatable("screen.sailboatmod.nation.action.ally"), b -> submitDipAction(NationGuiActionPacket.Action.DIPLOMACY_ALLY)).bounds(left + BODY_X + 234, top + BODY_Y + 40, 100, 18).build());
-        this.dipTradeButton = this.addRenderableWidget(Button.builder(Component.translatable("screen.sailboatmod.nation.action.trade"), b -> submitDipAction(NationGuiActionPacket.Action.DIPLOMACY_TRADE)).bounds(left + BODY_X + 340, top + BODY_Y + 40, 100, 18).build());
-        this.dipEnemyButton = this.addRenderableWidget(Button.builder(Component.translatable("screen.sailboatmod.nation.diplomacy.enemy"), b -> submitDipAction(NationGuiActionPacket.Action.DIPLOMACY_ENEMY)).bounds(left + BODY_X + 234, top + BODY_Y + 64, 100, 18).build());
-        this.dipNeutralButton = this.addRenderableWidget(Button.builder(Component.translatable("screen.sailboatmod.nation.action.neutral"), b -> submitDipAction(NationGuiActionPacket.Action.DIPLOMACY_NEUTRAL)).bounds(left + BODY_X + 340, top + BODY_Y + 64, 100, 18).build());
-        this.dipDeclareWarButton = this.addRenderableWidget(Button.builder(Component.translatable("screen.sailboatmod.nation.action.declare_war"), b -> submitDipAction(NationGuiActionPacket.Action.DECLARE_WAR)).bounds(left + BODY_X + 234, top + BODY_Y + 88, 206, 18).build());
-        this.dipAcceptAllyButton = this.addRenderableWidget(Button.builder(Component.translatable("screen.sailboatmod.nation.action.accept"), b -> submitDipAction(NationGuiActionPacket.Action.DIPLOMACY_ACCEPT)).bounds(left + BODY_X + 234, top + BODY_Y + 112, 100, 18).build());
-        this.dipRejectAllyButton = this.addRenderableWidget(Button.builder(Component.translatable("screen.sailboatmod.nation.action.reject"), b -> submitDipAction(NationGuiActionPacket.Action.DIPLOMACY_REJECT)).bounds(left + BODY_X + 340, top + BODY_Y + 112, 100, 18).build());
-        this.dipBackButton = this.addRenderableWidget(Button.builder(Component.translatable("screen.sailboatmod.nation.diplomacy.back"), b -> { this.selectedDiplomacyNationId = ""; updateButtonState(); }).bounds(left + BODY_X + 234, top + BODY_Y + 136, 206, 18).build());
-        this.dipOpenTradeButton = this.addRenderableWidget(Button.builder(Component.translatable("screen.sailboatmod.trade.open"), b -> openSelectedTradeWindow()).bounds(left + BODY_X + 234, top + BODY_Y + 160, 206, 18).build());
-
-        this.nationNameInput = new EditBox(this.font, left + BODY_X + 12, top + BODY_Y + 148, 196, 18, Component.translatable("screen.sailboatmod.nation.name"));
-        this.nationNameInput.setMaxLength(24);
-        this.addRenderableWidget(this.nationNameInput);
-        this.shortNameInput = new EditBox(this.font, left + BODY_X + 216, top + BODY_Y + 148, 76, 18, Component.translatable("screen.sailboatmod.nation.short_name"));
-        this.shortNameInput.setMaxLength(12);
-        this.addRenderableWidget(this.shortNameInput);
-        this.saveNationInfoButton = this.addRenderableWidget(Button.builder(Component.translatable("screen.sailboatmod.nation.action.save_info"), b -> submitNationInfoUpdate()).bounds(left + BODY_X + 300, top + BODY_Y + 148, 110, 18).build());
-        this.createNationButton = this.addRenderableWidget(Button.builder(Component.translatable("screen.sailboatmod.nation.action.create"), b -> submitCreateNation()).bounds(left + BODY_X + 300, top + BODY_Y + 148, 110, 18).build());
-        this.joinNationInput = new EditBox(this.font, left + BODY_X + 12, top + BODY_Y + 176, 280, 18, Component.translatable("screen.sailboatmod.nation.overview.join_input"));
-        this.joinNationInput.setMaxLength(48);
-        this.addRenderableWidget(this.joinNationInput);
-        this.joinNationButton = this.addRenderableWidget(Button.builder(Component.translatable("screen.sailboatmod.nation.action.join"), b -> submitJoinNation()).bounds(left + BODY_X + 300, top + BODY_Y + 176, 110, 18).build());
-        this.nationHelpButton = this.addRenderableWidget(Button.builder(Component.translatable("screen.sailboatmod.nation.action.help"), b -> runCommand("nation help")).bounds(left + BODY_X + 300, top + BODY_Y + 204, 110, 18).build());
-        this.openCapitalTownButton = this.addRenderableWidget(Button.builder(Component.translatable("screen.sailboatmod.nation.action.open_town"), b -> openCapitalTown()).bounds(left + BODY_X + 320, top + BODY_Y + 204, 72, 18).build());
-        this.removeCoreButton = this.addRenderableWidget(Button.builder(Component.translatable("screen.sailboatmod.nation.action.remove_core"), b -> submitRemoveCore()).bounds(left + BODY_X + 300, top + BODY_Y + 226, 110, 18).build());
-        this.previousTownButton = this.addRenderableWidget(Button.builder(Component.literal("<"), b -> previousTownSelection()).bounds(left + BODY_X + 300, top + BODY_Y + 204, 18, 18).build());
-        this.nextTownButton = this.addRenderableWidget(Button.builder(Component.literal(">"), b -> nextTownSelection()).bounds(left + BODY_X + 394, top + BODY_Y + 204, 18, 18).build());
-
-        this.primaryColorInput = new EditBox(this.font, left + BODY_X + 170, top + BODY_Y + 126, 96, 18, Component.translatable("screen.sailboatmod.nation.color.primary"));
-        this.primaryColorInput.setMaxLength(7);
-        this.addRenderableWidget(this.primaryColorInput);
-        this.secondaryColorInput = new EditBox(this.font, left + BODY_X + 170, top + BODY_Y + 154, 96, 18, Component.translatable("screen.sailboatmod.nation.color.secondary"));
-        this.secondaryColorInput.setMaxLength(7);
-        this.addRenderableWidget(this.secondaryColorInput);
-        this.applyColorsButton = this.addRenderableWidget(Button.builder(Component.translatable("screen.sailboatmod.nation.action.apply_colors"), b -> submitColorUpdate()).bounds(left + BODY_X + 278, top + BODY_Y + 139, 120, 18).build());
-
-        this.flagPathInput = new EditBox(this.font, left + BODY_X + 12, top + BODY_Y + BODY_H - 54, 248, 18, Component.translatable("screen.sailboatmod.nation.flag_path"));
-        this.flagPathInput.setMaxLength(512);
-        this.addRenderableWidget(this.flagPathInput);
-        this.browseButton = this.addRenderableWidget(Button.builder(Component.translatable("screen.sailboatmod.nation.action.browse"), b -> browseForImage()).bounds(left + BODY_X + 268, top + BODY_Y + BODY_H - 54, 56, 18).build());
-        this.uploadButton = this.addRenderableWidget(Button.builder(Component.translatable("screen.sailboatmod.nation.action.upload"), b -> submitUpload()).bounds(left + BODY_X + 330, top + BODY_Y + BODY_H - 54, 72, 18).build());
-        this.toggleMirrorButton = this.addRenderableWidget(Button.builder(Component.translatable("screen.sailboatmod.nation.action.toggle_mirror"), b -> submitMirrorToggle()).bounds(left + BODY_X + 170, top + BODY_Y + 82, 126, 18).build());
-
-        // Treasury tax buttons
-        this.salesTaxUpButton = this.addRenderableWidget(Button.builder(Component.literal("+"), b -> adjustSalesTax(100)).bounds(left + BODY_X + 200, top + BODY_Y + 72, 20, 14).build());
-        this.salesTaxDownButton = this.addRenderableWidget(Button.builder(Component.literal("-"), b -> adjustSalesTax(-100)).bounds(left + BODY_X + 224, top + BODY_Y + 72, 20, 14).build());
-        this.tariffUpButton = this.addRenderableWidget(Button.builder(Component.literal("+"), b -> adjustTariff(100)).bounds(left + BODY_X + 200, top + BODY_Y + 90, 20, 14).build());
-        this.tariffDownButton = this.addRenderableWidget(Button.builder(Component.literal("-"), b -> adjustTariff(-100)).bounds(left + BODY_X + 224, top + BODY_Y + 90, 20, 14).build());
-        this.treasuryCommandsButton = this.addRenderableWidget(Button.builder(Component.translatable("screen.sailboatmod.nation.treasury.commands"), b -> this.showTreasuryCommands = !this.showTreasuryCommands).bounds(left + BODY_X + BODY_W - 90, top + BODY_Y + 68, 78, 18).build());
-
-        // Claim radius buttons
-        this.resetMapButton = this.addRenderableWidget(Button.builder(Component.literal("⌖"), b -> resetMapOffset()).bounds(left + BODY_X + BODY_W - CLAIM_MAP_W - 16, top + BODY_Y + 10, 24, 14).build());
-        this.resetMapButton.visible = false;
-        this.refreshMapButton = this.addRenderableWidget(Button.builder(Component.literal("↺"), b -> {
-            requestRefresh();
-        }).bounds(left + BODY_X + BODY_W - CLAIM_MAP_W - 44, top + BODY_Y + 10, 24, 14).build());
-        this.refreshMapButton.visible = false;
-
-        // Peace proposal buttons
-        this.proposeCeasefireButton = this.addRenderableWidget(Button.builder(Component.translatable("command.sailboatmod.nation.peace.type.ceasefire"), b -> submitPeaceProposal("ceasefire", 0, 0)).bounds(left + BODY_X + 12, top + BODY_Y + 148, 90, 18).build());
-        this.proposeCedeButton = this.addRenderableWidget(Button.builder(Component.translatable("command.sailboatmod.nation.peace.type.cede_territory"), b -> submitPeaceProposal("cede_territory", 5, 0)).bounds(left + BODY_X + 108, top + BODY_Y + 148, 90, 18).build());
-        this.proposeReparationButton = this.addRenderableWidget(Button.builder(Component.translatable("command.sailboatmod.nation.peace.type.reparation"), b -> submitPeaceProposal("reparation", 0, 500)).bounds(left + BODY_X + 204, top + BODY_Y + 148, 90, 18).build());
-        this.acceptPeaceButton = this.addRenderableWidget(Button.builder(Component.translatable("screen.sailboatmod.nation.action.accept"), b -> { sendNationAction(new NationGuiActionPacket(NationGuiActionPacket.Action.ACCEPT_PEACE), Component.translatable("command.sailboatmod.nation.peace.accepted_self")); }).bounds(left + BODY_X + 12, top + BODY_Y + 148, 90, 18).build());
-        this.rejectPeaceButton = this.addRenderableWidget(Button.builder(Component.translatable("screen.sailboatmod.nation.action.reject"), b -> { sendNationAction(new NationGuiActionPacket(NationGuiActionPacket.Action.REJECT_PEACE), Component.translatable("command.sailboatmod.nation.peace.rejected")); }).bounds(left + BODY_X + 108, top + BODY_Y + 148, 90, 18).build());
-
-        this.officerTitleInput = new EditBox(this.font, left + BODY_X + 224, top + BODY_Y + 152, 136, 18, Component.translatable("screen.sailboatmod.nation.members.title_input"));
-        this.officerTitleInput.setMaxLength(24);
-        this.addRenderableWidget(this.officerTitleInput);
-        this.saveOfficerTitleButton = this.addRenderableWidget(Button.builder(Component.translatable("screen.sailboatmod.nation.action.save_title"), b -> submitOfficerTitleUpdate()).bounds(left + BODY_X + 366, top + BODY_Y + 152, 64, 18).build());
-        this.appointOfficerButton = this.addRenderableWidget(Button.builder(Component.translatable("screen.sailboatmod.nation.action.appoint_officer"), b -> appointSelectedMember()).bounds(left + BODY_X + 224, top + BODY_Y + 182, 98, 18).build());
-        this.removeOfficerButton = this.addRenderableWidget(Button.builder(Component.translatable("screen.sailboatmod.nation.action.remove_officer"), b -> removeSelectedOfficer()).bounds(left + BODY_X + 332, top + BODY_Y + 182, 98, 18).build());
-        this.appointMayorButton = this.addRenderableWidget(Button.builder(Component.translatable("screen.sailboatmod.nation.action.appoint_mayor"), b -> appointSelectedMayor()).bounds(left + BODY_X + 224, top + BODY_Y + 206, 206, 18).build());
-        this.addRenderableWidget(Button.builder(Component.translatable("screen.sailboatmod.route_name.cancel"), b -> onClose()).bounds(left + SCREEN_W - 82, top + SCREEN_H - 24, 70, 18).build());
-
-        syncNationInfoInputs();
-        syncColorInputs();
-        syncOfficerTitleInput();
-        this.setInitialFocus(this.nationNameInput != null ? this.nationNameInput : this.primaryColorInput);
-        updateButtonState();
-    }
-
-    private Button addTabButton(int x, int y, Page page, Component label) {
-        return this.addRenderableWidget(Button.builder(label, b -> switchPage(page)).bounds(x, y, TAB_W, 18).build());
-    }
-
-    @Override
-    public void removed() {
-        super.removed();
-        com.monpai.sailboatmod.client.NationClientHooks.onScreenClosed(this.data.nationId());
-        this.claimWorldMapView.close();
-    }
-
-    @Override
-    public void tick() {
-        super.tick();
-        tickAutoRefresh();
-        updateButtonState();
     }
 
     private void tickAutoRefresh() {
@@ -415,401 +1285,6 @@ public class NationHomeScreen extends Screen implements RoadPlannerTileSyncRecei
         }
         this.autoRefreshTicks = 0;
         requestRefresh();
-    }
-
-    @Override
-    public boolean keyPressed(int keyCode, int scanCode, int modifiers) {
-        if (ScreenInputGuards.shouldConsumeInventoryKeyWhenEditing(this.minecraft, keyCode, scanCode,
-                this.nationNameInput,
-                this.shortNameInput,
-                this.joinNationInput,
-                this.primaryColorInput,
-                this.secondaryColorInput,
-                this.flagPathInput,
-                this.warTargetInput,
-                this.officerTitleInput)) {
-            return true;
-        }
-        if (keyCode == 257 || keyCode == 335) {
-            if (this.currentPage == Page.OVERVIEW) {
-                if (!this.data.hasNation()) {
-                    if (this.nationNameInput != null && this.nationNameInput.isFocused()) return submitAndTrue(this::submitCreateNation);
-                    if (this.joinNationInput != null && this.joinNationInput.isFocused()) return submitAndTrue(this::submitJoinNation);
-                } else {
-                    if (this.nationNameInput != null && this.nationNameInput.isFocused()) return submitAndTrue(this::submitNationInfoUpdate);
-                    if (this.shortNameInput != null && this.shortNameInput.isFocused()) return submitAndTrue(this::submitNationInfoUpdate);
-                }
-            }
-            if (this.currentPage == Page.FLAG) {
-                if (this.primaryColorInput != null && this.primaryColorInput.isFocused()) return submitAndTrue(this::submitColorUpdate);
-                if (this.secondaryColorInput != null && this.secondaryColorInput.isFocused()) return submitAndTrue(this::submitColorUpdate);
-                if (this.flagPathInput != null && this.flagPathInput.isFocused()) return submitAndTrue(this::submitUpload);
-            }
-            if (this.currentPage == Page.WAR && this.warTargetInput != null && this.warTargetInput.isFocused()) return submitAndTrue(this::submitDeclareWar);
-            if (this.currentPage == Page.MEMBERS && this.officerTitleInput != null && this.officerTitleInput.isFocused()) return submitAndTrue(this::submitOfficerTitleUpdate);
-        }
-        return super.keyPressed(keyCode, scanCode, modifiers);
-    }
-
-    @Override
-    public boolean mouseScrolled(double mouseX, double mouseY, double scrollX, double delta) {
-        boolean claimsMapView = ClaimsMapVisibility.allowMapInteraction(this.currentPage == Page.CLAIMS, this.claimsSubPage);
-        ClaimMapViewport viewport = claimMapViewport();
-        ClaimMapViewport visibleViewport = visibleClaimMapViewport(viewport);
-        if (claimsMapView && visibleViewport != null && visibleViewport.contains(mouseX, mouseY)) {
-            this.claimWorldMapView.zoomAround(mouseX, mouseY, delta > 0 ? 1.2D : 0.833333D, viewport.x(), viewport.y(), viewport.width(), viewport.height());
-            syncMapOffsetFromClaimWorldMap();
-            return true;
-        }
-        if (this.currentPage == Page.MEMBERS) {
-            int[] b = memberListBounds();
-            if (mouseX >= b[0] && mouseX < b[0] + b[2] && mouseY >= b[1] && mouseY < b[1] + b[3]) {
-                this.memberScroll = clampMemberScroll(this.memberScroll + (delta > 0 ? -1 : 1));
-                return true;
-            }
-        }
-        if (this.currentPage == Page.TREASURY) {
-            int itemListX = left() + BODY_X + 20;
-            int itemListY = top() + BODY_Y + 140;
-            int itemListW = BODY_W - 24;
-            int itemListH = TREASURY_ITEM_VISIBLE_ROWS * TREASURY_ITEM_ROW_H;
-            if (mouseX >= itemListX && mouseX < itemListX + itemListW && mouseY >= itemListY && mouseY < itemListY + itemListH) {
-                this.treasuryItemScroll = Math.max(0, this.treasuryItemScroll + (delta > 0 ? -1 : 1));
-                return true;
-            }
-        }
-        if (this.currentPage == Page.DIPLOMACY) {
-            int listX = left() + BODY_X + 8;
-            int listY = top() + BODY_Y + 28;
-            int listW = 220;
-            int listH = DIP_VISIBLE_ROWS * DIP_ROW_H;
-            if (mouseX >= listX && mouseX < listX + listW && mouseY >= listY && mouseY < listY + listH) {
-                int maxScroll = Math.max(0, this.data.allNations().size() - DIP_VISIBLE_ROWS);
-                this.diplomacyScroll = Math.max(0, Math.min(maxScroll, this.diplomacyScroll + (delta > 0 ? -1 : 1)));
-                return true;
-            }
-        }
-        if (isInsideBodyViewport(mouseX, mouseY) && maxPageScroll() > 0) {
-            this.pageScroll = Math.max(0, Math.min(maxPageScroll(), this.pageScroll + (delta > 0 ? -16 : 16)));
-            updateButtonState();
-            return true;
-        }
-        return super.mouseScrolled(mouseX, mouseY, scrollX, delta);
-    }
-
-    @Override
-    public boolean mouseClicked(double mouseX, double mouseY, int button) {
-        if (button == 0 && this.currentPage == Page.MEMBERS && trySelectMember(mouseX, mouseY)) return true;
-        boolean claimsMapView = ClaimsMapVisibility.allowMapInteraction(this.currentPage == Page.CLAIMS, this.claimsSubPage);
-        if (button == 0 && claimsMapView && trySelectClaim(mouseX, mouseY)) return true;
-        if (button == 0 && this.currentPage == Page.DIPLOMACY && trySelectDiplomacyNation(mouseX, mouseY)) return true;
-        if (button == 2 && claimsMapView) {
-            ClaimMapViewport viewport = claimMapViewport();
-            ClaimMapViewport visibleViewport = visibleClaimMapViewport(viewport);
-            if (visibleViewport != null && visibleViewport.contains(mouseX, mouseY)) {
-                this.isDraggingMap = true;
-                this.dragStartX = mouseX;
-                this.dragStartY = mouseY;
-                return true;
-            }
-        }
-        return super.mouseClicked(mouseX, mouseY, button);
-    }
-
-    @Override
-    public boolean mouseReleased(double mouseX, double mouseY, int button) {
-        if (shouldRequestRefreshAfterMapDragRelease(button, this.isDraggingMap)) {
-            this.isDraggingMap = false;
-            requestRefresh(mapCenterX(), mapCenterZ());
-            requestVisibleClaimMapForceRender();
-            return true;
-        }
-        return super.mouseReleased(mouseX, mouseY, button);
-    }
-
-    @Override
-    public boolean mouseDragged(double mouseX, double mouseY, int button, double dragX, double dragY) {
-        if (button == 2 && this.isDraggingMap
-                && ClaimsMapVisibility.allowMapInteraction(this.currentPage == Page.CLAIMS, this.claimsSubPage)) {
-            ClaimMapViewport viewport = claimMapViewport();
-            ClaimMapViewport visibleViewport = visibleClaimMapViewport(viewport);
-            if (visibleViewport == null || !visibleViewport.contains(mouseX, mouseY)) {
-                this.isDraggingMap = false;
-                requestRefresh(mapCenterX(), mapCenterZ());
-                requestVisibleClaimMapForceRender();
-                return true;
-            }
-            this.claimWorldMapView.panByScreenDelta(mouseX - this.dragStartX, mouseY - this.dragStartY);
-            syncMapOffsetFromClaimWorldMap();
-            this.dragStartX = mouseX;
-            this.dragStartY = mouseY;
-            return true;
-        }
-        return super.mouseDragged(mouseX, mouseY, button, dragX, dragY);
-    }
-
-    @Override
-    public void render(GuiGraphics guiGraphics, int mouseX, int mouseY, float partialTick) {
-        this.renderBackground(guiGraphics, mouseX, mouseY, partialTick);
-        drawContents(guiGraphics, mouseX, mouseY);
-        com.monpai.sailboatmod.client.screen.ScreenRenderSupport.renderWidgets(this, guiGraphics, mouseX, mouseY, partialTick);
-    }
-
-    @Override
-    public boolean isPauseScreen() {
-        return false;
-    }
-
-    private void drawContents(GuiGraphics g, int mouseX, int mouseY) {
-        int left = left();
-        int top = top();
-        g.fill(left, top, left + SCREEN_W, top + SCREEN_H, 0xCC101820);
-        g.fill(left + 1, top + 1, left + SCREEN_W - 1, top + SCREEN_H - 1, 0xCC182632);
-        g.drawString(this.font, this.title, left + 12, top + 18, 0xFFE7C977);
-        String economyBar = buildEconomyHeaderLine();
-        int reserveRight = 96;
-        int economyX = left + SCREEN_W - reserveRight - this.font.width(economyBar);
-        int headerWidth = Math.max(48, economyX - (left + 132) - 8);
-        g.drawString(this.font, trimToWidth(headerText(), headerWidth), left + 132, top + 18, 0xFFDCEEFF);
-        if (!economyBar.isBlank()) {
-            g.drawString(this.font, economyBar, economyX, top + 18, 0xFFB8C0C8);
-        }
-        drawPanelFrame(g, left + BODY_X, top + BODY_Y, BODY_W, BODY_H);
-        g.drawString(this.font, currentPage.title(), left + BODY_X + 10, top + BODY_Y + 10, 0xFFE7C977);
-        g.enableScissor(left + BODY_X + 1, bodyViewportTop(), left + BODY_X + BODY_W - 1, top + BODY_Y + BODY_H - 1);
-        g.pose().pushPose();
-        g.pose().translate(0.0F, -this.pageScroll, 0.0F);
-        switch (this.currentPage) {
-            case OVERVIEW -> drawOverviewPage(g, left + BODY_X, top + BODY_Y);
-            case MEMBERS -> drawMembersPage(g, left + BODY_X, top + BODY_Y);
-            case CLAIMS -> drawClaimsPage(g, left + BODY_X, top + BODY_Y, mouseX, mouseY, false);
-            case WAR -> drawWarPage(g, left + BODY_X, top + BODY_Y);
-            case DIPLOMACY -> drawDiplomacyPage(g, left + BODY_X, top + BODY_Y);
-            case TREASURY -> drawTreasuryPage(g, left + BODY_X, top + BODY_Y);
-            case FLAG -> drawFlagPage(g, left + BODY_X, top + BODY_Y);
-        }
-        g.pose().popPose();
-        g.disableScissor();
-        if (this.currentPage == Page.CLAIMS && this.claimsSubPage == 0) {
-            ClaimMapViewport viewport = claimMapViewport();
-            ClaimMapViewport visibleViewport = visibleClaimMapViewport(viewport);
-            if (visibleViewport != null) {
-                g.enableScissor(visibleViewport.x(), visibleViewport.y(), visibleViewport.right(), visibleViewport.bottom());
-                drawClaimMap(g, viewport, visibleViewport, mouseX, mouseY);
-                g.disableScissor();
-            }
-        }
-        if (!this.statusLine.getString().isBlank()) g.drawCenteredString(this.font, this.statusLine, left + SCREEN_W / 2, top + SCREEN_H - 12, 0xFFF1D98A);
-    }
-
-    private void drawOverviewPage(GuiGraphics g, int x, int y) {
-        int drawY = y + 34;
-        for (Component line : buildOverviewLines()) {
-            drawWrappedLine(g, line, x + 12, drawY, BODY_W - 24, 0xFFDCEEFF);
-            drawY += wrappedHeight(line, BODY_W - 24) + 6;
-        }
-        if (!this.data.hasNation()) {
-            int formY = Math.max(y + 120, drawY + 8);
-            g.drawString(this.font, Component.translatable("screen.sailboatmod.nation.overview.create_label"), x + 12, formY, 0xFFB8C0C8);
-            g.drawString(this.font, Component.translatable("screen.sailboatmod.nation.overview.join_label"), x + 12, formY + 48, 0xFFB8C0C8);
-            drawWrappedLine(g, Component.translatable("screen.sailboatmod.nation.overview.help_hint"), x + 12, formY + 94, 272, 0xFF8D98A3);
-            return;
-        }
-        int formY = Math.max(y + 118, drawY + 8);
-        g.drawString(this.font, Component.translatable("screen.sailboatmod.nation.name"), x + 12, formY, 0xFFB8C0C8);
-        g.drawString(this.font, Component.translatable("screen.sailboatmod.nation.short_name"), x + 216, formY, 0xFFB8C0C8);
-        NationOverviewTown selectedTown = selectedTown();
-        int townInfoY = formY + 104;
-        if (selectedTown != null) {
-            g.drawString(this.font, Component.translatable("screen.sailboatmod.nation.overview.town_selected", shortText(selectedTown.townName(), 18)), x + 12, townInfoY, 0xFFDCEEFF);
-            g.drawString(this.font, Component.translatable("screen.sailboatmod.nation.overview.town_mayor", shortText(selectedTown.mayorName(), 18)), x + 12, townInfoY + 16, 0xFFB8C0C8);
-            g.drawString(this.font, Component.translatable("screen.sailboatmod.nation.overview.town_claims", selectedTown.claimCount(), selectedTown.capital() ? Component.translatable("screen.sailboatmod.nation.overview.town_capital").getString() : ""), x + 12, townInfoY + 32, 0xFF8D98A3);
-            if (selectedTown.externalColony().present()) {
-                String colonyName = selectedTown.externalColony().colonyName().isBlank()
-                        ? "#" + selectedTown.externalColony().colonyId()
-                        : selectedTown.externalColony().colonyName();
-                g.drawString(this.font, Component.translatable(
-                        "screen.sailboatmod.nation.overview.town_minecolonies",
-                        shortText(colonyName, 18),
-                        selectedTown.externalColony().population(),
-                        selectedTown.externalColony().maxPopulation()), x + 12, townInfoY + 48, 0xFF8D98A3);
-            }
-        } else {
-            g.drawString(this.font, Component.translatable("screen.sailboatmod.nation.overview.town_none"), x + 12, townInfoY + 8, 0xFF8D98A3);
-        }
-    }
-
-    private void drawMembersPage(GuiGraphics g, int x, int y) {
-        if (!this.data.hasNation()) {
-            g.drawString(this.font, Component.translatable("screen.sailboatmod.nation.members.none"), x + 12, y + 36, 0xFF8D98A3);
-            return;
-        }
-        int[] list = memberListBounds();
-        drawPanelFrame(g, list[0], list[1], list[2], list[3]);
-        g.drawString(this.font, Component.translatable("screen.sailboatmod.nation.overview.members", this.data.memberCount()), list[0] + 6, list[1] - 14, 0xFFB8C0C8);
-        if (this.data.members().isEmpty()) {
-            g.drawString(this.font, Component.translatable("screen.sailboatmod.nation.members.empty"), list[0] + 8, list[1] + 8, 0xFF8D98A3);
-        } else {
-            int start = clampMemberScroll(this.memberScroll);
-            int end = Math.min(this.data.members().size(), start + MEMBER_VISIBLE_ROWS);
-            int drawY = list[1] + 4;
-            for (int i = start; i < end; i++) {
-                NationOverviewMember member = this.data.members().get(i);
-                boolean selected = member.playerUuid().equals(this.selectedMemberUuid);
-                int rowColor = selected ? 0x66487EA1 : (((i & 1) == 0) ? 0x331F2D39 : 0x33293A48);
-                g.fill(list[0] + 2, drawY, list[0] + list[2] - 2, drawY + MEMBER_ROW_H - 1, rowColor);
-                g.fill(list[0] + 6, drawY + 4, list[0] + 10, drawY + 8, member.online() ? 0xFF56DDB4 : 0xFF71808F);
-                g.drawString(this.font, Component.literal(trimToWidth(member.playerName(), 108)), list[0] + 16, drawY + 3, member.online() ? 0xFFE6FFF6 : 0xFFD2D7DC);
-                g.drawString(this.font, Component.literal(trimToWidth(member.officeName(), 56)), list[0] + 118, drawY + 3, 0xFFE7C977);
-                drawY += MEMBER_ROW_H;
-            }
-        }
-        NationOverviewMember selected = selectedMember();
-        int infoX = x + 218;
-        g.drawString(this.font, Component.translatable("screen.sailboatmod.nation.members.selected"), infoX, y + 40, 0xFFB8C0C8);
-        if (selected == null) {
-            g.drawString(this.font, Component.translatable("screen.sailboatmod.nation.members.no_selection"), infoX, y + 58, 0xFF8D98A3);
-            return;
-        }
-        g.drawString(this.font, Component.literal(trimToWidth(selected.playerName(), 170)), infoX, y + 58, 0xFFDCEEFF);
-        g.drawString(this.font, Component.translatable("screen.sailboatmod.nation.overview.role", selected.officeName()), infoX, y + 76, 0xFFDCEEFF);
-        g.drawString(this.font, Component.translatable(selected.online() ? "screen.sailboatmod.nation.members.status.online" : "screen.sailboatmod.nation.members.status.offline"), infoX, y + 94, selected.online() ? 0xFF56DDB4 : 0xFF8D98A3);
-        g.drawString(this.font, Component.literal(shortText(selected.playerUuid(), 28)), infoX, y + 112, 0xFF8D98A3);
-        g.drawString(this.font, Component.translatable("screen.sailboatmod.nation.members.title_label"), infoX, y + 140, 0xFFB8C0C8);
-        g.drawString(this.font, Component.translatable("screen.sailboatmod.nation.members.manage_hint"), infoX, y + 228, 0xFF8D98A3);
-    }
-
-    private void drawClaimsPage(GuiGraphics g, int x, int y, int mouseX, int mouseY, boolean drawMap) {
-        if (this.claimsSubPage == 1) {
-            drawClaimsPermPage(g, x, y);
-            return;
-        }
-        int drawY = y + 34;
-        for (Component line : buildClaimLines()) {
-            drawWrappedLine(g, line, x + 12, drawY, 206, 0xFFDCEEFF);
-            drawY += wrappedHeight(line, 206) + 6;
-        }
-        int mapX = claimMapX(x);
-        int mapY = claimMapY(y);
-        g.drawString(this.font, Component.translatable("screen.sailboatmod.nation.claims.map_title"), mapX, y + 12, 0xFFB8C0C8);
-        if (drawMap) {
-            ClaimMapViewport viewport = claimMapViewport();
-            ClaimMapViewport visibleViewport = visibleClaimMapViewport(viewport);
-            if (visibleViewport != null) {
-                drawClaimMap(g, viewport, visibleViewport, mouseX, mouseY);
-            }
-        }
-    }
-
-    private void drawClaimsPermPage(GuiGraphics g, int x, int y) {
-        g.drawString(this.font, Component.translatable("screen.sailboatmod.nation.claims.perms_title"), x + 12, y + 30, 0xFFB8C0C8);
-        NationOverviewClaim selected = selectedClaim();
-        if (selected == null) {
-            drawWrappedLine(g, Component.translatable("screen.sailboatmod.nation.claims.perms_select_hint"), x + 12, y + 150, BODY_W - 24, 0xFF8D98A3);
-        } else {
-            g.drawString(this.font, Component.translatable("screen.sailboatmod.nation.claims.selected_chunk", this.selectedClaimChunkX, this.selectedClaimChunkZ), x + 12, y + 150, 0xFFDCEEFF);
-            g.drawString(this.font, Component.translatable("screen.sailboatmod.nation.claims.owner", selected.nationName()), x + 12, y + 166, 0xFFB8C0C8);
-        }
-    }
-
-    private void drawWarPage(GuiGraphics g, int x, int y) {
-        int warPanelX = x + 8;
-        int warPanelY = y + 28;
-        int warPanelW = BODY_W - 16;
-        int warPanelH = 126;
-        drawPanelFrame(g, warPanelX, warPanelY, warPanelW, warPanelH);
-
-        int drawY = warPanelY + 10;
-        for (Component line : buildWarLines()) {
-            drawWrappedLine(g, line, warPanelX + 8, drawY, warPanelW - 16, 0xFFDCEEFF);
-            drawY += wrappedHeight(line, warPanelW - 16) + 6;
-        }
-        if (!this.data.hasNation()) {
-            return;
-        }
-
-        if (this.data.hasPeaceProposal()) {
-            int proposalY = y + 160;
-            drawPanelFrame(g, warPanelX, proposalY, warPanelW, 60);
-            String typeKey = "command.sailboatmod.nation.peace.type." + this.data.peaceProposalType();
-            g.drawString(this.font, Component.translatable("screen.sailboatmod.nation.peace.proposal_title"), warPanelX + 8, proposalY + 6, 0xFFE7C977);
-            g.drawString(this.font, Component.translatable(typeKey), warPanelX + 8, proposalY + 20, 0xFFDCEEFF);
-            String details = "";
-            if (this.data.peaceProposalCede() > 0) details += Component.translatable("screen.sailboatmod.nation.peace.cede_count", this.data.peaceProposalCede()).getString() + "  ";
-            if (this.data.peaceProposalAmount() > 0) details += Component.translatable("screen.sailboatmod.nation.peace.reparation_amount", this.data.peaceProposalAmount()).getString();
-            if (!details.isBlank()) g.drawString(this.font, details, warPanelX + 8, proposalY + 34, 0xFFB8C0C8);
-            g.drawString(this.font, Component.translatable("screen.sailboatmod.nation.peace.remaining", this.data.peaceProposalRemainingSeconds()), warPanelX + warPanelW - 80, proposalY + 6, 0xFF8D98A3);
-        }
-
-        Component hint = this.data.canDeclareWar()
-                ? Component.translatable("screen.sailboatmod.nation.war.declare_hint")
-                : Component.translatable("command.sailboatmod.nation.diplomacy.no_permission");
-        drawWrappedLine(g, hint, x + 12, y + 196, BODY_W - 24, 0xFF8D98A3);
-    }
-
-    private void drawDiplomacyPage(GuiGraphics g, int x, int y) {
-        if (!this.data.hasNation()) {
-            g.drawString(this.font, Component.translatable("screen.sailboatmod.nation.diplomacy.no_nation"), x + 12, y + 36, 0xFF8D98A3);
-            return;
-        }
-        List<NationOverviewNationEntry> nations = this.data.allNations();
-        if (nations.isEmpty()) {
-            g.drawString(this.font, Component.translatable("screen.sailboatmod.nation.diplomacy.no_nations"), x + 12, y + 36, 0xFF8D98A3);
-            return;
-        }
-
-        int listX = x + 8;
-        int listY = y + 28;
-        int listW = 220;
-        int listH = DIP_VISIBLE_ROWS * DIP_ROW_H;
-        drawPanelFrame(g, listX, listY, listW, listH);
-
-        int start = Math.max(0, Math.min(this.diplomacyScroll, nations.size() - DIP_VISIBLE_ROWS));
-        int end = Math.min(nations.size(), start + DIP_VISIBLE_ROWS);
-        for (int i = start; i < end; i++) {
-            NationOverviewNationEntry entry = nations.get(i);
-            int rowY = listY + (i - start) * DIP_ROW_H;
-            boolean selected = entry.nationId().equals(this.selectedDiplomacyNationId);
-            if (selected) {
-                g.fill(listX + 1, rowY, listX + listW - 1, rowY + DIP_ROW_H, 0x44FFD700);
-            }
-
-            int flagX = listX + 4;
-            int flagY = rowY + 2;
-            int flagW = 16;
-            int flagH = 16;
-            if (!entry.flagId().isBlank()) {
-                ResourceLocation flagTex = NationFlagTextureCache.resolve(entry.flagId(), entry.primaryColorRgb(), entry.secondaryColorRgb(), entry.flagMirrored());
-                g.blit(flagTex, flagX, flagY, 0, 0, flagW, flagH, flagW, flagH);
-            } else {
-                g.fill(flagX, flagY, flagX + flagW, flagY + flagH, 0xFF000000 | entry.primaryColorRgb());
-            }
-
-            String name = shortText(entry.nationName(), 14);
-            g.drawString(this.font, name, listX + 24, rowY + 5, 0xFFDCEEFF);
-
-            String statusLabel = entry.diplomacyStatusId().isBlank() ? "-" : entry.diplomacyStatusId();
-            int statusColor = diplomacyStatusColor(entry.diplomacyStatusId());
-            g.drawString(this.font, statusLabel, listX + listW - this.font.width(statusLabel) - 6, rowY + 5, statusColor);
-        }
-
-        if (!this.selectedDiplomacyNationId.isBlank()) {
-            NationOverviewNationEntry selected = selectedDiplomacyNation();
-            if (selected != null) {
-                int detailX = x + 236;
-                int detailY = y + 28;
-                g.drawString(this.font, Component.translatable("screen.sailboatmod.nation.diplomacy.selected", selected.nationName()), detailX, detailY, 0xFFE7C977);
-                String status = selected.diplomacyStatusId().isBlank() ? "neutral" : selected.diplomacyStatusId();
-                g.drawString(this.font, Component.translatable("screen.sailboatmod.nation.diplomacy.status", status), detailX, detailY + 14, 0xFFB8C0C8);
-            }
-        } else {
-            g.drawString(this.font, Component.translatable("screen.sailboatmod.nation.diplomacy.select_hint"), x + 236, y + 40, 0xFF8D98A3);
-        }
-
-        drawDiplomacySection(g,
-                Component.translatable("screen.sailboatmod.nation.war.requests_title"),
-                buildIncomingRequestLines(),
-                x + 236, y + 164, 200, 3);
     }
 
     private NationOverviewNationEntry selectedDiplomacyNation() {
@@ -861,131 +1336,6 @@ public class NationHomeScreen extends Screen implements RoadPlannerTileSyncRecei
             case "enemy" -> 0xFFFF5555;
             default -> 0xFF8D98A3;
         };
-    }
-
-    private void drawTreasuryPage(GuiGraphics g, int x, int y) {
-        int cardX = x + 12;
-        int cardY = y + 32;
-        int cardGap = 6;
-        int cardW = (BODY_W - 24 - cardGap * 3) / 4;
-        int cardH = 22;
-        drawMetricCard(g, cardX, cardY, cardW, cardH,
-                Component.translatable("screen.sailboatmod.nation.treasury.metric.balance"),
-                formatCompactMoney(this.data.treasuryBalance()),
-                0xC08E7448);
-        drawMetricCard(g, cardX + (cardW + cardGap), cardY, cardW, cardH,
-                Component.translatable("screen.sailboatmod.nation.treasury.metric.towns"),
-                Integer.toString(this.data.towns().size()),
-                0xC05C7F90);
-        drawMetricCard(g, cardX + (cardW + cardGap) * 2, cardY, cardW, cardH,
-                Component.translatable("screen.sailboatmod.nation.treasury.metric.trades"),
-                Integer.toString(this.data.recentTradeCount()),
-                0xC07F6750);
-        drawMetricCard(g, cardX + (cardW + cardGap) * 3, cardY, cardW, cardH,
-                Component.translatable("screen.sailboatmod.nation.treasury.metric.items"),
-                occupiedTreasurySlots() + " / " + this.data.treasuryItems().size(),
-                0xC0567164);
-
-        int policyX = x + 12;
-        int policyY = y + 62;
-        int policyW = 236;
-        int policyH = 58;
-        drawPanelFrame(g, policyX, policyY, policyW, policyH);
-        g.drawString(this.font, Component.translatable("screen.sailboatmod.nation.treasury.policy_title"), policyX + 8, policyY + 8, 0xFFE7C977);
-        drawPolicyBar(g, policyX + 8, y + 72,
-                Component.translatable("screen.sailboatmod.nation.treasury.sales_tax_label"),
-                this.data.salesTaxBasisPoints(),
-                3000,
-                0xFF7AA2C6);
-        drawPolicyBar(g, policyX + 8, y + 90,
-                Component.translatable("screen.sailboatmod.nation.treasury.import_tariff_label"),
-                this.data.importTariffBasisPoints(),
-                5000,
-                0xFFC69263);
-
-        int summaryX = x + 256;
-        int summaryY = y + 62;
-        int summaryW = BODY_W - 24 - policyW - 8;
-        int summaryH = 58;
-        drawPanelFrame(g, summaryX, summaryY, summaryW, summaryH);
-        g.drawString(this.font, Component.translatable("screen.sailboatmod.nation.treasury.inventory_title"), summaryX + 8, summaryY + 8, 0xFFE7C977);
-        g.drawString(this.font, Component.literal(Component.translatable("screen.sailboatmod.nation.treasury.trade_count_label").getString() + " " + this.data.recentTradeCount()), summaryX + 8, summaryY + 22, 0xFFDCEEFF);
-        g.drawString(this.font, Component.translatable("screen.sailboatmod.nation.treasury.item_slots", occupiedTreasurySlots(), this.data.treasuryItems().size()), summaryX + 8, summaryY + 34, 0xFFDCEEFF);
-        g.drawString(this.font, Component.literal(trimToWidth(Component.translatable("screen.sailboatmod.nation.treasury.bank_access_hint").getString(), summaryW - 16)), summaryX + 8, summaryY + 46, 0xFF8D98A3);
-
-        int itemPanelX = x + 12;
-        int itemPanelY = y + 128;
-        int itemPanelW = BODY_W - 24;
-        int itemPanelH = 88;
-        drawPanelFrame(g, itemPanelX, itemPanelY, itemPanelW, itemPanelH);
-        g.drawString(this.font, Component.translatable("screen.sailboatmod.nation.treasury.items_label"), itemPanelX + 8, itemPanelY + 8, 0xFFE7C977);
-
-        int itemListX = itemPanelX + 8;
-        int itemListY = itemPanelY + 12;
-        int itemListW = itemPanelW - 16;
-        g.fill(itemListX, itemListY, itemListX + itemListW, itemListY + TREASURY_ITEM_VISIBLE_ROWS * TREASURY_ITEM_ROW_H, 0x44000000);
-
-        int startIdx = Math.max(0, this.treasuryItemScroll);
-        int drawn = 0;
-        for (int i = 0; i < this.data.treasuryItems().size() && drawn < TREASURY_ITEM_VISIBLE_ROWS; i++) {
-            net.minecraft.world.item.ItemStack stack = this.data.treasuryItems().get(i);
-            if (stack.isEmpty()) continue;
-            if (startIdx > 0) {
-                startIdx--;
-                continue;
-            }
-            int rowY = itemListY + drawn * TREASURY_ITEM_ROW_H + 2;
-            int rowColor = (drawn & 1) == 0 ? 0x331F2D39 : 0x33293A48;
-            g.fill(itemListX + 2, rowY - 1, itemListX + itemListW - 2, rowY + TREASURY_ITEM_ROW_H - 3, rowColor);
-            g.renderItem(stack, itemListX + 4, rowY);
-            g.drawString(this.font, trimToWidth(stack.getHoverName().getString(), itemListW - 72), itemListX + 24, rowY + 4, 0xFFDCEEFF);
-            g.drawString(this.font, "x" + stack.getCount(), itemListX + itemListW - 30, rowY + 4, 0xFFE7C977);
-            drawn++;
-        }
-        if (drawn == 0) {
-            g.drawString(this.font, Component.translatable("screen.sailboatmod.market.empty"), itemListX + 4, itemListY + 6, 0xFF8D98A3);
-        }
-
-        int hintY = itemPanelY + itemPanelH + 4;
-        drawWrappedLine(g, Component.translatable("screen.sailboatmod.nation.treasury.detail_hint"), x + 12, hintY, BODY_W - 24, 0xFF8D98A3);
-        if (this.showTreasuryCommands) {
-            drawWrappedLine(g,
-                    Component.translatable(this.data.canManageTreasury()
-                            ? "screen.sailboatmod.nation.treasury.commands_hint"
-                            : "screen.sailboatmod.nation.treasury.bank_hint"),
-                    x + 12,
-                    hintY + 12,
-                    BODY_W - 24,
-                    0xFF8D98A3);
-        } else {
-            drawWrappedLine(g, Component.translatable("screen.sailboatmod.nation.treasury.policy_hint"), x + 12, hintY + 12, BODY_W - 24, 0xFF8D98A3);
-        }
-    }
-
-    private void drawFlagPage(GuiGraphics g, int x, int y) {
-        List<Component> lines = buildFlagLines();
-        ResourceLocation texture = NationFlagTextureCache.resolve(this.data.flagId(), previewPrimaryColor(), previewSecondaryColor(), this.data.flagMirrored());
-        int frameX = x + 20;
-        int frameY = y + 42;
-        int frameW = 124;
-        int frameH = 64;
-        int textureWidth = this.data.flagWidth() <= 0 ? 64 : this.data.flagWidth();
-        int textureHeight = this.data.flagHeight() <= 0 ? 32 : this.data.flagHeight();
-        g.fill(x + 12, y + 36, x + 152, y + 112, 0xFF36424C);
-        g.enableScissor(frameX, frameY, frameX + frameW, frameY + frameH);
-        int previewX = frameX + (frameW - textureWidth) / 2;
-        int previewY = frameY + (frameH - textureHeight) / 2;
-        g.blit(texture, previewX, previewY, 0, 0, textureWidth, textureHeight, textureWidth, textureHeight);
-        g.disableScissor();
-        int textX = x + 170;
-        g.drawString(this.font, firstLine(lines), textX, y + 40, 0xFFDCEEFF);
-        g.drawString(this.font, secondLine(lines), textX, y + 54, 0xFFDCEEFF);
-        g.drawString(this.font, thirdLine(lines), textX, y + 68, 0xFFB8C0C8);
-        g.drawString(this.font, Component.translatable("screen.sailboatmod.nation.color.primary"), textX, y + 112, 0xFFB8C0C8);
-        g.drawString(this.font, Component.translatable("screen.sailboatmod.nation.color.secondary"), textX, y + 140, 0xFFB8C0C8);
-        drawColorSwatch(g, x + 134, y + 114, previewPrimaryColor(), parseHexColor(valueOf(this.primaryColorInput)) != null);
-        drawColorSwatch(g, x + 134, y + 142, previewSecondaryColor(), parseHexColor(valueOf(this.secondaryColorInput)) != null);
-        g.drawString(this.font, Component.translatable("screen.sailboatmod.nation.flag.upload_hint_short"), x + 12, y + BODY_H - 82, 0xFFB8C0C8);
     }
 
     private List<Component> buildOverviewLines() {
@@ -1059,209 +1409,8 @@ public class NationHomeScreen extends Screen implements RoadPlannerTileSyncRecei
         return lines;
     }
 
-    private void updateButtonState() {
-        if (this.overviewTabButton != null) this.overviewTabButton.active = this.currentPage != Page.OVERVIEW;
-        if (this.membersTabButton != null) this.membersTabButton.active = this.currentPage != Page.MEMBERS;
-        if (this.claimsTabButton != null) this.claimsTabButton.active = this.currentPage != Page.CLAIMS;
-        if (this.warTabButton != null) this.warTabButton.active = this.currentPage != Page.WAR;
-        if (this.flagTabButton != null) this.flagTabButton.active = this.currentPage != Page.FLAG;
-        if (this.diplomacyTabButton != null) this.diplomacyTabButton.active = this.currentPage != Page.DIPLOMACY;
-        if (this.treasuryTabButton != null) this.treasuryTabButton.active = this.currentPage != Page.TREASURY;
-
-        boolean overviewPage = this.currentPage == Page.OVERVIEW;
-        boolean hasNation = this.data.hasNation();
-        boolean canManageInfo = hasNation && this.data.canManageInfo();
-        boolean noNationOverview = overviewPage && !hasNation;
-        if (this.nationNameInput != null) { this.nationNameInput.visible = overviewPage; this.nationNameInput.setEditable(overviewPage && (!hasNation || canManageInfo)); }
-        if (this.shortNameInput != null) { this.shortNameInput.visible = overviewPage && hasNation; this.shortNameInput.setEditable(overviewPage && canManageInfo); }
-        if (this.joinNationInput != null) { this.joinNationInput.visible = noNationOverview; this.joinNationInput.setEditable(noNationOverview); }
-        if (this.saveNationInfoButton != null) { this.saveNationInfoButton.visible = overviewPage && hasNation; this.saveNationInfoButton.active = overviewPage && canManageInfo && nationInfoChanged(); }
-        if (this.createNationButton != null) { this.createNationButton.visible = noNationOverview; this.createNationButton.active = noNationOverview && !valueOf(this.nationNameInput).trim().isBlank(); }
-        if (this.joinNationButton != null) { this.joinNationButton.visible = noNationOverview; this.joinNationButton.active = noNationOverview && !valueOf(this.joinNationInput).trim().isBlank(); }
-        if (this.nationHelpButton != null) { this.nationHelpButton.visible = noNationOverview; this.nationHelpButton.active = noNationOverview; }
-        if (this.openCapitalTownButton != null) { this.openCapitalTownButton.visible = overviewPage && hasNation; this.openCapitalTownButton.active = overviewPage && hasNation && selectedTown() != null; this.openCapitalTownButton.setMessage(Component.translatable("screen.sailboatmod.nation.action.open_town")); }
-        if (this.removeCoreButton != null) { this.removeCoreButton.visible = overviewPage && hasNation; this.removeCoreButton.active = overviewPage && hasNation && this.data.hasCore() && this.data.canManageClaims(); }
-        if (this.previousTownButton != null) { this.previousTownButton.visible = overviewPage && hasNation; this.previousTownButton.active = overviewPage && hasNation && this.data.towns().size() > 1; }
-        if (this.nextTownButton != null) { this.nextTownButton.visible = overviewPage && hasNation; this.nextTownButton.active = overviewPage && hasNation && this.data.towns().size() > 1; }
-
-        boolean membersPage = this.currentPage == Page.MEMBERS;
-        boolean leaderControls = this.data.hasNation() && this.data.isLeader();
-        if (this.officerTitleInput != null) { this.officerTitleInput.visible = membersPage; this.officerTitleInput.setEditable(membersPage && leaderControls); }
-        if (this.saveOfficerTitleButton != null) { this.saveOfficerTitleButton.visible = membersPage; this.saveOfficerTitleButton.active = membersPage && leaderControls && officerTitleChanged(); }
-        if (this.appointOfficerButton != null) { this.appointOfficerButton.visible = membersPage; this.appointOfficerButton.active = membersPage && leaderControls && canAppointSelectedMember(); }
-        if (this.removeOfficerButton != null) { this.removeOfficerButton.visible = membersPage; this.removeOfficerButton.active = membersPage && leaderControls && canRemoveSelectedOfficer(); }
-        if (this.appointMayorButton != null) { this.appointMayorButton.visible = membersPage; this.appointMayorButton.active = membersPage && leaderControls && canAssignSelectedMemberAsMayor(); }
-
-        boolean claimsPage = this.currentPage == Page.CLAIMS;
-        boolean claimsMapView = ClaimsMapVisibility.showMapTools(claimsPage, this.claimsSubPage);
-        boolean claimsPermView = claimsPage && this.claimsSubPage == 1;
-        NationOverviewClaim selectedClaim = selectedClaim();
-        boolean ownClaim = selectedClaim != null && this.data.nationId().equals(selectedClaim.nationId());
-        if (this.refreshButton != null) { this.refreshButton.visible = claimsMapView; this.refreshButton.active = claimsMapView && this.data.hasNation() && !this.refreshPending; }
-        if (this.claimButton != null) { this.claimButton.visible = claimsMapView; this.claimButton.active = claimsMapView && this.data.hasNation() && this.data.canManageClaims() && selectedClaim == null; }
-        if (this.unclaimButton != null) { this.unclaimButton.visible = claimsMapView; this.unclaimButton.active = claimsMapView && this.data.hasNation() && this.data.canManageClaims() && ownClaim; }
-        if (this.claimsSubPageButton != null) { this.claimsSubPageButton.visible = claimsPage; this.claimsSubPageButton.active = claimsPage && this.data.hasNation(); this.claimsSubPageButton.setMessage(Component.translatable(claimsPermView ? "screen.sailboatmod.nation.claims.show_map" : "screen.sailboatmod.nation.claims.show_perms")); }
-        if (this.breakPermissionButton != null) { this.breakPermissionButton.visible = claimsPermView; this.breakPermissionButton.active = claimsPermView && this.data.hasNation() && this.data.canManageClaims() && ownClaim; this.breakPermissionButton.setMessage(Component.translatable("screen.sailboatmod.nation.claims.button.break", accessName(selectedBreakAccessLevel()))); }
-        if (this.placePermissionButton != null) { this.placePermissionButton.visible = claimsPermView; this.placePermissionButton.active = claimsPermView && this.data.hasNation() && this.data.canManageClaims() && ownClaim; this.placePermissionButton.setMessage(Component.translatable("screen.sailboatmod.nation.claims.button.place", accessName(selectedPlaceAccessLevel()))); }
-        if (this.usePermissionButton != null) { this.usePermissionButton.visible = claimsPermView; this.usePermissionButton.active = claimsPermView && this.data.hasNation() && this.data.canManageClaims() && ownClaim; this.usePermissionButton.setMessage(Component.translatable("screen.sailboatmod.nation.claims.button.use", accessName(selectedUseAccessLevel()))); }
-        if (this.containerPermissionButton != null) { this.containerPermissionButton.visible = claimsPermView; this.containerPermissionButton.active = claimsPermView && this.data.hasNation() && this.data.canManageClaims() && ownClaim; this.containerPermissionButton.setMessage(Component.translatable("screen.sailboatmod.nation.claims.button.container", accessName(selectedContainerAccessLevel()))); }
-        if (this.redstonePermissionButton != null) { this.redstonePermissionButton.visible = claimsPermView; this.redstonePermissionButton.active = claimsPermView && this.data.hasNation() && this.data.canManageClaims() && ownClaim; this.redstonePermissionButton.setMessage(Component.translatable("screen.sailboatmod.nation.claims.button.redstone", accessName(selectedRedstoneAccessLevel()))); }
-        if (this.entityUsePermissionButton != null) { this.entityUsePermissionButton.visible = claimsPermView; this.entityUsePermissionButton.active = claimsPermView && this.data.hasNation() && this.data.canManageClaims() && ownClaim; this.entityUsePermissionButton.setMessage(Component.translatable("screen.sailboatmod.nation.claims.button.entity_use", accessName(selectedEntityUseAccessLevel()))); }
-        if (this.entityDamagePermissionButton != null) { this.entityDamagePermissionButton.visible = claimsPermView; this.entityDamagePermissionButton.active = claimsPermView && this.data.hasNation() && this.data.canManageClaims() && ownClaim; this.entityDamagePermissionButton.setMessage(Component.translatable("screen.sailboatmod.nation.claims.button.entity_damage", accessName(selectedEntityDamageAccessLevel()))); }
-
-        boolean warPage = this.currentPage == Page.WAR;
-        boolean canManageDiplomacy = warPage && this.data.hasNation() && this.data.canDeclareWar();
-        String warTarget = valueOf(this.warTargetInput).trim();
-        if (this.warTargetInput != null) { this.warTargetInput.visible = warPage; this.warTargetInput.setEditable(canManageDiplomacy); }
-        if (this.warButton != null) { this.warButton.visible = warPage; this.warButton.active = this.data.hasNation(); }
-        if (this.declareWarButton != null) { this.declareWarButton.visible = warPage; this.declareWarButton.active = canManageDiplomacy && !warTarget.isBlank() && !this.data.hasActiveWar() && this.data.warCooldownRemainingSeconds() <= 0; }
-
-        boolean dipPage = this.currentPage == Page.DIPLOMACY;
-        boolean dipHasSelection = !this.selectedDiplomacyNationId.isBlank();
-        boolean dipCanManage = dipPage && this.data.hasNation() && this.data.canDeclareWar();
-        boolean dipHasPendingAlly = dipPage && dipHasSelection && hasPendingAllianceRequest(this.selectedDiplomacyNationId);
-        NationOverviewNationEntry selectedNation = selectedDiplomacyNation();
-        boolean dipIsAllied = selectedNation != null && "allied".equals(selectedNation.diplomacyStatusId());
-        boolean dipCanOpenTrade = canOpenTradeWindow(dipPage, this.data.hasNation(), dipHasSelection, this.data.canDeclareWar(), this.data.canManageTreasury());
-        if (this.dipAllyButton != null) { this.dipAllyButton.visible = dipPage && dipHasSelection; this.dipAllyButton.active = dipCanManage && !dipIsAllied; }
-        if (this.dipTradeButton != null) { this.dipTradeButton.visible = dipPage && dipHasSelection; this.dipTradeButton.active = dipCanManage; }
-        if (this.dipEnemyButton != null) { this.dipEnemyButton.visible = dipPage && dipHasSelection; this.dipEnemyButton.active = dipCanManage; }
-        if (this.dipNeutralButton != null) { this.dipNeutralButton.visible = dipPage && dipHasSelection; this.dipNeutralButton.active = dipCanManage; }
-        if (this.dipDeclareWarButton != null) { this.dipDeclareWarButton.visible = dipPage && dipHasSelection; this.dipDeclareWarButton.active = dipCanManage && !this.data.hasActiveWar() && this.data.warCooldownRemainingSeconds() <= 0; }
-        if (this.dipAcceptAllyButton != null) { this.dipAcceptAllyButton.visible = dipPage && dipHasSelection && dipHasPendingAlly; this.dipAcceptAllyButton.active = dipCanManage && dipHasPendingAlly; }
-        if (this.dipRejectAllyButton != null) { this.dipRejectAllyButton.visible = dipPage && dipHasSelection && dipHasPendingAlly; this.dipRejectAllyButton.active = dipCanManage && dipHasPendingAlly; }
-        if (this.dipBackButton != null) { this.dipBackButton.visible = dipPage && dipHasSelection; this.dipBackButton.active = dipPage && dipHasSelection; }
-        if (this.dipOpenTradeButton != null) { this.dipOpenTradeButton.visible = dipPage && dipHasSelection; this.dipOpenTradeButton.active = dipCanOpenTrade; }
-
-        boolean treasuryPage = this.currentPage == Page.TREASURY;
-        boolean canTreasury = treasuryPage && this.data.hasNation() && this.data.canManageTreasury();
-        if (this.salesTaxUpButton != null) { this.salesTaxUpButton.visible = treasuryPage; this.salesTaxUpButton.active = canTreasury; }
-        if (this.salesTaxDownButton != null) { this.salesTaxDownButton.visible = treasuryPage; this.salesTaxDownButton.active = canTreasury; }
-        if (this.tariffUpButton != null) { this.tariffUpButton.visible = treasuryPage; this.tariffUpButton.active = canTreasury; }
-        if (this.tariffDownButton != null) { this.tariffDownButton.visible = treasuryPage; this.tariffDownButton.active = canTreasury; }
-        if (this.treasuryCommandsButton != null) { this.treasuryCommandsButton.visible = treasuryPage && this.data.hasNation(); this.treasuryCommandsButton.active = treasuryPage; }
-        if (this.tariffDownButton != null) { this.tariffDownButton.visible = treasuryPage; this.tariffDownButton.active = canTreasury; }
-
-        if (this.resetMapButton != null) { this.resetMapButton.visible = claimsMapView; this.resetMapButton.active = claimsMapView; }
-        if (this.refreshMapButton != null) { this.refreshMapButton.visible = claimsMapView; this.refreshMapButton.active = claimsMapView; }
-
-        boolean hasWar = this.data.hasActiveWar();
-        boolean canWar = warPage && this.data.hasNation() && this.data.canDeclareWar() && hasWar;
-        boolean hasIncomingProposal = this.data.hasPeaceProposal() && this.data.peaceProposalIncoming();
-        if (this.proposeCeasefireButton != null) { this.proposeCeasefireButton.visible = warPage && hasWar && !hasIncomingProposal; this.proposeCeasefireButton.active = canWar; }
-        if (this.proposeCedeButton != null) { this.proposeCedeButton.visible = warPage && hasWar && !hasIncomingProposal; this.proposeCedeButton.active = canWar; }
-        if (this.proposeReparationButton != null) { this.proposeReparationButton.visible = warPage && hasWar && !hasIncomingProposal; this.proposeReparationButton.active = canWar; }
-        if (this.acceptPeaceButton != null) { this.acceptPeaceButton.visible = warPage && hasIncomingProposal; this.acceptPeaceButton.active = canWar && hasIncomingProposal; }
-        if (this.rejectPeaceButton != null) { this.rejectPeaceButton.visible = warPage && hasIncomingProposal; this.rejectPeaceButton.active = canWar && hasIncomingProposal; }
-
-        boolean flagPage = this.currentPage == Page.FLAG;
-        if (this.primaryColorInput != null) { this.primaryColorInput.visible = flagPage; this.primaryColorInput.setEditable(flagPage && canManageInfo); }
-        if (this.secondaryColorInput != null) { this.secondaryColorInput.visible = flagPage; this.secondaryColorInput.setEditable(flagPage && canManageInfo); }
-        if (this.applyColorsButton != null) { this.applyColorsButton.visible = flagPage; this.applyColorsButton.active = flagPage && canManageInfo && colorInputsValid(); }
-        if (this.flagPathInput != null) { this.flagPathInput.visible = flagPage; this.flagPathInput.setEditable(flagPage && this.data.hasNation() && this.data.canUploadFlag()); }
-        if (this.browseButton != null) { this.browseButton.visible = flagPage; this.browseButton.active = flagPage && this.data.hasNation() && this.data.canUploadFlag(); }
-        if (this.uploadButton != null) { this.uploadButton.visible = flagPage; this.uploadButton.active = flagPage && this.data.hasNation() && this.data.canUploadFlag(); }
-        if (this.toggleMirrorButton != null) {
-            boolean canMirror = flagPage && this.data.hasNation() && this.data.canUploadFlag() && !this.data.flagId().isBlank();
-            this.toggleMirrorButton.visible = flagPage;
-            this.toggleMirrorButton.active = canMirror;
-            this.toggleMirrorButton.setMessage(Component.translatable(this.data.flagMirrored() ? "screen.sailboatmod.nation.action.unmirror" : "screen.sailboatmod.nation.action.mirror"));
-        }
-        layoutScrollableWidgets();
-    }
-
     private int mapCenterX() { return this.data.previewCenterChunkX() + this.mapOffsetX; }
     private int mapCenterZ() { return this.data.previewCenterChunkZ() + this.mapOffsetZ; }
-
-    private void drawClaimMap(GuiGraphics g, ClaimMapViewport viewport, ClaimMapViewport visibleViewport, int mouseX, int mouseY) {
-        g.fill(viewport.x() - 1, viewport.y() - 1, viewport.right() + 1, viewport.bottom() + 1, 0xFF8EAF9E);
-        this.claimWorldMapView.renderBase(g, this.font, viewport, mapCenterX(), mapCenterZ(), claimRadius());
-        requestInitialVisibleClaimMapForceRender(viewport);
-        ClaimWorldMapView.ChunkBounds bounds = this.claimWorldMapView.visibleChunkBounds(viewport);
-        for (int chunkZ = bounds.minChunkZ(); chunkZ <= bounds.maxChunkZ(); chunkZ++) {
-            for (int chunkX = bounds.minChunkX(); chunkX <= bounds.maxChunkX(); chunkX++) {
-                NationOverviewClaim claim = findClaim(chunkX, chunkZ);
-                if (claim == null) continue;
-                ClaimWorldMapView.ScreenRect rect = this.claimWorldMapView.chunkScreenRect(chunkX, chunkZ, viewport);
-                int x1 = Math.max(viewport.x(), rect.x());
-                int x2 = Math.min(viewport.right(), rect.right());
-                int y1 = Math.max(viewport.y(), rect.y());
-                int y2 = Math.min(viewport.bottom(), rect.bottom());
-                if (x1 >= x2 || y1 >= y2) continue;
-                g.fill(x1, y1, x2, y2, 0x66000000 | (claim.primaryColorRgb() & 0x00FFFFFF));
-                int borderColor = 0xFF000000 | claim.secondaryColorRgb();
-                String ownerId = claim.nationId();
-                if (!sameOwner(ownerId, chunkX, chunkZ - 1)) g.fill(x1, y1, x2, y1 + 1, borderColor);
-                if (!sameOwner(ownerId, chunkX, chunkZ + 1)) g.fill(x1, y2 - 1, x2, y2, borderColor);
-                if (!sameOwner(ownerId, chunkX - 1, chunkZ)) g.fill(x1, y1, x1 + 1, y2, borderColor);
-                if (!sameOwner(ownerId, chunkX + 1, chunkZ)) g.fill(x2 - 1, y1, x2, y2, borderColor);
-            }
-        }
-        drawClaimMarker(g, viewport, this.data.currentChunkX(), this.data.currentChunkZ(), 0xFFFFFFFF);
-        drawClaimMarker(g, viewport, this.selectedClaimChunkX, this.selectedClaimChunkZ, 0xFFFFD166);
-        if (hasAreaSelection()) {
-            int minX = Math.min(this.areaCorner1X, this.areaCorner2X);
-            int maxX = Math.max(this.areaCorner1X, this.areaCorner2X);
-            int minZ = Math.min(this.areaCorner1Z, this.areaCorner2Z);
-            int maxZ = Math.max(this.areaCorner1Z, this.areaCorner2Z);
-            for (int az = minZ; az <= maxZ; az++) {
-                for (int ax = minX; ax <= maxX; ax++) {
-                    drawClaimMarker(g, viewport, ax, az, 0xAAFF8844);
-                }
-            }
-        } else if (this.areaCorner1X != Integer.MIN_VALUE) {
-            drawClaimMarker(g, viewport, this.areaCorner1X, this.areaCorner1Z, 0xAAFF8844);
-        }
-        drawClaimMapProgress(g, viewport);
-        drawTownLabels(g, viewport, visibleViewport, mouseX, mouseY);
-    }
-
-    private void drawClaimMapProgress(GuiGraphics g, ClaimMapViewport viewport) {
-        if (!shouldShowClaimMapProgress(this.data.claimMapState())) {
-            return;
-        }
-        int visibleWidth = claimMapProgressWidth(this.data.claimMapState(), viewport.width() - 2, true);
-        int prefetchWidth = claimMapProgressWidth(this.data.claimMapState(), viewport.width() - 2, false);
-        int barX = viewport.x() + 1;
-        int barW = viewport.width() - 2;
-        int visibleY = viewport.bottom() - 5;
-        int prefetchY = viewport.bottom() - 2;
-        g.fill(barX, visibleY, barX + barW, visibleY + 1, 0x55313A40);
-        g.fill(barX, prefetchY, barX + barW, prefetchY + 1, 0x55313A40);
-        if (visibleWidth > 0) {
-            g.fill(barX, visibleY, barX + Math.min(barW, visibleWidth), visibleY + 1, 0xD9D8B35A);
-        }
-        if (prefetchWidth > 0) {
-            g.fill(barX, prefetchY, barX + Math.min(barW, prefetchWidth), prefetchY + 1, 0xAA6AA8C8);
-        }
-    }
-
-    private void drawTownLabels(GuiGraphics g, ClaimMapViewport viewport, ClaimMapViewport visibleViewport, int mouseX, int mouseY) {
-        if (!visibleViewport.contains(mouseX, mouseY)) return;
-        ChunkPos hoverChunk = this.claimWorldMapView.screenToChunk(mouseX, mouseY, viewport);
-        int hoverChunkX = hoverChunk.x;
-        int hoverChunkZ = hoverChunk.z;
-        NationOverviewClaim hoverClaim = findClaim(hoverChunkX, hoverChunkZ);
-        if (hoverClaim == null) return;
-        String hoverId = hoverClaim.nationId();
-        String label = hoverClaim.nationName();
-        if (label.isBlank()) return;
-        int count = 0;
-        for (NationOverviewClaim c : this.data.nearbyClaims()) {
-            if (c.nationId().equals(hoverId)) count++;
-        }
-        int color = 0xFF000000 | hoverClaim.primaryColorRgb();
-        String text = label + "(" + count + ")";
-        int tw = this.font.width(text);
-        int labelLeft = visibleViewport.x();
-        int labelRight = Math.max(labelLeft, visibleViewport.right() - tw);
-        int labelTop = visibleViewport.y();
-        int labelBottom = Math.max(labelTop, visibleViewport.bottom() - 10);
-        int tx = Math.max(labelLeft, Math.min(mouseX - tw / 2, labelRight));
-        int ty = Math.max(labelTop, Math.min(mouseY - 14, labelBottom));
-        g.fill(tx - 1, ty - 1, tx + tw + 1, ty + 9, 0xCC000000);
-        g.drawString(this.font, text, tx, ty, color);
-    }
 
     static boolean shouldShowClaimMapProgress(ClaimPreviewMapState mapState) {
         ClaimPreviewMapState safeMapState = mapState == null ? ClaimPreviewMapState.empty() : mapState;
@@ -1301,32 +1450,6 @@ public class NationHomeScreen extends Screen implements RoadPlannerTileSyncRecei
             return 0;
         }
         return Math.max(0, Math.min(safeMapWidth, Math.round((ready / (float) total) * safeMapWidth)));
-    }
-
-    private void drawClaimMarker(GuiGraphics g, ClaimMapViewport viewport, int chunkX, int chunkZ, int color) {
-        ClaimWorldMapView.ScreenRect rect = this.claimWorldMapView.chunkScreenRect(chunkX, chunkZ, viewport);
-        int x1 = Math.max(viewport.x(), rect.x());
-        int y1 = Math.max(viewport.y(), rect.y());
-        int x2 = Math.min(viewport.right(), rect.right());
-        int y2 = Math.min(viewport.bottom(), rect.bottom());
-        if (x1 >= x2 || y1 >= y2) return;
-        drawRect(g, x1, y1, Math.max(x1 + 1, x2) - 1, Math.max(y1 + 1, y2) - 1, color);
-    }
-
-    private void drawDiplomacySection(GuiGraphics g, Component title, List<Component> lines, int x, int y, int width, int maxLines) {
-        g.drawString(this.font, title, x, y, 0xFFE7C977);
-        int drawY = y + 14;
-        int drawn = 0;
-        for (Component line : lines) {
-            if (drawn >= maxLines) break;
-            List<FormattedCharSequence> wrapped = wrap(line, width);
-            for (FormattedCharSequence seq : wrapped) {
-                if (drawn >= maxLines) break;
-                g.drawString(this.font, seq, x, drawY, 0xFFDCEEFF);
-                drawY += 10;
-                drawn++;
-            }
-        }
     }
 
     private List<Component> buildDiplomacyRelationLines() {
@@ -1381,161 +1504,6 @@ public class NationHomeScreen extends Screen implements RoadPlannerTileSyncRecei
         return target.equalsIgnoreCase(nationId) || target.equalsIgnoreCase(nationName);
     }
 
-    private void switchPage(Page page) {
-        this.currentPage = page == null ? Page.OVERVIEW : page;
-        this.pageScroll = 0;
-        if (this.currentPage == Page.CLAIMS) {
-            ensureClaimPreviewVisible();
-        }
-        updateButtonState();
-    }
-
-    private void layoutScrollableWidgets() {
-        boolean overviewPage = this.currentPage == Page.OVERVIEW;
-        boolean noNationOverview = overviewPage && !this.data.hasNation();
-        boolean nationOverview = overviewPage && this.data.hasNation();
-        boolean membersPage = this.currentPage == Page.MEMBERS;
-        boolean claimsPage = this.currentPage == Page.CLAIMS;
-        boolean claimsPermView = claimsPage && this.claimsSubPage == 1;
-        boolean claimsMapView = ClaimsMapVisibility.showMapTools(claimsPage, this.claimsSubPage);
-        boolean warPage = this.currentPage == Page.WAR;
-        boolean dipPage = this.currentPage == Page.DIPLOMACY;
-        boolean treasuryPage = this.currentPage == Page.TREASURY;
-        boolean flagPage = this.currentPage == Page.FLAG;
-
-        int overviewFormY = overviewFormLocalY();
-        int nationTownButtonY = overviewFormY + 22;
-        int noNationJoinY = overviewFormY + 48;
-
-        layoutWidget(this.nationNameInput, 12, overviewFormY + 22, 18, overviewPage);
-        layoutWidget(this.shortNameInput, 216, overviewFormY + 22, 18, nationOverview);
-        layoutWidget(this.saveNationInfoButton, 300, overviewFormY + 22, 18, nationOverview);
-        layoutWidget(this.createNationButton, 300, overviewFormY + 22, 18, noNationOverview);
-        layoutWidget(this.joinNationInput, 12, noNationJoinY + 22, 18, noNationOverview);
-        layoutWidget(this.joinNationButton, 300, noNationJoinY + 22, 18, noNationOverview);
-        layoutWidget(this.nationHelpButton, 300, noNationJoinY + 50, 18, noNationOverview);
-        layoutWidget(this.previousTownButton, 300, nationTownButtonY + 28, 18, nationOverview);
-        layoutWidget(this.nextTownButton, 394, nationTownButtonY + 28, 18, nationOverview);
-        layoutWidget(this.openCapitalTownButton, 320, nationTownButtonY + 28, 18, nationOverview);
-        layoutWidget(this.removeCoreButton, 300, nationTownButtonY + 56, 18, nationOverview);
-
-        layoutWidget(this.officerTitleInput, 224, 152, 18, membersPage);
-        layoutWidget(this.saveOfficerTitleButton, 366, 152, 18, membersPage);
-        layoutWidget(this.appointOfficerButton, 224, 182, 18, membersPage);
-        layoutWidget(this.removeOfficerButton, 332, 182, 18, membersPage);
-        layoutWidget(this.appointMayorButton, 224, 206, 18, membersPage);
-
-        layoutWidget(this.claimButton, 12, BODY_H - 26, 18, claimsMapView);
-        layoutWidget(this.unclaimButton, 90, BODY_H - 26, 18, claimsMapView);
-        layoutWidget(this.claimsSubPageButton, 184, BODY_H - 26, 18, claimsPage);
-        layoutFixedWidget(this.refreshMapButton, BODY_W - CLAIM_MAP_W - 44, 10, claimsMapView);
-        layoutWidget(this.breakPermissionButton, 12, 50, 18, claimsPermView);
-        layoutWidget(this.placePermissionButton, 120, 50, 18, claimsPermView);
-        layoutWidget(this.usePermissionButton, 12, 74, 18, claimsPermView);
-        layoutWidget(this.containerPermissionButton, 120, 74, 18, claimsPermView);
-        layoutWidget(this.redstonePermissionButton, 12, 98, 18, claimsPermView);
-        layoutWidget(this.entityUsePermissionButton, 120, 98, 18, claimsPermView);
-        layoutWidget(this.entityDamagePermissionButton, 12, 122, 18, claimsPermView);
-        layoutFixedWidget(this.resetMapButton, BODY_W - CLAIM_MAP_W - 16, 10, claimsMapView);
-
-        layoutWidget(this.warButton, 12, 164, 18, warPage);
-        layoutWidget(this.warTargetInput, 12, 192, 18, warPage);
-        layoutWidget(this.declareWarButton, 300, 192, 18, warPage);
-        layoutWidget(this.proposeCeasefireButton, 12, 148, 18, warPage && this.data.hasActiveWar() && !(this.data.hasPeaceProposal() && this.data.peaceProposalIncoming()));
-        layoutWidget(this.proposeCedeButton, 108, 148, 18, warPage && this.data.hasActiveWar() && !(this.data.hasPeaceProposal() && this.data.peaceProposalIncoming()));
-        layoutWidget(this.proposeReparationButton, 204, 148, 18, warPage && this.data.hasActiveWar() && !(this.data.hasPeaceProposal() && this.data.peaceProposalIncoming()));
-        layoutWidget(this.acceptPeaceButton, 12, 148, 18, warPage && this.data.hasPeaceProposal() && this.data.peaceProposalIncoming());
-        layoutWidget(this.rejectPeaceButton, 108, 148, 18, warPage && this.data.hasPeaceProposal() && this.data.peaceProposalIncoming());
-
-        layoutWidget(this.dipAllyButton, 234, 40, 18, dipPage);
-        layoutWidget(this.dipTradeButton, 340, 40, 18, dipPage);
-        layoutWidget(this.dipEnemyButton, 234, 64, 18, dipPage);
-        layoutWidget(this.dipNeutralButton, 340, 64, 18, dipPage);
-        layoutWidget(this.dipDeclareWarButton, 234, 88, 18, dipPage);
-        layoutWidget(this.dipAcceptAllyButton, 234, 112, 18, dipPage);
-        layoutWidget(this.dipRejectAllyButton, 340, 112, 18, dipPage);
-        layoutWidget(this.dipBackButton, 234, 136, 18, dipPage);
-        layoutWidget(this.dipOpenTradeButton, 234, 160, 18, dipPage);
-
-        layoutWidget(this.salesTaxUpButton, 200, 72, 14, treasuryPage);
-        layoutWidget(this.salesTaxDownButton, 224, 72, 14, treasuryPage);
-        layoutWidget(this.tariffUpButton, 200, 90, 14, treasuryPage);
-        layoutWidget(this.tariffDownButton, 224, 90, 14, treasuryPage);
-        layoutWidget(this.treasuryCommandsButton, BODY_W - 90, 68, 18, treasuryPage && this.data.hasNation());
-
-        layoutWidget(this.primaryColorInput, 170, 126, 18, flagPage);
-        layoutWidget(this.secondaryColorInput, 170, 154, 18, flagPage);
-        layoutWidget(this.applyColorsButton, 278, 139, 18, flagPage);
-        layoutWidget(this.flagPathInput, 12, BODY_H - 54, 18, flagPage);
-        layoutWidget(this.browseButton, 268, BODY_H - 54, 18, flagPage);
-        layoutWidget(this.uploadButton, 330, BODY_H - 54, 18, flagPage);
-        layoutWidget(this.toggleMirrorButton, 170, 82, 18, flagPage);
-    }
-
-    private void layoutWidget(AbstractWidget widget, int bodyLocalX, int bodyLocalY, int height, boolean pageVisible) {
-        if (widget == null) {
-            return;
-        }
-        int absoluteX = left() + BODY_X + bodyLocalX;
-        int absoluteY = top() + BODY_Y + bodyLocalY - this.pageScroll;
-        widget.setPosition(absoluteX, absoluteY);
-        if (!pageVisible) {
-            widget.visible = false;
-            return;
-        }
-        int viewportTop = bodyViewportTop();
-        int viewportBottom = bodyViewportBottom();
-        widget.visible = absoluteY + height > viewportTop && absoluteY < viewportBottom;
-    }
-
-    private void layoutFixedWidget(AbstractWidget widget, int bodyLocalX, int bodyLocalY, boolean pageVisible) {
-        if (widget == null) {
-            return;
-        }
-        int absoluteX = left() + BODY_X + bodyLocalX;
-        int absoluteY = top() + BODY_Y + bodyLocalY;
-        widget.setPosition(absoluteX, absoluteY);
-        widget.visible = pageVisible;
-    }
-
-    private int overviewFormLocalY() {
-        int drawY = 34;
-        for (Component line : buildOverviewLines()) {
-            drawY += wrappedHeight(line, BODY_W - 24) + 6;
-        }
-        return Math.max(118, drawY + 8);
-    }
-
-    private boolean isInsideBodyViewport(double mouseX, double mouseY) {
-        return mouseX >= left() + BODY_X
-                && mouseX < left() + BODY_X + BODY_W
-                && mouseY >= bodyViewportTop()
-                && mouseY < bodyViewportBottom();
-    }
-
-    private int bodyViewportTop() {
-        return top() + BODY_Y + 24;
-    }
-
-    private int bodyViewportBottom() {
-        return top() + BODY_Y + BODY_H - 1;
-    }
-
-    private int maxPageScroll() {
-        return Math.max(0, pageContentHeight(this.currentPage) - (BODY_H - 26));
-    }
-
-    private int pageContentHeight(Page page) {
-        return switch (page) {
-            case OVERVIEW -> this.data.hasNation() ? overviewFormLocalY() + 170 : overviewFormLocalY() + 150;
-            case MEMBERS -> 254;
-            case CLAIMS -> 228;
-            case WAR -> 252;
-            case DIPLOMACY -> 236;
-            case TREASURY -> 248;
-            case FLAG -> 230;
-        };
-    }
     private void requestRefresh() { requestRefresh(mapCenterX(), mapCenterZ(), true); }
     private void requestRefresh(int centerChunkX, int centerChunkZ) {
         requestRefresh(centerChunkX, centerChunkZ, false);
@@ -1837,6 +1805,7 @@ public class NationHomeScreen extends Screen implements RoadPlannerTileSyncRecei
         }
         LOGGER.info("[NationClaimPreview] {}", message);
     }
+
     private void openCapitalTown() { NationOverviewTown town = selectedTown(); if (town == null) { this.statusLine = Component.translatable("screen.sailboatmod.nation.overview.town_none"); return; } com.monpai.sailboatmod.client.TownClientHooks.requestOpen(); com.monpai.sailboatmod.client.TownClientHooks.openCachedOrEmpty(); ModNetwork.CHANNEL.sendToServer(new OpenTownMenuPacket(town.townId())); this.statusLine = Component.translatable("screen.sailboatmod.nation.overview.opening_town", town.townName().isBlank() ? town.townId() : town.townName()); }
     private void previousTownSelection() { cycleTownSelection(-1); }
     private void nextTownSelection() { cycleTownSelection(1); }
@@ -1892,7 +1861,7 @@ public class NationHomeScreen extends Screen implements RoadPlannerTileSyncRecei
 
     private void submitCreateNation() {
         if (this.data.hasNation()) return;
-        String nationName = valueOf(this.nationNameInput).trim();
+        String nationName = valueOf(this.createNameInput).trim();
         if (nationName.isBlank()) {
             this.statusLine = Component.translatable("screen.sailboatmod.nation.overview.create_required");
             return;
@@ -2021,33 +1990,7 @@ public class NationHomeScreen extends Screen implements RoadPlannerTileSyncRecei
     private NationClaimAccessLevel nextAccessLevel(String id) { NationClaimAccessLevel c = NationClaimAccessLevel.fromId(id); if (c == null) c = NationClaimAccessLevel.MEMBER; return switch (c) { case MEMBER -> NationClaimAccessLevel.OFFICER; case OFFICER -> NationClaimAccessLevel.LEADER; case LEADER -> NationClaimAccessLevel.ALLY; case ALLY -> NationClaimAccessLevel.NEUTRAL; case NEUTRAL -> NationClaimAccessLevel.ANYONE; case ANYONE -> NationClaimAccessLevel.MEMBER; }; }
     private boolean submitAndTrue(Runnable r) { r.run(); return true; }
 
-    private void syncNationInfoInputs() { if (this.data.hasNation()) { if (this.nationNameInput != null && !this.nationNameInput.isFocused()) this.nationNameInput.setValue(this.data.nationName()); if (this.shortNameInput != null && !this.shortNameInput.isFocused()) this.shortNameInput.setValue(this.data.shortName()); } }
-    private void syncColorInputs() { if (this.primaryColorInput != null && !this.primaryColorInput.isFocused()) this.primaryColorInput.setValue(hex(this.data.primaryColorRgb())); if (this.secondaryColorInput != null && !this.secondaryColorInput.isFocused()) this.secondaryColorInput.setValue(hex(this.data.secondaryColorRgb())); }
-    private void syncOfficerTitleInput() { if (this.officerTitleInput != null && !this.officerTitleInput.isFocused()) this.officerTitleInput.setValue(this.data.officerTitle()); }
     private void syncSelections() { if (this.selectedClaimChunkX == Integer.MIN_VALUE || Math.abs(this.selectedClaimChunkX - this.data.currentChunkX()) > claimRadius() || Math.abs(this.selectedClaimChunkZ - this.data.currentChunkZ()) > claimRadius()) { this.selectedClaimChunkX = this.data.currentChunkX(); this.selectedClaimChunkZ = this.data.currentChunkZ(); } if (this.data.members().isEmpty()) { this.selectedMemberUuid = ""; this.memberScroll = 0; return; } if (this.selectedMemberUuid.isBlank()) this.selectedMemberUuid = this.data.members().get(0).playerUuid(); for (NationOverviewMember member : this.data.members()) if (member.playerUuid().equals(this.selectedMemberUuid)) return; this.selectedMemberUuid = this.data.members().get(0).playerUuid(); }
-    private boolean trySelectMember(double mouseX, double mouseY) { int[] b = memberListBounds(); if (mouseX < b[0] || mouseX >= b[0] + b[2] || mouseY < b[1] || mouseY >= b[1] + b[3] || this.data.members().isEmpty()) return false; int row = (int) ((mouseY - b[1] - 4) / MEMBER_ROW_H); if (row < 0 || row >= MEMBER_VISIBLE_ROWS) return false; int idx = clampMemberScroll(this.memberScroll) + row; if (idx < 0 || idx >= this.data.members().size()) return false; this.selectedMemberUuid = this.data.members().get(idx).playerUuid(); updateButtonState(); return true; }
-    private boolean trySelectClaim(double mouseX, double mouseY) {
-        ClaimMapViewport viewport = claimMapViewport();
-        ClaimMapViewport visibleViewport = visibleClaimMapViewport(viewport);
-        if (visibleViewport == null || !visibleViewport.contains(mouseX, mouseY)) return false;
-        ChunkPos chunk = this.claimWorldMapView.screenToChunk(mouseX, mouseY, viewport);
-        int chunkX = chunk.x;
-        int chunkZ = chunk.z;
-        if (hasShiftDown() && this.areaCorner1X != Integer.MIN_VALUE) {
-            this.areaCorner2X = chunkX; this.areaCorner2Z = chunkZ;
-        } else {
-            this.selectedClaimChunkX = chunkX; this.selectedClaimChunkZ = chunkZ;
-            this.areaCorner1X = chunkX; this.areaCorner1Z = chunkZ;
-            this.areaCorner2X = Integer.MIN_VALUE; this.areaCorner2Z = Integer.MIN_VALUE;
-        }
-        updateButtonState(); return true;
-    }
-    private boolean trySelectDiplomacyNation(double mouseX, double mouseY) { int listX = left() + BODY_X + 8; int listY = top() + BODY_Y + 28; int listW = 220; int listH = DIP_VISIBLE_ROWS * DIP_ROW_H; if (mouseX < listX || mouseX >= listX + listW || mouseY < listY || mouseY >= listY + listH || this.data.allNations().isEmpty()) return false; int row = (int) ((mouseY - listY) / DIP_ROW_H); if (row < 0 || row >= DIP_VISIBLE_ROWS) return false; int idx = Math.max(0, Math.min(this.diplomacyScroll, this.data.allNations().size() - DIP_VISIBLE_ROWS)) + row; if (idx < 0 || idx >= this.data.allNations().size()) return false; this.selectedDiplomacyNationId = this.data.allNations().get(idx).nationId(); updateButtonState(); return true; }
-    private int[] memberListBounds() { return new int[] { left() + BODY_X + 10, top() + BODY_Y + 48, MEMBER_LIST_W, MEMBER_VISIBLE_ROWS * MEMBER_ROW_H + 8 }; }
-    private ClaimMapViewport claimMapViewport() { return ClaimMapViewport.scrolled(claimMapX(left() + BODY_X), claimMapY(top() + BODY_Y), this.pageScroll, CLAIM_MAP_W, CLAIM_MAP_H); }
-    private ClaimMapViewport visibleClaimMapViewport(ClaimMapViewport viewport) { return viewport.intersection(left() + BODY_X + 1, bodyViewportTop(), left() + BODY_X + BODY_W - 1, bodyViewportBottom()); }
-    private int claimMapX(int bodyX) { return bodyX + BODY_W - CLAIM_MAP_W - 16; }
-    private int claimMapY(int bodyY) { return bodyY + 24; }
     private NationOverviewMember selectedMember() { for (NationOverviewMember m : this.data.members()) if (m.playerUuid().equals(this.selectedMemberUuid)) return m; return null; }
     private NationOverviewClaim selectedClaim() { return findClaim(this.selectedClaimChunkX, this.selectedClaimChunkZ); }
     private void cacheNearbyClaims() {
@@ -2077,37 +2020,15 @@ public class NationHomeScreen extends Screen implements RoadPlannerTileSyncRecei
     private boolean nationInfoChanged() { return !valueOf(this.nationNameInput).trim().equals(this.data.nationName()) || !valueOf(this.shortNameInput).trim().equals(this.data.shortName()); }
     private void syncTownSelection() { if (this.data.towns().isEmpty()) { this.selectedTownId = ""; return; } if (!this.selectedTownId.isBlank()) { for (NationOverviewTown town : this.data.towns()) if (town.townId().equals(this.selectedTownId)) return; } if (!this.data.capitalTownId().isBlank()) { for (NationOverviewTown town : this.data.towns()) { if (town.townId().equals(this.data.capitalTownId())) { this.selectedTownId = town.townId(); return; } } } this.selectedTownId = this.data.towns().get(0).townId(); }
     private NationOverviewTown selectedTown() { for (NationOverviewTown town : this.data.towns()) if (town.townId().equals(this.selectedTownId)) return town; return this.data.towns().isEmpty() ? null : this.data.towns().get(0); }
-    private void cycleTownSelection(int delta) { if (this.data.towns().isEmpty()) return; int index = 0; for (int i = 0; i < this.data.towns().size(); i++) { if (this.data.towns().get(i).townId().equals(this.selectedTownId)) { index = i; break; } } int size = this.data.towns().size(); int next = Math.floorMod(index + delta, size); this.selectedTownId = this.data.towns().get(next).townId(); updateButtonState(); }
+    private void cycleTownSelection(int delta) { if (this.data.towns().isEmpty()) return; int index = 0; for (int i = 0; i < this.data.towns().size(); i++) { if (this.data.towns().get(i).townId().equals(this.selectedTownId)) { index = i; break; } } int size = this.data.towns().size(); int next = Math.floorMod(index + delta, size); this.selectedTownId = this.data.towns().get(next).townId(); refresh(); }
 
-    private void drawPanelFrame(GuiGraphics g, int x, int y, int w, int h) { g.fill(x, y, x + w, y + h, 0x66203037); g.fill(x + 1, y + 1, x + w - 1, y + h - 1, 0x66131C23); }
-    private void drawMetricCard(GuiGraphics g, int x, int y, int w, int h, Component label, String value, int accent) {
-        g.fill(x, y, x + w, y + h, 0x6E19120D);
-        g.fill(x, y, x + w, y + 1, accent);
-        g.fill(x, y + h - 1, x + w, y + h, 0xAA3E2B18);
-        g.drawString(this.font, Component.literal(trimToWidth(label.getString().replace(":", ""), w - 8)), x + 4, y + 3, 0xFFD0BA8C);
-        g.drawString(this.font, Component.literal(trimToWidth(value, w - 8)), x + 4, y + 11, 0xFFF6E9CA);
-    }
-    private void drawPolicyBar(GuiGraphics g, int x, int y, Component label, int basisPoints, int maxBasisPoints, int accent) {
-        int labelW = 76;
-        int barW = 62;
-        int barH = 10;
-        int valueX = x + labelW + barW + 6;
-        int clamped = Math.max(0, Math.min(maxBasisPoints, basisPoints));
-        int fillW = Math.max(0, Math.min(barW, Math.round((clamped / (float) maxBasisPoints) * barW)));
-        g.drawString(this.font, Component.literal(trimToWidth(label.getString().replace(":", ""), labelW - 2)), x, y - 8, 0xFFB8C0C8);
-        g.fill(x + labelW, y, x + labelW + barW, y + barH, 0x4426333D);
-        g.fill(x + labelW, y, x + labelW + fillW, y + barH, accent);
-        g.fill(x + labelW, y + barH - 1, x + labelW + barW, y + barH, 0x66465863);
-        g.drawString(this.font, formatBasisPoints(basisPoints), valueX, y + 1, 0xFFDCEEFF);
-    }
-    private void drawWrappedLine(GuiGraphics g, Component line, int x, int y, int w, int color) { int drawY = y; for (FormattedCharSequence seq : wrap(line, w)) { g.drawString(this.font, seq, x, drawY, color); drawY += 10; } }
     private int wrappedHeight(Component line, int width) { return Math.max(10, wrap(line, width).size() * 10); }
     private void drawRect(GuiGraphics g, int x1, int y1, int x2, int y2, int color) { int minX = Math.min(x1, x2), maxX = Math.max(x1, x2), minY = Math.min(y1, y2), maxY = Math.max(y1, y2); g.fill(minX, minY, maxX + 1, minY + 1, color); g.fill(minX, maxY, maxX + 1, maxY + 1, color); g.fill(minX, minY, minX + 1, maxY + 1, color); g.fill(maxX, minY, maxX + 1, maxY + 1, color); }
     private List<FormattedCharSequence> wrap(Component text, int width) { return this.font.split(text, width); }
     private int clampMemberScroll(int value) { return Math.max(0, Math.min(value, Math.max(0, this.data.members().size() - MEMBER_VISIBLE_ROWS))); }
     private String trimToWidth(String src, int maxPixels) { if (src == null || src.isEmpty() || maxPixels <= 0 || this.font.width(src) <= maxPixels) return src == null ? "" : src; String ellipsis = "..."; int ew = this.font.width(ellipsis); int end = src.length(); while (end > 0 && this.font.width(src.substring(0, end)) + ew > maxPixels) end--; return src.substring(0, Math.max(0, end)) + ellipsis; }
     private String shortText(String value, int maxLength) { if (value == null || value.isBlank()) return "-"; return value.length() <= maxLength ? value : value.substring(0, Math.max(0, maxLength)) + "..."; }
-    private String valueOf(EditBox box) { return box == null ? "" : box.getValue(); }
+    private String valueOf(TextField box) { return box == null ? "" : box.getValue(); }
     private String hex(int color) { return String.format(Locale.ROOT, "#%06X", color & 0x00FFFFFF); }
     private String commandHex(int color) { return String.format(Locale.ROOT, "%06X", color & 0x00FFFFFF); }
     private Integer parseHexColor(String raw) { return NationRecord.parseHexColor(raw); }
@@ -2146,8 +2067,6 @@ public class NationHomeScreen extends Screen implements RoadPlannerTileSyncRecei
     private Component firstLine(List<Component> lines) { return lines.size() > 0 ? lines.get(0) : Component.empty(); }
     private Component secondLine(List<Component> lines) { return lines.size() > 1 ? lines.get(1) : Component.empty(); }
     private Component thirdLine(List<Component> lines) { return lines.size() > 2 ? lines.get(2) : Component.empty(); }
-    private int left() { return (this.width - SCREEN_W) / 2; }
-    private int top() { return (this.height - SCREEN_H) / 2; }
 
     private enum Page {
         OVERVIEW("screen.sailboatmod.nation.section.overview"), MEMBERS("screen.sailboatmod.nation.section.members"), CLAIMS("screen.sailboatmod.nation.section.claims"), WAR("screen.sailboatmod.nation.section.war"), DIPLOMACY("screen.sailboatmod.nation.section.diplomacy"), TREASURY("screen.sailboatmod.nation.section.treasury"), FLAG("screen.sailboatmod.nation.section.flag");

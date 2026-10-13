@@ -52,8 +52,12 @@ class MyOrdersClientContractTest {
 
     @Test
     void marketScreenHasMyOrdersPage() throws Exception {
+        // The screen moved to LDLib2; its page model, view and packet controller live in client/ui/market.
         String src = Files.readString(Path.of(
-                "src/main/java/com/monpai/sailboatmod/client/screen/MarketScreen.java"));
+                "src/main/java/com/monpai/sailboatmod/client/screen/MarketScreen.java"))
+                + Files.readString(Path.of("src/main/java/com/monpai/sailboatmod/client/ui/market/MarketViewModel.java"))
+                + Files.readString(Path.of("src/main/java/com/monpai/sailboatmod/client/ui/market/MarketView.java"))
+                + Files.readString(Path.of("src/main/java/com/monpai/sailboatmod/client/ui/market/MarketController.java"));
         assertTrue(src.contains("MY_ORDERS"),
                 "MarketScreen should have a MY_ORDERS market page tab");
         assertTrue(src.contains("buildMyOrdersPage"),

@@ -12,7 +12,12 @@ def releaseVersion = "${mod_version}${fixIndex ? "-fix_${fixIndex}" : ''}"
 base { archivesName = mod_id }
 java.toolchain.languageVersion = JavaLanguageVersion.of(21)
 neoForge {
-    version = project.neo_version
+    enable {
+        version = project.neo_version
+        // Opt-in for low-memory machines (NeoForm's decompiler needs about 4 GB): compile against the binary
+        // Minecraft jar with -PneoForge.disableRecompilation=true. Off by default, so normal builds are unchanged.
+        disableRecompilation = providers.gradleProperty('neoForge.disableRecompilation').map { it.toBoolean() }.getOrElse(false)
+    }
     runs {
         client { client() }
         server { server(); programArgument '--nogui' }
@@ -33,8 +38,6 @@ neoForge {
 }
 repositories {
     mavenCentral()
-    maven { url = 'https://ldtteam.jfrog.io/artifactory/modding' }
-    maven { url = 'https://repo.essential.gg/repository/maven-public' }
     exclusiveContent {
         forRepository { maven { name = 'Modrinth'; url = 'https://api.modrinth.com/maven' } }
         filter { includeGroup 'maven.modrinth' }
@@ -43,14 +46,19 @@ repositories {
 configurations { sqliteEmbeddedLibrary { transitive = false } }
 dependencies {
     implementation "maven.modrinth:geckolib:${geckolib_version_id}"
-    jarJar(implementation("com.ldtteam:blockui:${blockui_version}") { transitive = false }) { version { strictly "[${blockui_version}]"; prefer blockui_version } }
     jarJar(implementation('com.badlogicgames.gdx:gdx-ai:1.8.2')) { version { strictly '[1.8.2,1.9)'; prefer '1.8.2' } }
     jarJar(implementation('com.badlogicgames.gdx:gdx:1.9.0')) { version { strictly '[1.9.0,2.0)'; prefer '1.9.0' } }
     jarJar(implementation('org.sejda.imageio:webp-imageio:0.1.6')) { version { strictly '[0.1.6,0.1.7)'; prefer '0.1.6' } }
-    jarJar(implementation("gg.essential:elementa:${elementa_version}")) { version { strictly "[${elementa_version},800)"; prefer elementa_version } }
-    jarJar(implementation("gg.essential:universalcraft-${universalcraft_minecraft_version}-neoforge:${universalcraft_version}")) { version { strictly "[${universalcraft_version},600)"; prefer universalcraft_version } }
+    // Kotlin runtime stays bundled (checked by ModDistributionConfigTest); the Kotlin UI libraries that needed it
+    // (Elementa, UniversalCraft) were removed when every screen moved to LDLib2.
     jarJar(implementation("org.jetbrains.kotlin:kotlin-stdlib:${kotlin_version}")) { version { strictly "[${kotlin_version},3.0)"; prefer kotlin_version } }
     jarJar(implementation("org.jetbrains.kotlin:kotlin-reflect:${kotlin_version}")) { version { strictly "[${kotlin_version},3.0)"; prefer kotlin_version } }
+    // LDLib2 2.2.42 drives the in-game UI. It is a separate required mod (declared in neoforge.mods.toml) and is not
+    // JarJar'd. The pinned JARs in libs/ match docs/handoff/LDLIB2_INTEGRATION.md; Yoga and Taffy appear in LDLib2's
+    // public layout API, so they are compile-only here and come from LDLib2's own JarJar at runtime.
+    implementation files('libs/ldlib2-neoforge-1.21.1-2.2.42-all.jar')
+    compileOnly files('libs/ldlib2-compile/taffy-1.1.5.jar', 'libs/ldlib2-compile/yoga-1.0.0.jar')
+    testCompileOnly files('libs/ldlib2-compile/taffy-1.1.5.jar', 'libs/ldlib2-compile/yoga-1.0.0.jar')
     runtimeOnly 'org.xerial:sqlite-jdbc:3.46.1.3'
     sqliteEmbeddedLibrary("org.xerial:sqlite-jdbc:3.46.1.3")
     testImplementation platform('org.junit:junit-bom:5.10.2')

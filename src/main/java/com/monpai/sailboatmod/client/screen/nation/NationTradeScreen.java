@@ -1,42 +1,99 @@
 package com.monpai.sailboatmod.client.screen.nation;
 
-import com.monpai.sailboatmod.client.screen.ScreenInputGuards;
+import com.lowdragmc.lowdraglib2.gui.texture.ColorRectTexture;
+import com.lowdragmc.lowdraglib2.gui.ui.UIElement;
+import com.lowdragmc.lowdraglib2.gui.ui.elements.Label;
+import com.lowdragmc.lowdraglib2.gui.ui.elements.ScrollerView;
+import com.lowdragmc.lowdraglib2.gui.ui.elements.TextField;
 import com.monpai.sailboatmod.client.TradeClientHooks;
 import com.monpai.sailboatmod.client.gui.TradeWindowStatePolicy;
+import com.monpai.sailboatmod.client.ui.kit.ActionButton;
+import com.monpai.sailboatmod.client.ui.kit.ThemedScreen;
+import com.monpai.sailboatmod.client.ui.kit.Ui;
+import com.monpai.sailboatmod.client.ui.state.ConfirmGate;
+import com.monpai.sailboatmod.client.ui.state.PendingRequests;
 import com.monpai.sailboatmod.nation.menu.TradeScreenData;
 import com.monpai.sailboatmod.network.ModNetwork;
 import com.monpai.sailboatmod.network.packet.TradeScreenActionPacket;
-import net.minecraft.client.gui.GuiGraphics;
-import net.minecraft.client.gui.components.Button;
-import net.minecraft.client.gui.components.EditBox;
-import net.minecraft.client.gui.screens.Screen;
+import dev.vfyjxf.taffy.style.AlignItems;
+import dev.vfyjxf.taffy.style.FlexWrap;
 import net.minecraft.network.chat.Component;
 import net.minecraft.world.item.ItemStack;
 
 import java.util.ArrayList;
 import java.util.List;
 
-public class NationTradeScreen extends Screen {
-    private static final int SCREEN_W = 360;
-    private static final int SCREEN_H = 300;
+/**
+ * Trade proposal between two nations: our offer on the left, what we ask for on the right, each above its treasury.
+ *
+ * <p>Click a treasury item to add it to the trade, click a trade slot to take it out. The draft (items and currency)
+ * is kept across the 40-tick refresh and only replaced when {@link TradeWindowStatePolicy#shouldReplaceDraft} says the
+ * proposal changed. Accepting a proposal and withdrawing ours need a second press; the server checks permissions,
+ * treasuries and expiry as before. The other nation's balance is shown only as a tier.</p>
+ */
+public class NationTradeScreen extends ThemedScreen {
     private static final int MAX_TRADE_ITEMS = TradeScreenData.MAX_TRADE_ITEMS;
     private static final int AUTO_REFRESH_TICKS = 40;
-    private static final int SLOT_SIZE = 18;
-    private static final int HALF_W = SCREEN_W / 2;
-    private static final int TRADE_SLOT_COLS = 5;
-    private static final int TRADE_SLOT_ROWS = (MAX_TRADE_ITEMS + TRADE_SLOT_COLS - 1) / TRADE_SLOT_COLS;
+    private static final String KEY_ACTION = "trade";
+    private static final String CONFIRM_ACCEPT = "accept";
+    private static final String CONFIRM_CANCEL = "cancel";
 
     private TradeScreenData data;
     private final List<ItemStack> offerSlots = new ArrayList<>(MAX_TRADE_ITEMS);
     private final List<ItemStack> requestSlots = new ArrayList<>(MAX_TRADE_ITEMS);
-    private EditBox offerCurrencyInput;
-    private EditBox requestCurrencyInput;
-    private Button proposeButton;
-    private Button acceptButton;
-    private Button rejectButton;
-    private Button counterButton;
-    private Button cancelButton;
+    private final PendingRequests pending = new PendingRequests();
+    private final ConfirmGate confirm = new ConfirmGate();
     private int refreshTicks;
+
+    private Side ours;
+    private Side theirs;
+    private final Label status = Ui.text("", "sm-muted");
+    private ActionButton proposeButton;
+    private ActionButton acceptButton;
+    private ActionButton rejectButton;
+    private ActionButton counterButton;
+    private ActionButton cancelButton;
+
+    /** One half of the window. */
+    private final class Side {
+        final boolean offer;
+        final UIElement swatch = new UIElement();
+        int shownColor = -1;
+        final Label name = Ui.text("", "sm-title");
+        final Label balance = Ui.text("", "sm-muted");
+        final UIElement tradeGrid = Ui.wrapRow(Ui.GAP_XS);
+        final TextField currency;
+        final Label treasuryTitle = Ui.text("", "sm-muted");
+        final ScrollerView treasury = Ui.scroller();
+        final UIElement treasuryGrid = Ui.wrapRow(1);
+        final UIElement element;
+
+        Side(boolean offer) {
+            this.offer = offer;
+            element = Ui.column("sm-pane");
+            element.layout(l -> l.flexGrow(1).flexBasis(0).minWidth(0).paddingAll(Ui.GAP_M).gapAll(Ui.GAP_S));
+            swatch.layout(l -> l.width(10).height(10).flexShrink(0));
+            UIElement head = Ui.row();
+            head.layout(l -> l.gapAll(Ui.GAP_S));
+            head.addChildren(swatch, name);
+            tradeGrid.layout(l -> l.width(5 * (Ui.SLOT + Ui.GAP_XS)));
+            currency = Ui.field("", Component.translatable("screen.sailboatmod.trade.currency"), value -> { });
+            currency.setCharValidator(TradeWindowStatePolicy::isCurrencyCharacterAllowed);
+            currency.setTextValidator(text -> text.length() <= 15 && text.equals(TradeWindowStatePolicy.filterCurrencyText(text)));
+            currency.layout(l -> l.widthPercent(100));
+            treasury.layout(l -> l.height(3 * (Ui.SLOT + 1) + 2).flexGrow(0));
+            treasuryGrid.layout(l -> l.widthPercent(100));
+            treasury.addScrollViewChild(treasuryGrid);
+            element.addChildren(head, balance,
+                    Ui.text(Component.translatable(offer ? "screen.sailboatmod.trade.our_offer" : "screen.sailboatmod.trade.we_request")),
+                    tradeGrid, Ui.text(Component.translatable("screen.sailboatmod.trade.currency"), "sm-muted"), currency,
+                    Ui.divider(), treasuryTitle, treasury);
+        }
+
+        List<ItemStack> slots() {
+            return offer ? offerSlots : requestSlots;
+        }
+    }
 
     public NationTradeScreen(TradeScreenData data) {
         super(Component.translatable("screen.sailboatmod.trade.title"));
@@ -52,226 +109,204 @@ public class NationTradeScreen extends Screen {
         );
         this.data = next;
         if (replaceDraft) {
+            confirm.disarm();
             loadDraftFromData();
+            loadCurrencyInputsFromData();
         }
-        refreshButtons();
+        pending.resolveAll();
+        refresh();
     }
 
     @Override
-    protected void init() {
-        super.init();
-        int left = left();
-        int top = top();
+    protected float windowWidth() {
+        return 380;
+    }
 
-        offerCurrencyInput = new EditBox(this.font, left + 12, top + 130, 80, 16,
-                Component.translatable("screen.sailboatmod.trade.currency"));
-        offerCurrencyInput.setMaxLength(15);
-        offerCurrencyInput.setFilter(text -> text.isEmpty() || text.equals(TradeWindowStatePolicy.filterCurrencyText(text)));
-        addRenderableWidget(offerCurrencyInput);
+    @Override
+    protected UIElement buildBody() {
+        UIElement body = Ui.column();
+        ours = new Side(true);
+        theirs = new Side(false);
+        UIElement sides = Ui.row();
+        sides.layout(l -> l.gapAll(Ui.GAP_M).alignItems(AlignItems.STRETCH));
+        sides.addChildren(ours.element, theirs.element);
 
-        requestCurrencyInput = new EditBox(this.font, left + SCREEN_W / 2 + 12, top + 130, 80, 16,
-                Component.translatable("screen.sailboatmod.trade.currency"));
-        requestCurrencyInput.setMaxLength(15);
-        requestCurrencyInput.setFilter(text -> text.isEmpty() || text.equals(TradeWindowStatePolicy.filterCurrencyText(text)));
-        addRenderableWidget(requestCurrencyInput);
-
+        proposeButton = new ActionButton(Component.translatable("screen.sailboatmod.trade.propose"), Ui.Tone.PRIMARY,
+                () -> sendAction(TradeScreenActionPacket.Action.PROPOSE));
+        acceptButton = new ActionButton(Component.translatable("screen.sailboatmod.trade.accept"), Ui.Tone.PRIMARY, () -> {
+            if (confirm.press(CONFIRM_ACCEPT, ticks())) {
+                sendAction(TradeScreenActionPacket.Action.ACCEPT);
+            } else {
+                refresh();
+            }
+        });
+        rejectButton = new ActionButton(Component.translatable("screen.sailboatmod.trade.reject"), Ui.Tone.DANGER,
+                () -> sendAction(TradeScreenActionPacket.Action.REJECT));
+        counterButton = new ActionButton(Component.translatable("screen.sailboatmod.trade.counter"), Ui.Tone.SECONDARY,
+                () -> sendAction(TradeScreenActionPacket.Action.COUNTER_OFFER));
+        cancelButton = new ActionButton(Component.translatable("screen.sailboatmod.trade.cancel"), Ui.Tone.DANGER, () -> {
+            if (confirm.press(CONFIRM_CANCEL, ticks())) {
+                sendAction(TradeScreenActionPacket.Action.CANCEL);
+            } else {
+                refresh();
+            }
+        });
+        for (ActionButton button : List.of(proposeButton, acceptButton, rejectButton, counterButton, cancelButton)) {
+            button.inRow();
+        }
+        UIElement footer = Ui.row();
+        footer.layout(l -> l.widthPercent(100).minWidth(0).flexWrap(FlexWrap.WRAP).gapAll(Ui.GAP_S));
+        status.layout(l -> l.flexGrow(1).flexBasis(0).minWidth(0));
+        footer.addChildren(status, rejectButton.element(), counterButton.element(), cancelButton.element(),
+                acceptButton.element(), proposeButton.element());
+        body.addChildren(sides, footer);
         loadCurrencyInputsFromData();
-
-        int btnY = top + SCREEN_H - 32;
-        int btnW = 58;
-        int btnH = 20;
-        int btnGap = 4;
-        int btnStartX = left + 12;
-
-        proposeButton = Button.builder(Component.translatable("screen.sailboatmod.trade.propose"),
-                b -> sendAction(TradeScreenActionPacket.Action.PROPOSE)).bounds(btnStartX, btnY, btnW, btnH).build();
-        addRenderableWidget(proposeButton);
-
-        acceptButton = Button.builder(Component.translatable("screen.sailboatmod.trade.accept"),
-                b -> sendAction(TradeScreenActionPacket.Action.ACCEPT)).bounds(btnStartX + (btnW + btnGap), btnY, btnW, btnH).build();
-        addRenderableWidget(acceptButton);
-
-        rejectButton = Button.builder(Component.translatable("screen.sailboatmod.trade.reject"),
-                b -> sendAction(TradeScreenActionPacket.Action.REJECT)).bounds(btnStartX + 2 * (btnW + btnGap), btnY, btnW, btnH).build();
-        addRenderableWidget(rejectButton);
-
-        counterButton = Button.builder(Component.translatable("screen.sailboatmod.trade.counter"),
-                b -> sendAction(TradeScreenActionPacket.Action.COUNTER_OFFER)).bounds(btnStartX + 3 * (btnW + btnGap), btnY, btnW, btnH).build();
-        addRenderableWidget(counterButton);
-
-        cancelButton = Button.builder(Component.translatable("screen.sailboatmod.trade.cancel"),
-                b -> sendAction(TradeScreenActionPacket.Action.CANCEL)).bounds(btnStartX + 4 * (btnW + btnGap), btnY, btnW, btnH).build();
-        addRenderableWidget(cancelButton);
-
-        refreshButtons();
+        refresh();
+        return body;
     }
 
     @Override
-    public void render(GuiGraphics guiGraphics, int mouseX, int mouseY, float partialTick) {
-        this.renderBackground(guiGraphics, mouseX, mouseY, partialTick);
-        drawContents(guiGraphics, mouseX, mouseY);
-        com.monpai.sailboatmod.client.screen.ScreenRenderSupport.renderWidgets(this, guiGraphics, mouseX, mouseY, partialTick);
-    }
-
-    @Override
-    public boolean isPauseScreen() {
-        return false;
-    }
-
-    @Override
-    public void tick() {
-        super.tick();
+    protected void onUiTick() {
         refreshTicks++;
         if (refreshTicks >= AUTO_REFRESH_TICKS) {
             refreshTicks = 0;
             ModNetwork.CHANNEL.sendToServer(
                     new TradeScreenActionPacket(TradeScreenActionPacket.Action.REFRESH, data.targetNationId()));
         }
+        pending.pollTimedOut(ticks()).ifPresent(key -> {
+            pending.resolveAll();
+            toast.show(Component.translatable("screen.sailboatmod.ui.no_reply_server"), false, ticks());
+        });
+        refresh();
     }
 
-    @Override
-    public boolean keyPressed(int keyCode, int scanCode, int modifiers) {
-        if (ScreenInputGuards.shouldConsumeInventoryKeyWhenEditing(this.minecraft, keyCode, scanCode, this.offerCurrencyInput, this.requestCurrencyInput)) {
-            return true;
+    // ================================================================= refresh
+
+    private void refresh() {
+        if (ours == null) {
+            return;
         }
-        return super.keyPressed(keyCode, scanCode, modifiers);
-    }
-
-    @Override
-    public boolean mouseClicked(double mouseX, double mouseY, int button) {
-        if (button == 0 && !readOnly()) {
-            int left = left();
-            int top = top();
-            // Click on our treasury → add to offer slots
-            if (handleTreasuryClick(mouseX, mouseY, left + 12, top + 168, data.ourTreasuryItems(), offerSlots)) {
-                return true;
-            }
-            // Click on target treasury → add to request slots
-            if (!data.targetTreasuryItems().isEmpty() &&
-                    handleTreasuryClick(mouseX, mouseY, left + HALF_W + 12, top + 168, data.targetTreasuryItems(), requestSlots)) {
-                return true;
-            }
-            // Click on offer trade slot → remove item
-            if (handleTradeSlotClick(mouseX, mouseY, left + 12, top + 74, offerSlots)) {
-                return true;
-            }
-            // Click on request trade slot → remove item
-            if (handleTradeSlotClick(mouseX, mouseY, left + HALF_W + 12, top + 74, requestSlots)) {
-                return true;
-            }
-        }
-        return super.mouseClicked(mouseX, mouseY, button);
-    }
-
-    private boolean handleTreasuryClick(double mouseX, double mouseY, int baseX, int baseY,
-                                         List<ItemStack> treasuryItems, List<ItemStack> targetSlots) {
-        if (treasuryItems == null || treasuryItems.isEmpty()) return false;
-        int cols = 9;
-        for (int row = 0; row < 3; row++) {
-            for (int col = 0; col < cols; col++) {
-                int idx = row * cols + col;
-                if (idx >= treasuryItems.size()) return false;
-                int slotX = baseX + col * (SLOT_SIZE + 1);
-                int slotY = baseY + row * (SLOT_SIZE + 1);
-                if (mouseX >= slotX && mouseX < slotX + SLOT_SIZE && mouseY >= slotY && mouseY < slotY + SLOT_SIZE) {
-                    ItemStack item = treasuryItems.get(idx);
-                    if (item != null && !item.isEmpty()) {
-                        addToFirstEmpty(targetSlots, item.copy());
-                        return true;
-                    }
-                }
-            }
-        }
-        return false;
-    }
-
-    private boolean handleTradeSlotClick(double mouseX, double mouseY, int baseX, int baseY, List<ItemStack> slots) {
-        for (int i = 0; i < Math.min(slots.size(), MAX_TRADE_ITEMS); i++) {
-            int col = i % TRADE_SLOT_COLS;
-            int row = i / TRADE_SLOT_COLS;
-            int slotX = baseX + col * (SLOT_SIZE + 2);
-            int slotY = baseY + row * (SLOT_SIZE + 2);
-            if (mouseX >= slotX && mouseX < slotX + SLOT_SIZE && mouseY >= slotY && mouseY < slotY + SLOT_SIZE) {
-                if (!slots.get(i).isEmpty()) {
-                    slots.set(i, ItemStack.EMPTY);
-                    return true;
-                }
-            }
-        }
-        return false;
-    }
-
-    private void addToFirstEmpty(List<ItemStack> slots, ItemStack item) {
-        for (int i = 0; i < slots.size(); i++) {
-            if (slots.get(i).isEmpty()) {
-                slots.set(i, item);
-                return;
-            }
-        }
-    }
-
-    @Override
-    public void onClose() {
-        TradeClientHooks.onScreenClosed();
-        super.onClose();
-    }
-    private void drawContents(GuiGraphics g, int mouseX, int mouseY) {
-        int left = left();
-        int top = top();
-
-        // Background panel
-        g.fill(left, top, left + SCREEN_W, top + SCREEN_H, 0xCC101820);
-        g.fill(left + 1, top + 1, left + SCREEN_W - 1, top + SCREEN_H - 1, 0xCC182632);
-
-        // Title
-        g.drawString(this.font, this.title, left + 12, top + 8, 0xFFE7C977);
-
-        // Nation headers
-        int halfW = SCREEN_W / 2;
-        drawNationHeader(g, left + 12, top + 24, data.ourNationName(), data.ourPrimaryColor(),
+        boolean readOnly = readOnly();
+        fillHeader(ours, data.ourNationName(), data.ourPrimaryColor(),
                 Component.translatable("screen.sailboatmod.trade.balance", data.ourTreasuryBalance()));
-        // 对方国库只显示抽象档位（不露精确数字）
-        drawNationHeader(g, left + halfW + 12, top + 24, data.targetNationName(), data.targetPrimaryColor(),
+        // The other nation's treasury is shown only as a tier.
+        fillHeader(theirs, data.targetNationName(), data.targetPrimaryColor(),
                 Component.translatable("screen.sailboatmod.trade.balance.tier." + tierKey(data.targetTreasuryTier())));
+        fillTradeGrid(ours, readOnly);
+        fillTradeGrid(theirs, readOnly);
+        fillTreasury(ours, data.ourTreasuryItems(), Component.translatable("screen.sailboatmod.trade.treasury_preview"), readOnly);
+        fillTreasury(theirs, data.targetTreasuryItems(), data.targetTreasuryItems().isEmpty()
+                ? Component.translatable("screen.sailboatmod.trade.treasury_hidden")
+                : Component.translatable("screen.sailboatmod.trade.target_treasury"), readOnly);
+        ours.currency.setActive(!readOnly);
+        theirs.currency.setActive(!readOnly);
 
-        // Section labels
-        g.drawString(this.font, Component.translatable("screen.sailboatmod.trade.our_offer"),
-                left + 12, top + 60, 0xFFDCEEFF);
-        g.drawString(this.font, Component.translatable("screen.sailboatmod.trade.we_request"),
-                left + halfW + 12, top + 60, 0xFFDCEEFF);
-
-        // Currency labels
-        g.drawString(this.font, Component.translatable("screen.sailboatmod.trade.currency"),
-                left + 12, top + 120, 0xFFB8C0C8);
-        g.drawString(this.font, Component.translatable("screen.sailboatmod.trade.currency"),
-                left + halfW + 12, top + 120, 0xFFB8C0C8);
-
-        // Trade item slots
-        drawTradeSlots(g, left + 12, top + 74, offerSlots);
-        drawTradeSlots(g, left + halfW + 12, top + 74, requestSlots);
-
-        // Treasury preview labels
-        g.drawString(this.font, Component.translatable("screen.sailboatmod.trade.treasury_preview"),
-                left + 12, top + 155, 0xFFB8C0C8);
-        if (!data.targetTreasuryItems().isEmpty()) {
-            g.drawString(this.font, Component.translatable("screen.sailboatmod.trade.target_treasury"),
-                    left + halfW + 12, top + 155, 0xFFB8C0C8);
-        } else {
-            g.drawString(this.font, Component.translatable("screen.sailboatmod.trade.treasury_hidden"),
-                    left + halfW + 12, top + 155, 0xFF8D98A3);
-        }
-
-        // Treasury items
-        drawTreasuryItems(g, left + 12, top + 168, data.ourTreasuryItems());
-        if (!data.targetTreasuryItems().isEmpty()) {
-            drawTreasuryItems(g, left + halfW + 12, top + 168, data.targetTreasuryItems());
-        }
-
-        // Status text
-        drawStatusText(g, left + 12, top + SCREEN_H - 50);
+        status.setValue(statusText());
+        boolean hasProposal = data.hasExistingProposal();
+        boolean weProposed = hasProposal && data.weAreProposer();
+        boolean theyProposed = hasProposal && !data.weAreProposer();
+        boolean busy = pending.isPending(KEY_ACTION);
+        proposeButton.element().setDisplay(!hasProposal);
+        acceptButton.element().setDisplay(theyProposed);
+        rejectButton.element().setDisplay(theyProposed);
+        counterButton.element().setDisplay(theyProposed);
+        cancelButton.element().setDisplay(weProposed);
+        proposeButton.sync(!hasProposal && data.canManageTreasury(), busy, false);
+        acceptButton.sync(theyProposed && data.canManageTreasury(), busy, confirm.isArmed(CONFIRM_ACCEPT, ticks()));
+        rejectButton.sync(theyProposed, busy, false);
+        counterButton.sync(theyProposed && data.canManageTreasury(), busy, false);
+        cancelButton.sync(weProposed, busy, confirm.isArmed(CONFIRM_CANCEL, ticks()));
     }
 
-    /** 校验对方国库档位 key，非法时回退 unknown（缺关系/不可见）。 */
+    private void fillHeader(Side side, String name, int color, Component balance) {
+        int argb = 0xFF000000 | (color & 0xFFFFFF);
+        if (side.shownColor != argb) {
+            side.shownColor = argb;
+            side.swatch.style(s -> s.background(new ColorRectTexture(argb)));
+        }
+        side.name.setValue(Component.literal(name));
+        side.balance.setValue(balance);
+    }
+
+    private String shownTradeSignature(Side side) {
+        StringBuilder signature = new StringBuilder();
+        for (ItemStack stack : side.slots()) {
+            signature.append(stack.isEmpty() ? "-" : stack.getItem() + "x" + stack.getCount()).append(';');
+        }
+        return signature.toString();
+    }
+
+    private final java.util.Map<Side, String> shownTrade = new java.util.HashMap<>();
+    private final java.util.Map<Side, List<ItemStack>> shownTreasury = new java.util.HashMap<>();
+    private final java.util.Map<Side, Boolean> shownReadOnly = new java.util.HashMap<>();
+
+    private void fillTradeGrid(Side side, boolean readOnly) {
+        String signature = shownTradeSignature(side) + readOnly;
+        if (signature.equals(shownTrade.get(side))) {
+            return;
+        }
+        shownTrade.put(side, signature);
+        side.tradeGrid.clearAllChildren();
+        List<ItemStack> slots = side.slots();
+        for (int i = 0; i < MAX_TRADE_ITEMS; i++) {
+            int index = i;
+            ItemStack stack = slots.get(i);
+            UIElement slot = Ui.slot(stack, Ui.SLOT);
+            if (!stack.isEmpty()) {
+                slot.style(s -> s.tooltips(stack.getHoverName(), Component.translatable("screen.sailboatmod.ui.trade.click_remove")));
+                if (!readOnly) {
+                    Ui.clickable(slot, () -> {
+                        slots.set(index, ItemStack.EMPTY);
+                        refresh();
+                    });
+                }
+            }
+            side.tradeGrid.addChild(slot);
+        }
+    }
+
+    private void fillTreasury(Side side, List<ItemStack> items, Component title, boolean readOnly) {
+        side.treasuryTitle.setValue(title);
+        if (items == shownTreasury.get(side) && Boolean.valueOf(readOnly).equals(shownReadOnly.get(side))) {
+            return;
+        }
+        shownTreasury.put(side, items);
+        shownReadOnly.put(side, readOnly);
+        side.treasuryGrid.clearAllChildren();
+        if (items == null) {
+            return;
+        }
+        for (ItemStack stack : items) {
+            if (stack == null || stack.isEmpty()) {
+                continue;
+            }
+            UIElement slot = Ui.slot(stack, Ui.SLOT);
+            slot.style(s -> s.tooltips(stack.getHoverName(), Component.translatable("screen.sailboatmod.ui.trade.click_add")));
+            if (!readOnly) {
+                Ui.clickable(slot, () -> {
+                    if (!addToFirstEmpty(side.slots(), stack.copy())) {
+                        toast.show(Component.translatable("screen.sailboatmod.ui.trade.full"), false, ticks());
+                    }
+                    refresh();
+                });
+            }
+            side.treasuryGrid.addChild(slot);
+        }
+    }
+
+    private Component statusText() {
+        if (!data.hasExistingProposal()) {
+            return Component.translatable("screen.sailboatmod.trade.status.none");
+        }
+        int min = data.proposalRemainingSeconds() / 60;
+        int sec = data.proposalRemainingSeconds() % 60;
+        String time = String.format("%d:%02d", min, sec);
+        return data.weAreProposer()
+                ? Component.translatable("screen.sailboatmod.trade.status.waiting", time)
+                : Component.translatable("screen.sailboatmod.trade.status.incoming", time);
+    }
+
+    /** The other nation's treasury tier key, or "unknown" when the relation does not allow seeing it. */
     private static String tierKey(String tier) {
         return switch (tier == null ? "" : tier) {
             case "minimal", "modest", "substantial", "wealthy", "prosperous" -> tier;
@@ -279,89 +314,16 @@ public class NationTradeScreen extends Screen {
         };
     }
 
-    private void drawNationHeader(GuiGraphics g, int x, int y, String name, int color, Component balance) {
-        // Color swatch
-        int rgb = color & 0xFFFFFF;
-        g.fill(x, y, x + 10, y + 10, 0xFF000000 | rgb);
-        // Nation name
-        g.drawString(this.font, name, x + 14, y + 1, 0xFFFFFFFF);
-        // Balance
-        g.drawString(this.font, balance, x, y + 14, 0xFFB8C0C8);
-    }
+    // ================================================================= draft
 
-    private void drawTradeSlots(GuiGraphics g, int x, int y, List<ItemStack> slots) {
-        int displayCount = Math.min(slots.size(), MAX_TRADE_ITEMS);
-        for (int i = 0; i < displayCount; i++) {
-            int col = i % TRADE_SLOT_COLS;
-            int row = i / TRADE_SLOT_COLS;
-            int slotX = x + col * (SLOT_SIZE + 2);
-            int slotY = y + row * (SLOT_SIZE + 2);
-            g.fill(slotX, slotY, slotX + SLOT_SIZE, slotY + SLOT_SIZE, 0x66203037);
-            g.fill(slotX + 1, slotY + 1, slotX + SLOT_SIZE - 1, slotY + SLOT_SIZE - 1, 0x66131C23);
-            ItemStack item = slots.get(i);
-            if (item != null && !item.isEmpty()) {
-                g.renderItem(item, slotX + 1, slotY + 1);
+    private static boolean addToFirstEmpty(List<ItemStack> slots, ItemStack item) {
+        for (int i = 0; i < slots.size(); i++) {
+            if (slots.get(i).isEmpty()) {
+                slots.set(i, item);
+                return true;
             }
         }
-    }
-
-    private void drawTreasuryItems(GuiGraphics g, int x, int y, List<ItemStack> items) {
-        if (items == null || items.isEmpty()) return;
-        int cols = 9;
-        int rows = Math.min(3, (items.size() + cols - 1) / cols);
-        for (int row = 0; row < rows; row++) {
-            for (int col = 0; col < cols; col++) {
-                int idx = row * cols + col;
-                if (idx >= items.size()) return;
-                int slotX = x + col * (SLOT_SIZE + 1);
-                int slotY = y + row * (SLOT_SIZE + 1);
-                g.fill(slotX, slotY, slotX + SLOT_SIZE, slotY + SLOT_SIZE, 0x44203037);
-                ItemStack item = items.get(idx);
-                if (item != null && !item.isEmpty()) {
-                    g.renderItem(item, slotX + 1, slotY + 1);
-                }
-            }
-        }
-    }
-
-    private void drawStatusText(GuiGraphics g, int x, int y) {
-        Component status;
-        if (data.hasExistingProposal()) {
-            int min = data.proposalRemainingSeconds() / 60;
-            int sec = data.proposalRemainingSeconds() % 60;
-            String time = String.format("%d:%02d", min, sec);
-            status = data.weAreProposer()
-                    ? Component.translatable("screen.sailboatmod.trade.status.waiting", time)
-                    : Component.translatable("screen.sailboatmod.trade.status.incoming", time);
-        } else {
-            status = Component.translatable("screen.sailboatmod.trade.status.none");
-        }
-        g.drawString(this.font, status, x, y, 0xFFB8C0C8);
-    }
-    private void refreshButtons() {
-        if (proposeButton == null) return;
-        boolean hasProposal = data.hasExistingProposal();
-        boolean weProposed = hasProposal && data.weAreProposer();
-        boolean theyProposed = hasProposal && !data.weAreProposer();
-
-        proposeButton.visible = !hasProposal;
-        proposeButton.active = !hasProposal && data.canManageTreasury();
-
-        acceptButton.visible = theyProposed;
-        acceptButton.active = theyProposed && data.canManageTreasury();
-
-        rejectButton.visible = theyProposed;
-        rejectButton.active = theyProposed;
-
-        counterButton.visible = theyProposed;
-        counterButton.active = theyProposed && data.canManageTreasury();
-
-        cancelButton.visible = weProposed;
-        cancelButton.active = weProposed;
-
-        boolean readOnly = readOnly();
-        if (offerCurrencyInput != null) offerCurrencyInput.setEditable(!readOnly);
-        if (requestCurrencyInput != null) requestCurrencyInput.setEditable(!readOnly);
+        return false;
     }
 
     private void loadDraftFromData() {
@@ -375,22 +337,22 @@ public class NationTradeScreen extends Screen {
             copyItemsIntoSlots(data.offerItems(), offerSlots);
             copyItemsIntoSlots(data.requestItems(), requestSlots);
         }
-        if (offerCurrencyInput != null && requestCurrencyInput != null) {
-            loadCurrencyInputsFromData();
-        }
     }
 
     private void loadCurrencyInputsFromData() {
+        if (ours == null) {
+            return;
+        }
         if (data.hasExistingProposal()) {
-            offerCurrencyInput.setValue(String.valueOf(data.offerCurrency()));
-            requestCurrencyInput.setValue(String.valueOf(data.requestCurrency()));
+            ours.currency.setText(String.valueOf(data.offerCurrency()), false);
+            theirs.currency.setText(String.valueOf(data.requestCurrency()), false);
         } else {
-            offerCurrencyInput.setValue("");
-            requestCurrencyInput.setValue("");
+            ours.currency.setText("", false);
+            theirs.currency.setText("", false);
         }
     }
 
-    private void copyItemsIntoSlots(List<ItemStack> source, List<ItemStack> target) {
+    private static void copyItemsIntoSlots(List<ItemStack> source, List<ItemStack> target) {
         for (int i = 0; i < Math.min(source.size(), MAX_TRADE_ITEMS); i++) {
             ItemStack item = source.get(i);
             target.set(i, item == null ? ItemStack.EMPTY : item.copy());
@@ -398,18 +360,23 @@ public class NationTradeScreen extends Screen {
     }
 
     private void sendAction(TradeScreenActionPacket.Action action) {
+        if (!pending.begin(KEY_ACTION, ticks())) {
+            return;
+        }
+        confirm.disarm();
         ModNetwork.CHANNEL.sendToServer(
                 new TradeScreenActionPacket(
                         action,
                         data.targetNationId(),
-                        TradeWindowStatePolicy.parseCurrency(offerCurrencyInput == null ? "" : offerCurrencyInput.getValue()),
-                        TradeWindowStatePolicy.parseCurrency(requestCurrencyInput == null ? "" : requestCurrencyInput.getValue()),
+                        TradeWindowStatePolicy.parseCurrency(ours == null ? "" : ours.currency.getValue()),
+                        TradeWindowStatePolicy.parseCurrency(theirs == null ? "" : theirs.currency.getValue()),
                         compactItems(offerSlots),
                         compactItems(requestSlots)
                 ));
+        refresh();
     }
 
-    private List<ItemStack> compactItems(List<ItemStack> source) {
+    private static List<ItemStack> compactItems(List<ItemStack> source) {
         List<ItemStack> result = new ArrayList<>();
         for (ItemStack item : source) {
             if (item != null && !item.isEmpty()) {
@@ -423,11 +390,9 @@ public class NationTradeScreen extends Screen {
         return data.hasExistingProposal() && !data.weAreProposer();
     }
 
-    private int left() {
-        return (this.width - SCREEN_W) / 2;
-    }
-
-    private int top() {
-        return (this.height - SCREEN_H) / 2;
+    @Override
+    public void onClose() {
+        TradeClientHooks.onScreenClosed();
+        super.onClose();
     }
 }

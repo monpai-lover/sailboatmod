@@ -1,103 +1,86 @@
 package com.monpai.sailboatmod.client.screen.nation;
 
-import com.monpai.sailboatmod.client.screen.ScreenInputGuards;
+import com.lowdragmc.lowdraglib2.gui.ui.UIElement;
+import com.lowdragmc.lowdraglib2.gui.ui.elements.Button;
+import com.lowdragmc.lowdraglib2.gui.ui.elements.TextField;
+import com.lowdragmc.lowdraglib2.gui.texture.ItemStackTexture;
 import com.monpai.sailboatmod.client.texture.NationFlagUploadClient;
+import com.monpai.sailboatmod.client.ui.kit.ThemedScreen;
+import com.monpai.sailboatmod.client.ui.kit.Ui;
 import com.monpai.sailboatmod.nation.service.NationFlagStorage;
 import net.minecraft.client.Minecraft;
-import net.minecraft.client.gui.GuiGraphics;
-import net.minecraft.client.gui.components.Button;
-import net.minecraft.client.gui.components.EditBox;
-import net.minecraft.client.gui.screens.Screen;
 import net.minecraft.network.chat.Component;
+import net.minecraft.world.item.ItemStack;
+import net.minecraft.world.item.Items;
+import net.minecraft.world.level.ItemLike;
 
-public class NationMenuScreen extends Screen {
-    private EditBox flagPathInput;
-    private Component statusLine = Component.empty();
+/** Quick nation commands and flag upload. Buttons run the same chat commands as before. */
+public class NationMenuScreen extends ThemedScreen {
+    private TextField flagPathInput;
 
     public NationMenuScreen() {
         super(Component.translatable("screen.sailboatmod.nation.title"));
     }
 
     @Override
-    protected void init() {
-        int centerX = this.width / 2;
-        int top = this.height / 2 - 82;
-
-        this.addRenderableWidget(Button.builder(Component.translatable("screen.sailboatmod.nation.info"), button -> runCommand("nation info"))
-                .bounds(centerX - 100, top + 18, 96, 20)
-                .build());
-        this.addRenderableWidget(Button.builder(Component.translatable("screen.sailboatmod.nation.war"), button -> runCommand("nation war info"))
-                .bounds(centerX + 4, top + 18, 96, 20)
-                .build());
-        this.addRenderableWidget(Button.builder(Component.translatable("screen.sailboatmod.nation.claim"), button -> runCommand("nation claim"))
-                .bounds(centerX - 100, top + 42, 96, 20)
-                .build());
-        this.addRenderableWidget(Button.builder(Component.translatable("screen.sailboatmod.nation.unclaim"), button -> runCommand("nation unclaim"))
-                .bounds(centerX + 4, top + 42, 96, 20)
-                .build());
-        this.addRenderableWidget(Button.builder(Component.translatable("screen.sailboatmod.nation.flag_info"), button -> runCommand("nation flag info"))
-                .bounds(centerX - 100, top + 66, 96, 20)
-                .build());
-        this.addRenderableWidget(Button.builder(Component.translatable("screen.sailboatmod.nation.claimperm_info"), button -> runCommand("nation claimperm info"))
-                .bounds(centerX + 4, top + 66, 96, 20)
-                .build());
-
-        this.flagPathInput = new EditBox(this.font, centerX - 100, top + 104, 200, 20, Component.translatable("screen.sailboatmod.nation.flag_path"));
-        this.flagPathInput.setMaxLength(260);
-        this.addRenderableWidget(this.flagPathInput);
-        this.setInitialFocus(this.flagPathInput);
-
-        this.addRenderableWidget(Button.builder(Component.translatable("screen.sailboatmod.nation.upload"), button -> submitUpload())
-                .bounds(centerX - 100, top + 128, 96, 20)
-                .build());
-        this.addRenderableWidget(Button.builder(Component.translatable("screen.sailboatmod.route_name.cancel"), button -> onClose())
-                .bounds(centerX + 4, top + 128, 96, 20)
-                .build());
+    protected float windowWidth() {
+        return 240;
     }
 
     @Override
-    public boolean keyPressed(int keyCode, int scanCode, int modifiers) {
-        if (ScreenInputGuards.shouldConsumeInventoryKeyWhenEditing(this.minecraft, keyCode, scanCode, this.flagPathInput)) {
-            return true;
-        }
-        if ((keyCode == 257 || keyCode == 335) && this.flagPathInput != null && this.flagPathInput.isFocused()) {
+    protected UIElement buildBody() {
+        UIElement body = Ui.column();
+        body.addChild(Ui.paragraph(Component.translatable("screen.sailboatmod.nation.desc"), "sm-muted"));
+        UIElement commands = Ui.wrapRow(Ui.GAP_S);
+        commands.layout(l -> l.widthPercent(100));
+        commands.addChildren(
+                command(Items.BOOK, "screen.sailboatmod.nation.info", "nation info"),
+                command(Items.IRON_SWORD, "screen.sailboatmod.nation.war", "nation war info"),
+                command(Items.WHITE_BANNER, "screen.sailboatmod.nation.claim", "nation claim"),
+                command(Items.BARRIER, "screen.sailboatmod.nation.unclaim", "nation unclaim"),
+                command(Items.PAINTING, "screen.sailboatmod.nation.flag_info", "nation flag info"),
+                command(Items.SHIELD, "screen.sailboatmod.nation.claimperm_info", "nation claimperm info"));
+
+        UIElement upload = Ui.column("sm-pane");
+        upload.layout(l -> l.paddingAll(Ui.GAP_M).gapAll(Ui.GAP_S));
+        flagPathInput = Ui.field("", Component.translatable("screen.sailboatmod.nation.flag_path"), value -> { });
+        flagPathInput.layout(l -> l.widthPercent(100));
+        UIElement actions = Ui.row();
+        actions.addChildren(Ui.spacer(), Ui.button(Component.translatable("screen.sailboatmod.nation.upload"), Ui.Tone.PRIMARY, this::submitUpload));
+        upload.addChildren(Ui.paragraph(Component.translatable("screen.sailboatmod.nation.upload_hint",
+                NationFlagStorage.maxWidth(), NationFlagStorage.maxHeight(), NationFlagStorage.maxBytes()), "sm-muted"), flagPathInput, actions);
+        body.addChildren(commands, upload);
+        return body;
+    }
+
+    private Button command(ItemLike icon, String labelKey, String command) {
+        Button button = Ui.button(Component.translatable(labelKey), Ui.Tone.SECONDARY, () -> runCommand(command));
+        button.addPreIcon(new ItemStackTexture(new ItemStack(icon)));
+        button.layout(l -> l.width(108).height(20));
+        return button;
+    }
+
+    @Override
+    protected boolean onTextFieldKey(UIElement field, int keyCode) {
+        if (isEnter(keyCode)) {
             submitUpload();
             return true;
         }
-        return super.keyPressed(keyCode, scanCode, modifiers);
-    }
-
-    @Override
-    public void render(GuiGraphics guiGraphics, int mouseX, int mouseY, float partialTick) {
-        super.render(guiGraphics, mouseX, mouseY, partialTick);
-
-        int centerX = this.width / 2;
-        int top = this.height / 2 - 82;
-        guiGraphics.drawCenteredString(this.font, this.title, centerX, top, 0xFFFFFF);
-        guiGraphics.drawCenteredString(this.font, Component.translatable("screen.sailboatmod.nation.desc"), centerX, top + 10, 0xA8E6FF);
-        guiGraphics.drawString(this.font, Component.translatable("screen.sailboatmod.nation.upload_hint", NationFlagStorage.maxWidth(), NationFlagStorage.maxHeight(), NationFlagStorage.maxBytes()), centerX - 100, top + 92, 0xE0E0E0);
-        if (!this.statusLine.getString().isBlank()) {
-            guiGraphics.drawCenteredString(this.font, this.statusLine, centerX, top + 154, 0xFFF3B0);
-        }
-    }
-
-    @Override
-    public boolean isPauseScreen() {
         return false;
     }
 
     private void runCommand(String command) {
         Minecraft minecraft = Minecraft.getInstance();
         if (minecraft.player == null || minecraft.player.connection == null) {
-            this.statusLine = Component.translatable("screen.sailboatmod.nation.command_unavailable");
+            toast.show(Component.translatable("screen.sailboatmod.nation.command_unavailable"), false, ticks());
             return;
         }
         minecraft.player.connection.sendCommand(command);
-        this.statusLine = Component.translatable("screen.sailboatmod.nation.command_sent", "/" + command);
+        toast.show(Component.translatable("screen.sailboatmod.nation.command_sent", "/" + command), true, ticks());
     }
 
     private void submitUpload() {
-        String path = this.flagPathInput == null ? "" : this.flagPathInput.getValue();
-        this.statusLine = NationFlagUploadClient.uploadFromPath(path);
+        String path = flagPathInput == null ? "" : flagPathInput.getValue();
+        toast.show(NationFlagUploadClient.uploadFromPath(path), true, ticks());
     }
 }

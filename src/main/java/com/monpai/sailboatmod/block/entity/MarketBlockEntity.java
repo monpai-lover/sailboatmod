@@ -12,6 +12,7 @@ import com.monpai.sailboatmod.market.FulfillmentMode;
 import com.monpai.sailboatmod.market.SellerShipQueue;
 import com.monpai.sailboatmod.market.PickupLock;
 import com.monpai.sailboatmod.market.MarketOverviewData;
+import com.monpai.sailboatmod.market.MarketStockIdentity;
 import com.monpai.sailboatmod.market.MarketPricePolicy;
 import com.monpai.sailboatmod.market.MarketPricePolicy.ListingPriceWindow;
 import com.monpai.sailboatmod.market.MarketSavedData;
@@ -265,7 +266,8 @@ public class MarketBlockEntity extends BlockEntity implements MenuProvider {
                             priceWindow.constrained(),
                             Component.translatable("screen.sailboatmod.market.storage_at", warehouse.getDisplayName().getString()).getString(),
                             resolveListingCategory(stack),
-                            resolveListingRarity(stack)
+                            resolveListingRarity(stack),
+                            MarketStockIdentity.fingerprint(level.registryAccess(), stack)
                     ));
                 }
             }
@@ -568,6 +570,12 @@ public class MarketBlockEntity extends BlockEntity implements MenuProvider {
     }
 
     public CreateListingResult createListingFromDockStorage(Player player, int visibleStorageIndex, int quantity, int requestedUnitPrice, String sellerNote) {
+        return createListingFromDockStorage(player, visibleStorageIndex, quantity, requestedUnitPrice, sellerNote, "");
+    }
+
+    /** Client requests must include the component identity observed in their overview. */
+    public CreateListingResult createListingFromDockStorage(Player player, int visibleStorageIndex, int quantity,
+                                                           int requestedUnitPrice, String sellerNote, String expectedStockIdentity) {
         if (player == null) {
             return CreateListingResult.failure("screen.sailboatmod.market.error.listing_unavailable");
         }
@@ -577,11 +585,29 @@ public class MarketBlockEntity extends BlockEntity implements MenuProvider {
                 visibleStorageIndex,
                 quantity,
                 requestedUnitPrice,
-                sellerNote
+                sellerNote,
+                expectedStockIdentity
         );
     }
 
     public CreateListingResult createListingFromDockStorage(String playerUuid, String playerName, int visibleStorageIndex, int quantity, int requestedUnitPrice, String sellerNote) {
+        // Trusted synchronous server/web callers observe and consume the current row in the same server task.
+        TownWarehouseBlockEntity warehouse = getLinkedWarehouse();
+        String safePlayerUuid = playerUuid == null ? "" : playerUuid.trim();
+        if (level == null || level.isClientSide || warehouse == null || safePlayerUuid.isBlank() || !canManageMarket(safePlayerUuid)) {
+            return CreateListingResult.failure("screen.sailboatmod.market.error.listing_unavailable");
+        }
+        UUID sellerId = parseUuid(safePlayerUuid);
+        ItemStack current = warehouse == null || sellerId == null ? ItemStack.EMPTY
+                : warehouse.getStorageItemForVisibleIndex(sellerId, visibleStorageIndex);
+        String expectedStockIdentity = level == null ? "" : MarketStockIdentity.fingerprint(level.registryAccess(), current);
+        return createListingFromDockStorage(playerUuid, playerName, visibleStorageIndex, quantity,
+                requestedUnitPrice, sellerNote, expectedStockIdentity);
+    }
+
+    public CreateListingResult createListingFromDockStorage(String playerUuid, String playerName, int visibleStorageIndex,
+                                                           int quantity, int requestedUnitPrice, String sellerNote,
+                                                           String expectedStockIdentity) {
         TownWarehouseBlockEntity warehouse = getLinkedWarehouse();
         String safePlayerUuid = playerUuid == null ? "" : playerUuid.trim();
         String safePlayerName = playerName == null ? "" : playerName.trim();
@@ -595,6 +621,11 @@ public class MarketBlockEntity extends BlockEntity implements MenuProvider {
         ItemStack selected = warehouse.getStorageItemForVisibleIndex(sellerId, visibleStorageIndex);
         if (selected.isEmpty()) {
             return CreateListingResult.failure("screen.sailboatmod.market.storage_empty");
+        }
+        // Reject stale/missing identities before extracting stock, including infinite-stock shops.
+        if (expectedStockIdentity == null || expectedStockIdentity.isBlank()
+                || !expectedStockIdentity.equals(MarketStockIdentity.fingerprint(level.registryAccess(), selected))) {
+            return CreateListingResult.failure("screen.sailboatmod.ui.storage_selection_lost");
         }
         int stocked = selected.getCount();
         int amount = Math.max(1, Math.min(quantity, stocked));

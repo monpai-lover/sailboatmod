@@ -136,6 +136,8 @@ public class RoadPlannerScreen extends Screen implements RoadPlannerTileSyncRece
     private double lastMouseY;
     private RoadPlannerTopToolbar.Group expandedToolbarGroup = RoadPlannerTopToolbar.Group.NONE;
     private final boolean testMode;
+    /** Themed LDLib2 chrome; absent in unit tests, which drive the planner without a client. */
+    private com.monpai.sailboatmod.client.ui.roadplanner.RoadPlannerChrome chrome;
 
     public RoadPlannerScreen(UUID sessionId) {
         this(sessionId, false);
@@ -1258,6 +1260,14 @@ public class RoadPlannerScreen extends Screen implements RoadPlannerTileSyncRece
     protected void init() {
         centerFallbackMapViewOnPlayerIfAvailable();
         recomputeLayout();
+        if (!testMode) {
+            if (chrome == null) {
+                chrome = new com.monpai.sailboatmod.client.ui.roadplanner.RoadPlannerChrome(chromeHost());
+            }
+            chrome.mount();
+            chrome.modularUI().setScreenAndInit(this);
+            addRenderableWidget(chrome.modularUI().getWidget());
+        }
         requestEnterPlannerPreload();
         requestInitialMapSnapshot();
     }
@@ -1265,6 +1275,9 @@ public class RoadPlannerScreen extends Screen implements RoadPlannerTileSyncRece
     @Override
     public void removed() {
         sendMapPreloadCancel();
+        if (chrome != null) {
+            chrome.removed();
+        }
         super.removed();
         if (tileManager != null && closeTileManagerOnRemoved) {
             tileManager.close();
@@ -1474,6 +1487,19 @@ public class RoadPlannerScreen extends Screen implements RoadPlannerTileSyncRece
 
     @Override
     public void render(GuiGraphics graphics, int mouseX, int mouseY, float partialTick) {
+        if (chrome != null) {
+            // The map, toolbar, status bar and menu are drawn by the LDLib2 chrome at the planner's layout rectangles.
+            chrome.sync(width, height);
+            super.render(graphics, mouseX, mouseY, partialTick);
+            if (canvas.contains(mouseX, mouseY) && (contextMenu == null || !contextMenu.isOpen())) {
+                claimOverlayRenderer.renderTooltip(graphics, font, mapView, mapLayout.map(), mouseX, mouseY);
+                RoadPlannerRoadOverlayHitTester.Result roadHit = hoveredRoadOverlay(mouseX, mouseY);
+                if (roadHit.hit()) {
+                    graphics.renderComponentTooltip(font, roadOverlayTooltipLines(roadHit.entry()), mouseX, mouseY);
+                }
+            }
+            return;
+        }
         renderBackground(graphics, mouseX, mouseY, partialTick);
         canvas.render(graphics, font);
         claimOverlayRenderer.render(graphics, mapView, mapLayout.map());
@@ -1491,6 +1517,60 @@ public class RoadPlannerScreen extends Screen implements RoadPlannerTileSyncRece
                 graphics.renderComponentTooltip(font, roadOverlayTooltipLines(roadHit.entry()), mouseX, mouseY);
             }
         }
+    }
+
+    private com.monpai.sailboatmod.client.ui.roadplanner.RoadPlannerChrome.Host chromeHost() {
+        return new com.monpai.sailboatmod.client.ui.roadplanner.RoadPlannerChrome.Host() {
+            @Override
+            public void paintMap(GuiGraphics graphics, int mouseX, int mouseY) {
+                canvas.render(graphics, font);
+                claimOverlayRenderer.render(graphics, mapView, mapLayout.map());
+                renderRoadOverlay(graphics, mouseX, mouseY);
+            }
+
+            @Override
+            public RoadPlannerMapLayout mapLayout() {
+                return mapLayout;
+            }
+
+            @Override
+            public RoadPlannerTopToolbar toolbar() {
+                return RoadPlannerTopToolbar.toolbar(width, expandedToolbarGroup);
+            }
+
+            @Override
+            public RoadPlannerTopToolbar.Group expandedGroup() {
+                return expandedToolbarGroup;
+            }
+
+            @Override
+            public RoadToolType activeTool() {
+                return state.activeTool();
+            }
+
+            @Override
+            public Component statusText() {
+                MapProgressView progress = currentMapProgressView();
+                String routeText = "\u8282\u70b9 " + linePlan.nodeCount() + " | " + displayTownName(startTownName, "\u672a\u9009\u62e9") + " -> "
+                        + displayTownName(destinationTownName, "\u672a\u9009\u62e9") + " | " + progress.percent() + "%";
+                return Component.literal(statusLine + " | " + routeText + " | " + progress.summary());
+            }
+
+            @Override
+            public int progressPercent() {
+                return currentMapProgressView().percent();
+            }
+
+            @Override
+            public RoadPlannerVanillaContextMenu contextMenu() {
+                return contextMenu;
+            }
+
+            @Override
+            public void close() {
+                onClose();
+            }
+        };
     }
 
     @Override
@@ -1988,6 +2068,9 @@ public class RoadPlannerScreen extends Screen implements RoadPlannerTileSyncRece
             if (result.consumed()) {
                 return true;
             }
+        }
+        if (chrome != null && chrome.handleClick(mouseX, mouseY, button)) {
+            return true;
         }
         RoadPlannerTopToolbar topToolbar = RoadPlannerTopToolbar.toolbar(width, expandedToolbarGroup);
         RoadPlannerTopToolbar.Item toolbarItem = topToolbar.itemAt(mouseX, mouseY);

@@ -1,20 +1,27 @@
 package com.monpai.sailboatmod.client.screen;
 
+import com.lowdragmc.lowdraglib2.gui.ui.UIElement;
+import com.lowdragmc.lowdraglib2.gui.ui.elements.Button;
+import com.lowdragmc.lowdraglib2.gui.ui.elements.ScrollerView;
 import com.monpai.sailboatmod.client.RoadPlannerClientHooks;
+import com.monpai.sailboatmod.client.ui.kit.ThemedScreen;
+import com.monpai.sailboatmod.client.ui.kit.Ui;
 import com.monpai.sailboatmod.network.ModNetwork;
 import com.monpai.sailboatmod.network.packet.SelectRoadPlannerPreviewOptionPacket;
-import net.minecraft.client.gui.GuiGraphics;
-import net.minecraft.client.gui.components.Button;
-import net.minecraft.client.gui.screens.Screen;
 import net.minecraft.network.chat.Component;
+import net.minecraft.world.item.ItemStack;
+import net.minecraft.world.item.Items;
 
+import java.util.ArrayList;
 import java.util.List;
 
-public class RoadPlannerOptionSelectionScreen extends Screen {
+/** Chooses one of the planned road variants (bridge or detour), then opens the planner's config mode as before. */
+public class RoadPlannerOptionSelectionScreen extends ThemedScreen {
     private final String sourceTownName;
     private final String targetTownName;
     private final List<RoadPlannerClientHooks.PreviewOption> options;
     private final String selectedOptionId;
+    private final List<UIElement> rows = new ArrayList<>();
     private int selectedIndex = -1;
     private Button selectButton;
 
@@ -27,59 +34,55 @@ public class RoadPlannerOptionSelectionScreen extends Screen {
         this.targetTownName = targetTownName == null ? "-" : targetTownName;
         this.options = options == null ? List.of() : List.copyOf(options);
         this.selectedOptionId = selectedOptionId == null ? "" : selectedOptionId;
-    }
-
-    @Override
-    protected void init() {
-        super.init();
         this.selectedIndex = defaultSelectedIndex();
-        this.selectButton = this.addRenderableWidget(Button.builder(
-                Component.translatable("screen.sailboatmod.road_planner.option.select"),
-                button -> choose()
-        ).bounds(this.width / 2 - 45, this.height - 30, 90, 20).build());
-        this.selectButton.active = this.selectedIndex >= 0;
     }
 
     @Override
-    public void render(GuiGraphics graphics, int mouseX, int mouseY, float partialTick) {
-        this.renderBackground(graphics, mouseX, mouseY, partialTick);
-        graphics.drawCenteredString(this.font, this.title, this.width / 2, 18, 0xFFF3E4B0);
-        graphics.drawCenteredString(this.font,
-                Component.translatable("screen.sailboatmod.road_planner.option.route", sourceTownName, targetTownName),
-                this.width / 2, 34, 0xFFE6EEF5);
+    protected float windowWidth() {
+        return 250;
+    }
 
-        int top = 56;
-        int left = this.width / 2 - 110;
-        int rowHeight = 28;
+    @Override
+    protected UIElement buildBody() {
+        UIElement body = Ui.column();
+        body.addChild(Ui.text(Component.translatable("screen.sailboatmod.road_planner.option.route", sourceTownName, targetTownName)));
+        ScrollerView list = Ui.scroller();
+        list.layout(l -> l.maxHeight(150));
         for (int i = 0; i < options.size(); i++) {
+            int index = i;
             RoadPlannerClientHooks.PreviewOption option = options.get(i);
-            int y = top + i * (rowHeight + 6);
-            boolean selected = i == selectedIndex;
-            graphics.fill(left, y, left + 220, y + rowHeight, selected ? 0xCC3A4A59 : 0xCC1D2731);
-            graphics.drawString(this.font, option.label(), left + 8, y + 6, 0xFFF1D9A0, false);
-            graphics.drawString(this.font,
-                    Component.literal(option.pathNodeCount() + " nodes" + (option.bridgeBacked() ? " | bridge" : " | detour")),
-                    left + 8, y + 16, 0xFFB7C8D6, false);
+            UIElement row = Ui.row("sm-row");
+            row.layout(l -> l.widthPercent(100).height(26).paddingHorizontal(Ui.GAP_S).gapAll(Ui.GAP_S).flexShrink(0));
+            UIElement names = Ui.column();
+            names.layout(l -> l.flexGrow(1).minWidth(0));
+            names.addChildren(Ui.text(option.label(), "sm-title"),
+                    Ui.text(Component.translatable(option.bridgeBacked() ? "screen.sailboatmod.ui.road.option_bridge" : "screen.sailboatmod.ui.road.option_detour",
+                            option.pathNodeCount()), "sm-muted"));
+            row.addChildren(Ui.slot(new ItemStack(option.bridgeBacked() ? Items.OAK_FENCE : Items.DIRT_PATH), Ui.SLOT), names);
+            Ui.clickable(row, () -> {
+                selectedIndex = index;
+                refresh();
+            });
+            rows.add(row);
+            list.addScrollViewChild(row);
         }
-        com.monpai.sailboatmod.client.screen.ScreenRenderSupport.renderWidgets(this, graphics, mouseX, mouseY, partialTick);
+        if (options.isEmpty()) {
+            list.addScrollViewChild(Ui.emptyState(Component.translatable("screen.sailboatmod.ui.road.no_options")));
+        }
+        selectButton = Ui.button(Component.translatable("screen.sailboatmod.road_planner.option.select"), Ui.Tone.PRIMARY, this::choose);
+        UIElement actions = Ui.row();
+        actions.layout(l -> l.gapAll(Ui.GAP_S));
+        actions.addChildren(Ui.spacer(), Ui.button(Component.translatable("gui.cancel"), Ui.Tone.SECONDARY, this::onClose), selectButton);
+        body.addChildren(list, actions);
+        refresh();
+        return body;
     }
 
-    @Override
-    public boolean mouseClicked(double mouseX, double mouseY, int button) {
-        int top = 56;
-        int left = this.width / 2 - 110;
-        int rowHeight = 28;
-        for (int i = 0; i < options.size(); i++) {
-            int y = top + i * (rowHeight + 6);
-            if (mouseX >= left && mouseX <= left + 220 && mouseY >= y && mouseY <= y + rowHeight) {
-                selectedIndex = i;
-                if (selectButton != null) {
-                    selectButton.active = true;
-                }
-                return true;
-            }
+    private void refresh() {
+        for (int i = 0; i < rows.size(); i++) {
+            Ui.setClass(rows.get(i), "selected", i == selectedIndex);
         }
-        return super.mouseClicked(mouseX, mouseY, button);
+        selectButton.setActive(selectedIndex >= 0 && selectedIndex < options.size());
     }
 
     private void choose() {

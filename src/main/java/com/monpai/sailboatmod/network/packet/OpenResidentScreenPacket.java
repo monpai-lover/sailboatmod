@@ -41,6 +41,6 @@ public class OpenResidentScreenPacket {
     @net.neoforged.api.distmarker.OnlyIn(Dist.CLIENT)
     private static void handleClient(OpenResidentScreenPacket msg) {
         ResidentRecord record = ResidentRecord.load(msg.residentTag);
-        new com.monpai.sailboatmod.client.gui.ResidentDetailWindow(record).open();
+        net.minecraft.client.Minecraft.getInstance().setScreen(new com.monpai.sailboatmod.client.screen.resident.ResidentDetailScreen(record));
     }
 }

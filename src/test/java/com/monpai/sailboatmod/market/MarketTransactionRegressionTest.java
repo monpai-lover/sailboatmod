@@ -15,6 +15,7 @@ import net.minecraft.SharedConstants;
 import net.minecraft.core.BlockPos;
 import net.minecraft.core.NonNullList;
 import net.minecraft.core.RegistryAccess;
+import net.minecraft.core.component.DataComponents;
 import net.minecraft.core.registries.BuiltInRegistries;
 import net.minecraft.server.Bootstrap;
 import net.minecraft.server.MinecraftServer;
@@ -26,6 +27,7 @@ import net.minecraft.nbt.Tag;
 import net.minecraft.resources.ResourceKey;
 import net.minecraft.world.item.ItemStack;
 import net.minecraft.world.item.Items;
+import net.minecraft.world.item.component.CustomData;
 import net.minecraft.world.entity.player.Inventory;
 import net.minecraft.world.entity.player.Player;
 import net.minecraft.world.inventory.AbstractContainerMenu;
@@ -70,6 +72,115 @@ class MarketTransactionRegressionTest {
     static void bootstrapMinecraft() {
         SharedConstants.tryDetectVersion();
         Bootstrap.bootStrap();
+    }
+
+    @ParameterizedTest
+    @ValueSource(booleans = {false, true})
+    void staleComponentVariantListingIsRejectedWithoutRemovingEitherBook(boolean infiniteStock) throws Exception {
+        StockListingFixture fixture = stockListingFixture();
+        setField(MarketBlockEntity.class, fixture.market(), "infiniteStock", infiniteStock);
+        String expectedB = MarketStockIdentity.fingerprint(fixture.level().registryAccess(), fixture.bookB());
+        // Snapshot B was at index 1. Removing two A books reorders the actual warehouse to [B9, A8].
+        fixture.bookA().setCount(8);
+
+        MarketBlockEntity.CreateListingResult result = fixture.market().createListingFromDockStorage(
+                SELLER, "Seller", 1, 3, 40, "", expectedB);
+
+        assertFalse(result.success(), "the server must reject index 1 when it no longer identifies B");
+        assertEquals("screen.sailboatmod.ui.storage_selection_lost", result.messageKey());
+        assertEquals(8, fixture.level().warehouse.countMatchingStock(UUID.fromString(SELLER), fixture.bookA()));
+        assertEquals(9, fixture.level().warehouse.countMatchingStock(UUID.fromString(SELLER), fixture.bookB()));
+        assertTrue(MarketSavedData.get(fixture.level()).getListings().isEmpty());
+    }
+
+    @ParameterizedTest
+    @ValueSource(strings = {"", " ", "wrong-identity"})
+    void missingOrMismatchedListingIdentityCannotRemoveStock(String expectedIdentity) throws Exception {
+        StockListingFixture fixture = stockListingFixture();
+
+        MarketBlockEntity.CreateListingResult result = fixture.market().createListingFromDockStorage(
+                SELLER, "Seller", 1, 3, 40, "", expectedIdentity);
+
+        assertFalse(result.success());
+        assertEquals(10, fixture.bookA().getCount());
+        assertEquals(9, fixture.bookB().getCount());
+        assertTrue(MarketSavedData.get(fixture.level()).getListings().isEmpty());
+    }
+
+    @Test
+    void matchingIdentityAtTheRefreshedIndexListsOnlyTheSelectedVariant() throws Exception {
+        StockListingFixture fixture = stockListingFixture();
+        String expectedB = MarketStockIdentity.fingerprint(fixture.level().registryAccess(), fixture.bookB());
+        fixture.bookA().setCount(8);
+
+        MarketBlockEntity.CreateListingResult result = fixture.market().createListingFromDockStorage(
+                SELLER, "Seller", 0, 3, 40, "seller note", expectedB);
+
+        assertTrue(result.success());
+        assertEquals(8, fixture.bookA().getCount());
+        assertEquals(6, fixture.bookB().getCount());
+        MarketListing listing = MarketSavedData.get(fixture.level()).getListings().getFirst();
+        assertTrue(ItemStack.isSameItemSameComponents(fixture.bookB(), listing.itemStack()));
+        assertEquals(3, listing.availableCount());
+        assertEquals(40, listing.unitPrice());
+        assertEquals("seller note", listing.sellerNote());
+        assertEquals(0, listing.reservedCount());
+    }
+
+    @Test
+    void trustedSynchronousServerListingOverloadRemainsAvailable() throws Exception {
+        StockListingFixture fixture = stockListingFixture();
+
+        assertTrue(fixture.market().createListingFromDockStorage(SELLER, "Seller", 1, 3, 40, "").success());
+        assertEquals(10, fixture.bookA().getCount());
+        assertEquals(6, fixture.bookB().getCount());
+    }
+
+    @Test
+    void validIdentityDoesNotBypassMarketOwnership() throws Exception {
+        StockListingFixture fixture = stockListingFixture();
+        String expectedB = MarketStockIdentity.fingerprint(fixture.level().registryAccess(), fixture.bookB());
+
+        assertFalse(fixture.market().createListingFromDockStorage(BUYER, "Buyer", 1, 3, 40, "", expectedB).success());
+        assertFalse(fixture.market().createListingFromDockStorage(BUYER, "Buyer", 1, 3, 40, "").success());
+        assertEquals(10, fixture.bookA().getCount());
+        assertEquals(9, fixture.bookB().getCount());
+        assertEquals(1, ((Map<?, ?>) fieldValue(TownWarehouseBlockEntity.class, fixture.level().warehouse,
+                "playerStorage")).size(), "an unauthorized synchronous call must not create personal storage");
+        assertTrue(MarketSavedData.get(fixture.level()).getListings().isEmpty());
+    }
+
+    private StockListingFixture stockListingFixture() throws Exception {
+        TestServerLevel level = newLevel();
+        UUID seller = UUID.fromString(SELLER);
+        ItemStack bookA = variantBook("A", 10);
+        ItemStack bookB = variantBook("B", 9);
+        NonNullList<ItemStack> stock = NonNullList.withSize(TownWarehouseBlockEntity.STORAGE_SIZE, ItemStack.EMPTY);
+        stock.set(0, bookA);
+        stock.set(1, bookB);
+        setField(TownWarehouseBlockEntity.class, level.warehouse, "playerStorage", new LinkedHashMap<>(Map.of(seller, stock)));
+        setField(BlockEntity.class, level.warehouse, "worldPosition", SOURCE);
+        setField(TownWarehouseBlockEntity.class, level.warehouse, "townId", "");
+        setField(TownWarehouseBlockEntity.class, level.warehouse, "townName", "");
+        level.warehouse.setLevel(level);
+        MarketBlockEntity block = marketBlock(level);
+        setField(BlockEntity.class, block, "worldPosition", TARGET);
+        setField(MarketBlockEntity.class, block, "ownerUuid", SELLER);
+        setField(MarketBlockEntity.class, block, "ownerName", "Seller");
+        setField(MarketBlockEntity.class, block, "marketName", "Market");
+        setField(MarketBlockEntity.class, block, "linkedDockPos", SOURCE);
+        return new StockListingFixture(level, block, bookA, bookB);
+    }
+
+    private static ItemStack variantBook(String variant, int count) {
+        ItemStack stack = new ItemStack(Items.ENCHANTED_BOOK, count);
+        CompoundTag components = new CompoundTag();
+        components.putString("variant", variant);
+        stack.set(DataComponents.CUSTOM_DATA, CustomData.of(components));
+        return stack;
+    }
+
+    private record StockListingFixture(TestServerLevel level, MarketBlockEntity market, ItemStack bookA, ItemStack bookB) {
     }
 
     @ParameterizedTest
@@ -655,6 +766,9 @@ class MarketTransactionRegressionTest {
         private TestWarehouse() {
             super(null, null);
         }
+
+        @Override
+        public void setChanged() { }
 
         @Override
         public boolean insertCargo(UUID ownerId, List<ItemStack> cargo) {

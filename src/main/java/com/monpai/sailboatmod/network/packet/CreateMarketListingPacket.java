@@ -15,13 +15,20 @@ public class CreateMarketListingPacket {
     private final int quantity;
     private final int unitPrice;
     private final String sellerNote;
+    private final String expectedStockIdentity;
 
     public CreateMarketListingPacket(BlockPos marketPos, int storageIndex, int quantity, int unitPrice, String sellerNote) {
+        this(marketPos, storageIndex, quantity, unitPrice, sellerNote, "");
+    }
+
+    public CreateMarketListingPacket(BlockPos marketPos, int storageIndex, int quantity, int unitPrice,
+                                     String sellerNote, String expectedStockIdentity) {
         this.marketPos = marketPos;
         this.storageIndex = storageIndex;
         this.quantity = quantity;
         this.unitPrice = unitPrice;
         this.sellerNote = sellerNote == null ? "" : sellerNote;
+        this.expectedStockIdentity = expectedStockIdentity == null ? "" : expectedStockIdentity;
     }
 
     public CreateMarketListingPacket(BlockPos marketPos, int storageIndex, int quantity, int unitPrice) {
@@ -35,10 +42,12 @@ public class CreateMarketListingPacket {
         buffer.writeVarInt(packet.quantity);
         buffer.writeVarInt(packet.unitPrice);
         PacketStringCodec.writeUtfSafe(buffer, packet.sellerNote, 120);
+        buffer.writeUtf(packet.expectedStockIdentity, 128);
     }
 
     public static CreateMarketListingPacket decode(FriendlyByteBuf buffer) {
-        return new CreateMarketListingPacket(buffer.readBlockPos(), buffer.readVarInt(), buffer.readVarInt(), buffer.readVarInt(), buffer.readUtf(120));
+        return new CreateMarketListingPacket(buffer.readBlockPos(), buffer.readVarInt(), buffer.readVarInt(),
+                buffer.readVarInt(), buffer.readUtf(120), buffer.readUtf(128));
     }
 
     public static void handle(CreateMarketListingPacket packet, Supplier<NetworkEvent.Context> contextSupplier) {
@@ -56,7 +65,8 @@ public class CreateMarketListingPacket {
                     packet.storageIndex,
                     packet.quantity,
                     packet.unitPrice,
-                    packet.sellerNote
+                    packet.sellerNote,
+                    packet.expectedStockIdentity
             );
             ModNetwork.CHANNEL.send(
                     player,

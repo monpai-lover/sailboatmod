@@ -12,6 +12,22 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 
 class OpenMarketScreenPacketTest {
     @Test
+    void roundTripPreservesStockComponentIdentities() {
+        MarketOverviewData before = emptyOverview(List.of());
+        FriendlyByteBuf buffer = new FriendlyByteBuf(Unpooled.buffer());
+        try {
+            OpenMarketScreenPacket.encode(new OpenMarketScreenPacket(before), buffer);
+            MarketOverviewData after = OpenMarketScreenPacket.decode(buffer).dataForTest();
+            assertEquals(before.dockStorageEntries(), after.dockStorageEntries());
+            assertEquals("components-A", after.dockStorageEntries().get(0).stockIdentity());
+            assertEquals("components-B", after.dockStorageEntries().get(1).stockIdentity());
+            assertEquals(0, buffer.readableBytes());
+        } finally {
+            buffer.release();
+        }
+    }
+
+    @Test
     void roundTripPreservesAvailableDispatchOptions() {
         MarketOverviewData.DispatchOption carrier = new MarketOverviewData.DispatchOption(
                 "PORT",
@@ -74,7 +90,7 @@ class OpenMarketScreenPacketTest {
                 List.of(),
                 List.of(),
                 List.of(),
-                List.of(),
+                List.of(stock("components-A", 10), stock("components-B", 9)),
                 List.of(),
                 List.of(),
                 List.of(),
@@ -89,6 +105,11 @@ class OpenMarketScreenPacketTest {
                 false,
                 List.of(myOrder())
         );
+    }
+
+    private static MarketOverviewData.StorageEntry stock(String identity, int count) {
+        return new MarketOverviewData.StorageEntry("Enchanted Book x" + count, "minecraft:enchanted_book", "Enchanted Book",
+                count, 10, 1, Integer.MAX_VALUE, false, "Warehouse", "material", 0, identity);
     }
 
     private static MarketOverviewData.MyOrderEntry myOrder() {

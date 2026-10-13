@@ -1,0 +1,94 @@
+// Trading Hall — SailboatMod in-game UI theme (trading_hall).
+// Generated from one template together with the other theme so both always cover the same selectors.
+// Layout lives in Java; this sheet only sets colours, textures and text treatment, so resource packs can
+// restyle the UI without touching behaviour.
+
+// ---- surfaces
+.sm-root { background: rect(#B0080B12); }
+.sm-window { background: rect(#F2121826, 0, 1, #FF33415A); }
+.sm-header { background: rect(#FF161D2B); }
+.sm-divider { background: rect(#FF243046); }
+.sm-pane { background: rect(#FF161D2B, 0, 1, #FF243046); }
+.sm-chip { background: rect(#FF161D2B, 0, 1, #FF243046); }
+.sm-overlay { background: rect(#A0000000); }
+.sm-dialog { background: rect(#F2121826, 0, 1, #FF34D399); }
+.sm-toast { background: rect(#F21C2535, 0, 1, #FF34D399); }
+.sm-toast.negative { background: rect(#F21C2535, 0, 1, #FFFF6B6B); }
+
+// ---- text
+label, text { text-color: #E7ECF5; text-shadow: true; }
+.sm-title { text-color: #FFFFFF; }
+.sm-muted { text-color: #7D8AA3; }
+.sm-price { text-color: #FFFFFF; }
+.sm-up { text-color: #3CCF7E; }
+.sm-down { text-color: #FF6B6B; }
+.sm-warn { text-color: #F5B13D; }
+.sm-on-toast { text-color: #E7ECF5; text-shadow: false; }
+.rarity-0 { text-color: #E7ECF5; }
+.rarity-1 { text-color: #F2E35C; }
+.rarity-2 { text-color: #5FE3EF; }
+.rarity-3 { text-color: #F07CF0; }
+.rarity-4 { text-color: #FFB238; }
+.rarity-5 { text-color: #FF6A6A; }
+
+// ---- inventory slots
+.sm-slot { background: sprite(sailboatmod:textures/gui/trading_hall/slot.png, 0, 0, 18, 18, 2, 2, 2, 2); }
+.sm-card:hover .sm-slot, .sm-row:hover .sm-slot { background: sprite(sailboatmod:textures/gui/trading_hall/slot_hover.png, 0, 0, 18, 18, 2, 2, 2, 2); }
+.sm-card.selected .sm-slot, .sm-row.selected .sm-slot { background: sprite(sailboatmod:textures/gui/trading_hall/slot_selected.png, 0, 0, 18, 18, 2, 2, 2, 2); }
+.sm-controls item-slot, .sm-controls .item-slot_bg { background: sprite(sailboatmod:textures/gui/trading_hall/slot.png, 0, 0, 18, 18, 2, 2, 2, 2); }
+
+// ---- cards and rows
+.sm-card, .sm-row { background: rect(#FF161D2B, 0, 1, #FF243046); }
+.sm-card:hover, .sm-row:hover { background: rect(#FF1C2535, 0, 1, #FF33415A); }
+.sm-card.selected, .sm-row.selected { background: rect(#FF17242A, 0, 1, #FF34D399); }
+
+// ---- navigation tabs
+.sm-nav-tab { base-background: rect(#00000000); hover-background: rect(#FF1C2535); pressed-background: rect(#FF1C2535); }
+.sm-nav-tab.active { base-background: sprite(sailboatmod:textures/gui/trading_hall/tab_active.png, 0, 0, 16, 16, 3, 3, 3, 3); hover-background: sprite(sailboatmod:textures/gui/trading_hall/tab_active.png, 0, 0, 16, 16, 3, 3, 3, 3); }
+.sm-nav-tab .__button_text__ { text-color: #7D8AA3; text-shadow: false; }
+.sm-nav-tab.active .__button_text__ { text-color: #FFFFFF; }
+
+// ---- buttons: raised with a darker lip, like in-game buttons
+.sm-controls button:host {
+  base-background: sprite(sailboatmod:textures/gui/trading_hall/button_secondary.png, 0, 0, 16, 16, 3, 3, 3, 4);
+  hover-background: sprite(sailboatmod:textures/gui/trading_hall/button_secondary_hover.png, 0, 0, 16, 16, 3, 3, 3, 4);
+  pressed-background: sprite(sailboatmod:textures/gui/trading_hall/button_secondary_pressed.png, 0, 0, 16, 16, 3, 3, 3, 3);
+}
+button .__button_text__ { text-color: #E7ECF5; text-shadow: false; }
+.sm-controls button.sm-primary:host {
+  base-background: sprite(sailboatmod:textures/gui/trading_hall/button_primary.png, 0, 0, 16, 16, 3, 3, 3, 4);
+  hover-background: sprite(sailboatmod:textures/gui/trading_hall/button_primary_hover.png, 0, 0, 16, 16, 3, 3, 3, 4);
+  pressed-background: sprite(sailboatmod:textures/gui/trading_hall/button_primary_pressed.png, 0, 0, 16, 16, 3, 3, 3, 3);
+}
+button.sm-primary .__button_text__ { text-color: #032317; }
+.sm-controls button.sm-danger:host, .sm-controls button.sm-armed:host {
+  base-background: sprite(sailboatmod:textures/gui/trading_hall/button_danger.png, 0, 0, 16, 16, 3, 3, 3, 4);
+  hover-background: sprite(sailboatmod:textures/gui/trading_hall/button_danger_hover.png, 0, 0, 16, 16, 3, 3, 3, 4);
+  pressed-background: sprite(sailboatmod:textures/gui/trading_hall/button_danger.png, 0, 0, 16, 16, 3, 3, 3, 3);
+}
+button.sm-danger .__button_text__, button.sm-armed .__button_text__ { text-color: #FF6B6B; }
+.sm-controls button.__disabled__:host, .sm-controls button.sm-pending:host {
+  base-background: sprite(sailboatmod:textures/gui/trading_hall/button_disabled.png, 0, 0, 16, 16, 3, 3, 3, 3);
+  hover-background: sprite(sailboatmod:textures/gui/trading_hall/button_disabled.png, 0, 0, 16, 16, 3, 3, 3, 3);
+  pressed-background: sprite(sailboatmod:textures/gui/trading_hall/button_disabled.png, 0, 0, 16, 16, 3, 3, 3, 3);
+}
+button.__disabled__ .__button_text__, button.sm-pending .__button_text__ { text-color: #5B6884; }
+
+// ---- inputs
+text-field, text-area { text-color: #E7ECF5; cursor-color: #34D399; text-shadow: false; }
+.sm-controls text-field, .sm-controls text-area, .sm-controls .__search-component_text-field__ {
+  background: rect(#FF0F1420, 0, 1, #FF33415A);
+  focus-overlay: rect(#00000000, 0, 1, #FF34D399);
+}
+.sm-controls text-field.sm-invalid { background: rect(#FF0F1420, 0, 1, #FFFF6B6B); }
+.sm-controls selector:host { background: rect(#FF0F1420, 0, 1, #FF33415A); focus-overlay: rect(#00000000, 0, 1, #FF34D399); }
+.sm-controls .__selector_dialog__ { background: rect(#F2121826, 0, 1, #FF243046); }
+
+// ---- scrollbars
+.sm-controls .__scroller_view_view-port__ { background: rect(#00000000); }
+scroller-vertical .__scroller_scroll_bar__ { base-background: rect(#FF33415A); hover-background: rect(#FF4A5874); pressed-background: rect(#FF4A5874); }
+scroller-horizontal .__scroller_scroll_bar__ { base-background: rect(#FF33415A); hover-background: rect(#FF4A5874); pressed-background: rect(#FF4A5874); }
+
+// ---- charts (drawn in Java, colours read from these classes)
+.sm-chart { background: rect(#FF0F1420, 0, 1, #FF243046); }
+.sm-minimap { background: rect(#FF0B110F, 0, 1, #FF33415A); }

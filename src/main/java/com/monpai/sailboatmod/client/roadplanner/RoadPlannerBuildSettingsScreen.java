@@ -1,29 +1,41 @@
 package com.monpai.sailboatmod.client.roadplanner;
 
-import net.minecraft.client.gui.GuiGraphics;
-import net.minecraft.client.gui.components.Button;
-import net.minecraft.client.gui.screens.Screen;
+import com.lowdragmc.lowdraglib2.gui.ui.UIElement;
+import com.lowdragmc.lowdraglib2.gui.ui.elements.Button;
+import com.monpai.sailboatmod.client.ui.kit.ThemedScreen;
+import com.monpai.sailboatmod.client.ui.kit.Ui;
 import net.minecraft.network.chat.Component;
+import net.minecraft.client.gui.screens.Screen;
+import net.minecraft.world.item.ItemStack;
+import net.minecraft.world.item.Items;
+import net.minecraft.world.level.ItemLike;
 
+import java.util.ArrayList;
+import java.util.List;
 import java.util.function.Consumer;
 
-public class RoadPlannerBuildSettingsScreen extends Screen {
-    private static final int PANEL_WIDTH = 240;
-    private static final int PANEL_HEIGHT = 180;
+/**
+ * Road width, surface material and streetlights before the ghost-block preview. The chosen values are passed to the
+ * planner exactly as before; "Back" returns to the planner.
+ */
+public class RoadPlannerBuildSettingsScreen extends ThemedScreen {
     private static final int[] WIDTHS = {3, 5, 7};
     private static final String[] MATERIALS = {"smooth_stone", "stone_bricks", "cobblestone", "oak_planks", "spruce_planks"};
-    private static final String[] MATERIAL_LABELS = {"平滑石", "石砖", "圆石", "橡木板", "云杉木板"};
+    private static final ItemLike[] MATERIAL_ITEMS = {Items.SMOOTH_STONE, Items.STONE_BRICKS, Items.COBBLESTONE, Items.OAK_PLANKS, Items.SPRUCE_PLANKS};
 
     private final Screen parent;
     private final Consumer<RoadPlannerBuildSettings> onConfirm;
     private int selectedWidth;
     private int selectedMaterialIndex;
     private boolean streetlightsEnabled;
+    private final List<Button> widthButtons = new ArrayList<>();
+    private final List<UIElement> materialCards = new ArrayList<>();
+    private Button lightsButton;
 
     public RoadPlannerBuildSettingsScreen(Screen parent,
                                           RoadPlannerBuildSettings initialSettings,
                                           Consumer<RoadPlannerBuildSettings> onConfirm) {
-        super(Component.literal("道路建造设置"));
+        super(Component.translatable("screen.sailboatmod.ui.road.build_settings"));
         RoadPlannerBuildSettings settings = initialSettings == null ? RoadPlannerBuildSettings.DEFAULTS : initialSettings;
         this.parent = parent;
         this.onConfirm = onConfirm;
@@ -33,43 +45,66 @@ public class RoadPlannerBuildSettingsScreen extends Screen {
     }
 
     @Override
-    protected void init() {
-        int left = (width - PANEL_WIDTH) / 2;
-        int top = (height - PANEL_HEIGHT) / 2;
-        for (int i = 0; i < WIDTHS.length; i++) {
-            int widthOption = WIDTHS[i];
-            addRenderableWidget(Button.builder(widthLabel(widthOption), button -> {
-                selectedWidth = widthOption;
-                rebuildWidgets();
-            }).bounds(left + 18 + i * 48, top + 42, 42, 20).build());
-        }
-        for (int i = 0; i < MATERIALS.length; i++) {
-            int index = i;
-            addRenderableWidget(Button.builder(materialLabel(index), button -> {
-                selectedMaterialIndex = index;
-                rebuildWidgets();
-            }).bounds(left + 18 + (i % 3) * 68, top + 86 + (i / 3) * 24, 62, 20).build());
-        }
-        addRenderableWidget(Button.builder(Component.literal(streetlightsEnabled ? "路灯: 开" : "路灯: 关"), button -> {
-            streetlightsEnabled = !streetlightsEnabled;
-            rebuildWidgets();
-        }).bounds(left + 18, top + 134, 92, 20).build());
-        addRenderableWidget(Button.builder(Component.literal("开始预览"), button -> confirm()).bounds(left + 120, top + 134, 82, 20).build());
-        addRenderableWidget(Button.builder(Component.literal("返回"), button -> onClose()).bounds(left + 18, top + 156, 184, 18).build());
+    protected float windowWidth() {
+        return 250;
     }
 
     @Override
-    public void render(GuiGraphics graphics, int mouseX, int mouseY, float partialTick) {
-        renderBackground(graphics, mouseX, mouseY, partialTick);
-        int left = (width - PANEL_WIDTH) / 2;
-        int top = (height - PANEL_HEIGHT) / 2;
-        graphics.fill(left, top, left + PANEL_WIDTH, top + PANEL_HEIGHT, 0xE012151B);
-        graphics.fill(left + 1, top + 1, left + PANEL_WIDTH - 1, top + PANEL_HEIGHT - 1, 0xF0202630);
-        graphics.drawString(font, title, left + 18, top + 14, 0xFFFFE0A3, false);
-        graphics.drawString(font, "路宽", left + 18, top + 32, 0xFFC9D7E1, false);
-        graphics.drawString(font, "路基材料", left + 18, top + 76, 0xFFC9D7E1, false);
-        graphics.drawString(font, "确认后会退出 UI 并显示幽灵方块预览", left + 18, top + 66, 0xFF9FB0BC, false);
-        com.monpai.sailboatmod.client.screen.ScreenRenderSupport.renderWidgets(this, graphics, mouseX, mouseY, partialTick);
+    protected UIElement buildBody() {
+        UIElement body = Ui.column();
+        UIElement widths = Ui.row();
+        widths.layout(l -> l.gapAll(Ui.GAP_S));
+        widths.addChild(Ui.muted(Component.translatable("screen.sailboatmod.ui.road.width")));
+        for (int option : WIDTHS) {
+            Button button = Ui.button(Component.literal(Integer.toString(option)), Ui.Tone.SECONDARY, () -> {
+                selectedWidth = option;
+                refresh();
+            });
+            button.layout(l -> l.width(32));
+            widthButtons.add(button);
+            widths.addChild(button);
+        }
+
+        UIElement materials = Ui.wrapRow(Ui.GAP_S);
+        materials.layout(l -> l.widthPercent(100));
+        for (int i = 0; i < MATERIALS.length; i++) {
+            int index = i;
+            UIElement card = Ui.row("sm-row");
+            card.layout(l -> l.width(74).height(22).paddingHorizontal(Ui.GAP_XS).gapAll(Ui.GAP_XS));
+            card.addChildren(Ui.slot(new ItemStack(MATERIAL_ITEMS[i]), Ui.SLOT),
+                    Ui.text(Component.translatable("screen.sailboatmod.ui.road.material." + MATERIALS[i])));
+            Ui.clickable(card, () -> {
+                selectedMaterialIndex = index;
+                refresh();
+            });
+            materialCards.add(card);
+            materials.addChild(card);
+        }
+
+        lightsButton = Ui.button(Component.empty(), Ui.Tone.SECONDARY, () -> {
+            streetlightsEnabled = !streetlightsEnabled;
+            refresh();
+        });
+        UIElement actions = Ui.row();
+        actions.layout(l -> l.gapAll(Ui.GAP_S));
+        actions.addChildren(lightsButton, Ui.spacer(),
+                Ui.button(Component.translatable("gui.back"), Ui.Tone.SECONDARY, this::onClose),
+                Ui.button(Component.translatable("screen.sailboatmod.ui.road.start_preview"), Ui.Tone.PRIMARY, this::confirm));
+        body.addChildren(widths, Ui.muted(Component.translatable("screen.sailboatmod.ui.road.material")), materials,
+                Ui.paragraph(Component.translatable("screen.sailboatmod.ui.road.preview_hint"), "sm-muted"), actions);
+        refresh();
+        return body;
+    }
+
+    private void refresh() {
+        for (int i = 0; i < WIDTHS.length; i++) {
+            Ui.setClass(widthButtons.get(i), "sm-primary", WIDTHS[i] == selectedWidth);
+        }
+        for (int i = 0; i < materialCards.size(); i++) {
+            Ui.setClass(materialCards.get(i), "selected", i == selectedMaterialIndex);
+        }
+        lightsButton.setText(Component.translatable("screen.sailboatmod.ui.road.streetlights",
+                Component.translatable(streetlightsEnabled ? "screen.sailboatmod.toggle.on" : "screen.sailboatmod.toggle.off")));
     }
 
     @Override
@@ -83,14 +118,6 @@ public class RoadPlannerBuildSettingsScreen extends Screen {
         if (onConfirm != null) {
             onConfirm.accept(new RoadPlannerBuildSettings(selectedWidth, MATERIALS[selectedMaterialIndex], streetlightsEnabled));
         }
-    }
-
-    private Component widthLabel(int widthOption) {
-        return Component.literal((selectedWidth == widthOption ? "✓ " : "") + widthOption);
-    }
-
-    private Component materialLabel(int index) {
-        return Component.literal((selectedMaterialIndex == index ? "✓ " : "") + MATERIAL_LABELS[index]);
     }
 
     private int materialIndex(String materialPreset) {

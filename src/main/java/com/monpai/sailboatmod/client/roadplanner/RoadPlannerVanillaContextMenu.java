@@ -190,6 +190,19 @@ public class RoadPlannerVanillaContextMenu {
         return new ClickResult(true, true, action.orElse(null));
     }
 
+    /** Items as they should be drawn (for the themed menu): label, enabled, divider and hover state. */
+    public List<Entry> entries() {
+        List<Entry> entries = new ArrayList<>(items.size());
+        for (int index = 0; index < items.size(); index++) {
+            Item item = items.get(index);
+            entries.add(new Entry(item.label(), item.enabled(), item.divider(), index == hoverIndex));
+        }
+        return entries;
+    }
+
+    public record Entry(String label, boolean enabled, boolean divider, boolean hovered) {
+    }
+
     private int clamp(int value, int min, int max) {
         return Math.max(min, Math.min(max, value));
     }

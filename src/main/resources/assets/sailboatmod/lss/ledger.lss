@@ -1,0 +1,94 @@
+// Captain's Ledger — SailboatMod in-game UI theme (ledger).
+// Generated from one template together with the other theme so both always cover the same selectors.
+// Layout lives in Java; this sheet only sets colours, textures and text treatment, so resource packs can
+// restyle the UI without touching behaviour.
+
+// ---- surfaces
+.sm-root { background: rect(#90140C04); }
+.sm-window { background: rect(#FFDCC89C, 0, 1, #FF5A3F22); }
+.sm-header { background: rect(#FFE6D4A8); }
+.sm-divider { background: rect(#FF8B7146); }
+.sm-pane { background: rect(#FFEFE2BF, 0, 1, #FF8B7146); }
+.sm-chip { background: rect(#FFEFE2BF, 0, 1, #FF8B7146); }
+.sm-overlay { background: rect(#80201408); }
+.sm-dialog { background: rect(#FFDCC89C, 0, 1, #FF9B2C24); }
+.sm-toast { background: rect(#FF3A2A1A, 0, 1, #FF9B2C24); }
+.sm-toast.negative { background: rect(#FF3A2A1A, 0, 1, #FF9B2C24); }
+
+// ---- text
+label, text { text-color: #3A2A1A; text-shadow: false; }
+.sm-title { text-color: #2B1D10; }
+.sm-muted { text-color: #7A6448; }
+.sm-price { text-color: #2B1D10; }
+.sm-up { text-color: #4D6B2A; }
+.sm-down { text-color: #9B2C24; }
+.sm-warn { text-color: #8A5A00; }
+.sm-on-toast { text-color: #FBF3DF; text-shadow: false; }
+.rarity-0 { text-color: #2B1D10; }
+.rarity-1 { text-color: #8A6A00; }
+.rarity-2 { text-color: #1D6F7A; }
+.rarity-3 { text-color: #8A2F78; }
+.rarity-4 { text-color: #9A5600; }
+.rarity-5 { text-color: #9B2C24; }
+
+// ---- inventory slots
+.sm-slot { background: sprite(sailboatmod:textures/gui/ledger/slot.png, 0, 0, 18, 18, 2, 2, 2, 2); }
+.sm-card:hover .sm-slot, .sm-row:hover .sm-slot { background: sprite(sailboatmod:textures/gui/ledger/slot_hover.png, 0, 0, 18, 18, 2, 2, 2, 2); }
+.sm-card.selected .sm-slot, .sm-row.selected .sm-slot { background: sprite(sailboatmod:textures/gui/ledger/slot_selected.png, 0, 0, 18, 18, 2, 2, 2, 2); }
+.sm-controls item-slot, .sm-controls .item-slot_bg { background: sprite(sailboatmod:textures/gui/ledger/slot.png, 0, 0, 18, 18, 2, 2, 2, 2); }
+
+// ---- cards and rows
+.sm-card, .sm-row { background: rect(#FFE3D2A6, 0, 1, #FFB39B6C); }
+.sm-card:hover, .sm-row:hover { background: rect(#FFEBDCB5, 0, 1, #FF8B7146); }
+.sm-card.selected, .sm-row.selected { background: rect(#FFEFE2BF, 0, 1, #FF9B2C24); }
+
+// ---- navigation tabs
+.sm-nav-tab { base-background: rect(#00000000); hover-background: rect(#FFEBDCB5); pressed-background: rect(#FFEBDCB5); }
+.sm-nav-tab.active { base-background: sprite(sailboatmod:textures/gui/ledger/tab_active.png, 0, 0, 16, 16, 3, 3, 3, 3); hover-background: sprite(sailboatmod:textures/gui/ledger/tab_active.png, 0, 0, 16, 16, 3, 3, 3, 3); }
+.sm-nav-tab .__button_text__ { text-color: #7A6448; text-shadow: false; }
+.sm-nav-tab.active .__button_text__ { text-color: #2B1D10; }
+
+// ---- buttons: raised with a darker lip, like in-game buttons
+.sm-controls button:host {
+  base-background: sprite(sailboatmod:textures/gui/ledger/button_secondary.png, 0, 0, 16, 16, 3, 3, 3, 4);
+  hover-background: sprite(sailboatmod:textures/gui/ledger/button_secondary_hover.png, 0, 0, 16, 16, 3, 3, 3, 4);
+  pressed-background: sprite(sailboatmod:textures/gui/ledger/button_secondary_pressed.png, 0, 0, 16, 16, 3, 3, 3, 3);
+}
+button .__button_text__ { text-color: #3A2A1A; text-shadow: false; }
+.sm-controls button.sm-primary:host {
+  base-background: sprite(sailboatmod:textures/gui/ledger/button_primary.png, 0, 0, 16, 16, 3, 3, 3, 4);
+  hover-background: sprite(sailboatmod:textures/gui/ledger/button_primary_hover.png, 0, 0, 16, 16, 3, 3, 3, 4);
+  pressed-background: sprite(sailboatmod:textures/gui/ledger/button_primary_pressed.png, 0, 0, 16, 16, 3, 3, 3, 3);
+}
+button.sm-primary .__button_text__ { text-color: #FBF3DF; }
+.sm-controls button.sm-danger:host, .sm-controls button.sm-armed:host {
+  base-background: sprite(sailboatmod:textures/gui/ledger/button_danger.png, 0, 0, 16, 16, 3, 3, 3, 4);
+  hover-background: sprite(sailboatmod:textures/gui/ledger/button_danger_hover.png, 0, 0, 16, 16, 3, 3, 3, 4);
+  pressed-background: sprite(sailboatmod:textures/gui/ledger/button_danger.png, 0, 0, 16, 16, 3, 3, 3, 3);
+}
+button.sm-danger .__button_text__, button.sm-armed .__button_text__ { text-color: #9B2C24; }
+.sm-controls button.__disabled__:host, .sm-controls button.sm-pending:host {
+  base-background: sprite(sailboatmod:textures/gui/ledger/button_disabled.png, 0, 0, 16, 16, 3, 3, 3, 3);
+  hover-background: sprite(sailboatmod:textures/gui/ledger/button_disabled.png, 0, 0, 16, 16, 3, 3, 3, 3);
+  pressed-background: sprite(sailboatmod:textures/gui/ledger/button_disabled.png, 0, 0, 16, 16, 3, 3, 3, 3);
+}
+button.__disabled__ .__button_text__, button.sm-pending .__button_text__ { text-color: #9E8A6C; }
+
+// ---- inputs
+text-field, text-area { text-color: #2B1D10; cursor-color: #9B2C24; text-shadow: false; }
+.sm-controls text-field, .sm-controls text-area, .sm-controls .__search-component_text-field__ {
+  background: rect(#FFF3E8CC, 0, 1, #FF8B7146);
+  focus-overlay: rect(#00000000, 0, 1, #FF9B2C24);
+}
+.sm-controls text-field.sm-invalid { background: rect(#FFF3E8CC, 0, 1, #FF9B2C24); }
+.sm-controls selector:host { background: rect(#FFF3E8CC, 0, 1, #FF8B7146); focus-overlay: rect(#00000000, 0, 1, #FF9B2C24); }
+.sm-controls .__selector_dialog__ { background: rect(#FFDCC89C, 0, 1, #FF8B7146); }
+
+// ---- scrollbars
+.sm-controls .__scroller_view_view-port__ { background: rect(#00000000); }
+scroller-vertical .__scroller_scroll_bar__ { base-background: rect(#FFB39B6C); hover-background: rect(#FF8B7146); pressed-background: rect(#FF8B7146); }
+scroller-horizontal .__scroller_scroll_bar__ { base-background: rect(#FFB39B6C); hover-background: rect(#FF8B7146); pressed-background: rect(#FF8B7146); }
+
+// ---- charts (drawn in Java, colours read from these classes)
+.sm-chart { background: rect(#FFF3E8CC, 0, 1, #FF8B7146); }
+.sm-minimap { background: rect(#FF2B1D10, 0, 1, #FF5A3F22); }

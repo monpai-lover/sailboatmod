@@ -1,0 +1,50 @@
+{
+  "tests": {
+    "tests": 1414,
+    "failures": 0,
+    "errors": 0,
+    "skipped": 0
+  },
+  "suites": 324,
+  "native": [
+    {
+      "directory": "results",
+      "verification": "347 native checks; 0 failures"
+    },
+    {
+      "directory": "results-scale-2",
+      "verification": "1062 native checks; 0 failures"
+    },
+    {
+      "directory": "results-scale-3",
+      "verification": "1062 native checks; 0 failures"
+    },
+    {
+      "directory": "results-scale-4",
+      "verification": "1063 native checks; 0 failures"
+    }
+  ],
+  "production": {
+    "mods/sailboatmod-1.3.13-fix_3-neoforge-1.21.1.jar": {
+      "sha256": "5d6956120c0ac809f349463d755e35dc7c08dada1740b6eb4b7caa594ba46b88",
+      "bytes": 26693637
+    },
+    "mods/geckolib-neoforge-1.21.1-4.9.3.jar": {
+      "sha256": "20a1995e4074f387ff549e2c57ea79dd7d41ee83c6afb9dd6a6e840e592d1c47",
+      "bytes": 634531
+    },
+    "mods/ldlib2-neoforge-1.21.1-2.2.42-all.jar": {
+      "sha256": "e98758b5089d40ca5ae5c8d928b9057feddff10b000bc37c0e3a480e1e19911b",
+      "bytes": 7617480
+    },
+    "server-only-mods/sailboatmod-marketweb-1.3.13-fix_3-neoforge-1.21.1.jar": {
+      "sha256": "4de058245bf35b2c3e9d828e3ccd44800a4e359e513d97c801bda2c694ce0084",
+      "bytes": 475493
+    }
+  },
+  "server": {
+    "started": true,
+    "normalStop": true,
+    "exitCode": 0
+  }
+}

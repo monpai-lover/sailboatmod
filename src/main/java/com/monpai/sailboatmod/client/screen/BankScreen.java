@@ -1,526 +1,419 @@
 package com.monpai.sailboatmod.client.screen;
 
+import com.lowdragmc.lowdraglib2.gui.ui.UIElement;
+import com.lowdragmc.lowdraglib2.gui.ui.elements.Label;
+import com.lowdragmc.lowdraglib2.gui.ui.elements.ScrollerView;
+import com.lowdragmc.lowdraglib2.gui.ui.elements.TextField;
+import com.monpai.sailboatmod.client.ui.bank.BankLogic;
+import com.monpai.sailboatmod.client.ui.kit.ActionButton;
+import com.monpai.sailboatmod.client.ui.kit.TabBar;
+import com.monpai.sailboatmod.client.ui.kit.ThemedContainerScreen;
+import com.monpai.sailboatmod.client.ui.kit.Ui;
+import com.monpai.sailboatmod.client.ui.state.PendingRequests;
 import com.monpai.sailboatmod.economy.GoldStandardEconomy;
 import com.monpai.sailboatmod.menu.BankMenu;
 import com.monpai.sailboatmod.nation.model.LoanAccountView;
-import com.monpai.sailboatmod.nation.model.NationTreasuryRecord;
 import com.monpai.sailboatmod.network.ModNetwork;
 import com.monpai.sailboatmod.network.packet.BankActionPacket;
 import com.monpai.sailboatmod.network.packet.SyncTreasuryPacket;
+import dev.vfyjxf.taffy.style.AlignItems;
+import dev.vfyjxf.taffy.style.FlexWrap;
 import net.minecraft.ChatFormatting;
-import net.minecraft.client.Minecraft;
-import net.minecraft.client.gui.GuiGraphics;
-import net.minecraft.client.gui.components.Button;
-import net.minecraft.client.gui.components.EditBox;
-import net.minecraft.client.gui.screens.inventory.AbstractContainerScreen;
 import net.minecraft.network.chat.Component;
 import net.minecraft.world.entity.player.Inventory;
 import net.minecraft.world.item.ItemStack;
+import net.minecraft.world.item.Items;
 
 import java.text.SimpleDateFormat;
-import java.util.ArrayList;
 import java.util.Date;
+import java.util.EnumMap;
 import java.util.List;
 import java.util.Locale;
+import java.util.Map;
 
-public class BankScreen extends AbstractContainerScreen<BankMenu> {
-    private static final int SCREEN_W = 340;
-    private static final int SCREEN_H = 272;
-    private static final int ITEM_ROW_H = 20;
-    private static final int ITEM_VISIBLE_ROWS = 4;
-    private static final int ITEM_LIST_X = 14;
-    private static final int ITEM_LIST_Y = 78;
-    private static final int ITEM_LIST_W = SCREEN_W - 28;
-    private static final int CONTENT_TOP = 54;
-    private static final int CONTENT_BOTTOM = 174;
-    private static final int INVENTORY_TOP = BankMenu.STORAGE_INV_Y;
-    private static final int INVENTORY_BOTTOM = BankMenu.STORAGE_HOTBAR_Y + 18;
-    private static final int STATUS_Y = SCREEN_H - 44;
-    private static final int STORAGE_STATUS_Y = 170;
-    private static final int LOAN_AMOUNT_LABEL_Y = 132;
-    private static final int LOAN_AMOUNT_INPUT_Y = 144;
-    private static final int LOAN_METRIC_START_Y = 104;
-    private static final int LOAN_METRIC_STEP_Y = 12;
+/**
+ * Nation bank: currency, item storage and loans.
+ *
+ * <p>Every button sends the same {@link BankActionPacket} the previous screen sent; the server checks membership,
+ * {@code MANAGE_TREASURY} and funds. Items are deposited by shift-clicking the player's inventory, handled by
+ * {@link BankMenu#quickMoveStack} exactly as before. The screen redraws whenever {@link SyncTreasuryPacket} refreshes the
+ * client cache.</p>
+ */
+public class BankScreen extends ThemedContainerScreen<BankMenu> {
+    private static final String REQUEST = "bank";
+    private static final float WIDTH = 340;
+    /** Largest amount the old 16-character box could hold. */
+    private static final long MAX_AMOUNT = 9_999_999_999_999_999L;
 
-    private final List<Button> tabButtons = new ArrayList<>();
-    private final List<Button> treasuryButtons = new ArrayList<>();
-    private final List<Button> storageButtons = new ArrayList<>();
-    private final List<Button> loanButtons = new ArrayList<>();
-    private final List<Button> loanSubtabButtons = new ArrayList<>();
-    private EditBox amountInput;
-    private EditBox loanAmountInput;
-    private Button closeButton;
-    private Component statusLine = Component.empty();
-    private int itemScroll;
-    private int selectedItemSlot = -1;
-    private BankTab activeTab = BankTab.TREASURY;
-    private LoanTab activeLoanTab = LoanTab.PERSONAL;
+    private final PendingRequests pending = new PendingRequests();
+    private final Map<BankLogic.Page, UIElement> pages = new EnumMap<>(BankLogic.Page.class);
+    private final TabBar<BankLogic.Page> pageTabs;
+    private final TabBar<BankLogic.LoanAccount> loanTabs;
+    private BankLogic.Page page = BankLogic.Page.TREASURY;
+    private BankLogic.LoanAccount loanAccount = BankLogic.LoanAccount.PERSONAL;
+
+    // header
+    private final Label headerBalance = Ui.text("", "sm-price");
+
+    // treasury
+    private final Label treasuryBalance = Ui.figure(Component.empty(), "sm-price");
+    private TextField amountField;
+    private final Map<BankLogic.CurrencyAction, ActionButton> currencyButtons = new EnumMap<>(BankLogic.CurrencyAction.class);
+
+    // storage
+    private final ScrollerView itemList = Ui.scroller();
+    private final UIElement selectionSlot = Ui.row();
+    private final Label selectionName = Ui.text("", "sm-title");
+    private final Label selectionCount = Ui.text("", "sm-muted");
+    private final Label selectionDepositor = Ui.text("", "sm-muted");
+    private ActionButton withdrawItemButton;
+    private UIElement inventory;
+    private int selectedSlot = -1;
+    private ItemStack selectedStack = ItemStack.EMPTY;
+
+    // loans
+    private final UIElement loanFigures = Ui.column();
+    private final Label loanHint = Ui.paragraph(Component.empty(), "sm-muted");
+    private TextField loanAmountField;
+    private ActionButton borrowButton;
+    private ActionButton repayButton;
+
+    // last cache contents shown; the cache swaps its lists on every sync
+    private Object shownItems;
+    private long shownBalance = Long.MIN_VALUE;
+    private LoanAccountView shownPersonal;
+    private LoanAccountView shownNation;
 
     public BankScreen(BankMenu menu, Inventory inventory, Component title) {
         super(menu, inventory, title);
-        this.imageWidth = SCREEN_W;
-        this.imageHeight = SCREEN_H;
-        this.inventoryLabelY = INVENTORY_TOP - 12;
-        this.titleLabelX = 14;
-        this.titleLabelY = 10;
+        pageTabs = TabBar.horizontal(this::openPage);
+        pageTabs.add(BankLogic.Page.TREASURY, new ItemStack(Items.GOLD_INGOT), Component.translatable("screen.sailboatmod.bank.mode_treasury"))
+                .add(BankLogic.Page.STORAGE, new ItemStack(Items.CHEST), Component.translatable("screen.sailboatmod.bank.mode_storage"))
+                .add(BankLogic.Page.LOANS, new ItemStack(Items.WRITABLE_BOOK), Component.translatable("screen.sailboatmod.bank.mode_loans"));
+        loanTabs = TabBar.horizontal(account -> {
+            loanAccount = account;
+            refresh();
+        });
+        loanTabs.add(BankLogic.LoanAccount.PERSONAL, new ItemStack(Items.EMERALD), Component.translatable("screen.sailboatmod.bank.loan_personal"))
+                .add(BankLogic.LoanAccount.NATION, new ItemStack(Items.WHITE_BANNER), Component.translatable("screen.sailboatmod.bank.loan_nation"));
+
+        UIElement body = Ui.column();
+        body.addChild(pageTabs.element());
+        pages.put(BankLogic.Page.TREASURY, buildTreasuryPage());
+        pages.put(BankLogic.Page.STORAGE, buildStoragePage());
+        pages.put(BankLogic.Page.LOANS, buildLoansPage());
+        pages.values().forEach(body::addChild);
+
+        UIElement balanceChip = Ui.row("sm-chip");
+        balanceChip.layout(l -> l.width(78).height(Ui.CONTROL_HEIGHT).paddingHorizontal(Ui.GAP_S).gapAll(Ui.GAP_XS));
+        headerBalance.textStyle(s -> s.adaptiveWidth(false));
+        headerBalance.layout(l -> l.width(0).flexGrow(1).minWidth(0));
+        headerBalance.setOverflowVisible(false);
+        balanceChip.addChildren(Ui.icon(new ItemStack(Items.GOLD_INGOT), 12), headerBalance);
+        balanceChip.style(s -> s.tooltips(Component.translatable("screen.sailboatmod.bank.currency_label")));
+
+        UIElement window = window(title, body, balanceChip);
+        window.layout(l -> l.width(WIDTH).height(300));
+        body.layout(l -> l.height(0).flexBasis(0).flexGrow(1).flexShrink(1).minHeight(0));
+        install(window);
+        bindAllSlots();
+        refresh();
     }
 
-    @Override
-    protected void init() {
-        super.init();
-        this.tabButtons.clear();
-        this.treasuryButtons.clear();
-        this.storageButtons.clear();
-        this.loanButtons.clear();
-        this.loanSubtabButtons.clear();
+    // ================================================================= pages
 
-        int left = this.leftPos;
-        int top = this.topPos;
+    private UIElement buildTreasuryPage() {
+        UIElement page = Ui.column("sm-pane");
+        page.layout(l -> l.paddingAll(Ui.GAP_L).gapAll(Ui.GAP_M));
+        UIElement balance = Ui.row();
+        balance.layout(l -> l.gapAll(Ui.GAP_S));
+        balance.addChildren(Ui.slot(new ItemStack(Items.GOLD_BLOCK), Ui.SLOT),
+                Ui.muted(Component.translatable("screen.sailboatmod.bank.currency_label")), Ui.spacer(), treasuryBalance);
 
-        this.amountInput = this.addRenderableWidget(new EditBox(this.font, left + 14, top + 78, 136, 18, Component.translatable("screen.sailboatmod.bank.amount")));
-        this.amountInput.setMaxLength(16);
-
-        this.loanAmountInput = this.addRenderableWidget(new EditBox(this.font, left + 14, top + LOAN_AMOUNT_INPUT_Y, 136, 18, Component.translatable("screen.sailboatmod.bank.amount")));
-        this.loanAmountInput.setMaxLength(16);
-
-        int tabY = top + 30;
-        this.tabButtons.add(this.addRenderableWidget(Button.builder(Component.translatable("screen.sailboatmod.bank.mode_treasury"), b -> switchTab(BankTab.TREASURY)).bounds(left + 14, tabY, 96, 18).build()));
-        this.tabButtons.add(this.addRenderableWidget(Button.builder(Component.translatable("screen.sailboatmod.bank.mode_storage"), b -> switchTab(BankTab.STORAGE)).bounds(left + 122, tabY, 96, 18).build()));
-        this.tabButtons.add(this.addRenderableWidget(Button.builder(Component.translatable("screen.sailboatmod.bank.mode_loans"), b -> switchTab(BankTab.LOANS)).bounds(left + 230, tabY, 96, 18).build()));
-
-        this.treasuryButtons.add(this.addRenderableWidget(Button.builder(Component.translatable("screen.sailboatmod.bank.deposit"), b -> doDeposit())
-                .bounds(left + 156, top + 78, 78, 18).build()));
-        this.treasuryButtons.add(this.addRenderableWidget(Button.builder(Component.translatable("screen.sailboatmod.bank.withdraw"), b -> doWithdraw())
-                .bounds(left + 242, top + 78, 78, 18).build()));
-        this.treasuryButtons.add(this.addRenderableWidget(Button.builder(Component.translatable("screen.sailboatmod.bank.withdraw_as_gold"), b -> doWithdrawAsGold())
-                .bounds(left + 156, top + 104, 164, 18).build()));
-
-        this.storageButtons.add(this.addRenderableWidget(Button.builder(Component.translatable("screen.sailboatmod.bank.withdraw_item"), b -> doWithdrawItem())
-                .bounds(left + 200, top + 168, 120, 18).build()));
-        this.storageButtons.add(this.addRenderableWidget(Button.builder(Component.translatable("screen.sailboatmod.bank.storage_refresh"), b -> refreshStatus())
-                .bounds(left + 200, top + 192, 120, 18).build()));
-
-        this.loanSubtabButtons.add(this.addRenderableWidget(Button.builder(Component.translatable("screen.sailboatmod.bank.loan_personal"), b -> activeLoanTab = LoanTab.PERSONAL)
-                .bounds(left + 14, top + 76, 96, 18).build()));
-        this.loanSubtabButtons.add(this.addRenderableWidget(Button.builder(Component.translatable("screen.sailboatmod.bank.loan_nation"), b -> activeLoanTab = LoanTab.NATION)
-                .bounds(left + 118, top + 76, 96, 18).build()));
-
-        this.loanButtons.add(this.addRenderableWidget(Button.builder(Component.translatable("screen.sailboatmod.bank.loan_borrow"), b -> doLoanBorrow())
-                .bounds(left + 156, top + LOAN_AMOUNT_INPUT_Y, 78, 18).build()));
-        this.loanButtons.add(this.addRenderableWidget(Button.builder(Component.translatable("screen.sailboatmod.bank.loan_repay"), b -> doLoanRepay())
-                .bounds(left + 242, top + LOAN_AMOUNT_INPUT_Y, 78, 18).build()));
-
-        this.closeButton = this.addRenderableWidget(Button.builder(Component.translatable("screen.sailboatmod.route_name.cancel"), b -> onClose())
-                .bounds(left + SCREEN_W - 74, top + SCREEN_H - 30, 60, 18).build());
-
-        updateWidgetVisibility();
-    }
-
-    @Override
-    public void render(GuiGraphics guiGraphics, int mouseX, int mouseY, float partialTick) {
-        super.render(guiGraphics, mouseX, mouseY, partialTick);
-        renderTreasuryItemTooltip(guiGraphics, mouseX, mouseY);
-        this.renderTooltip(guiGraphics, mouseX, mouseY);
-    }
-
-    @Override
-    public boolean keyPressed(int keyCode, int scanCode, int modifiers) {
-        if (ScreenInputGuards.shouldConsumeInventoryKeyWhenEditing(this.minecraft, keyCode, scanCode, this.amountInput, this.loanAmountInput)) {
-            return true;
+        amountField = Ui.numberField("", Component.translatable("screen.sailboatmod.bank.amount"), MAX_AMOUNT, value -> refreshValidation());
+        amountField.layout(l -> l.flexGrow(1).flexBasis(0).flexShrink(1).minWidth(40));
+        UIElement actions = Ui.row();
+        actions.layout(l -> l.widthPercent(100).minWidth(0).flexWrap(FlexWrap.WRAP).gapAll(Ui.GAP_S));
+        actions.addChild(amountField);
+        for (BankLogic.CurrencyAction action : BankLogic.CurrencyAction.values()) {
+            String key = switch (action) {
+                case DEPOSIT -> "screen.sailboatmod.bank.deposit";
+                case WITHDRAW -> "screen.sailboatmod.bank.withdraw";
+                case WITHDRAW_AS_GOLD -> "screen.sailboatmod.bank.withdraw_as_gold";
+            };
+            ActionButton button = new ActionButton(Component.translatable(key),
+                    action == BankLogic.CurrencyAction.DEPOSIT ? Ui.Tone.PRIMARY : Ui.Tone.SECONDARY,
+                    () -> sendCurrency(action)).inRow();
+            currencyButtons.put(action, button);
+            actions.addChild(button.element());
         }
-        return super.keyPressed(keyCode, scanCode, modifiers);
+        page.addChildren(balance, Ui.divider(), Ui.muted(Component.translatable("screen.sailboatmod.bank.amount_label")), actions,
+                Ui.paragraph(Component.translatable("screen.sailboatmod.bank.treasury_help"), "sm-muted"));
+        return page;
     }
 
-    @Override
-    protected void renderBg(GuiGraphics g, float partialTick, int mouseX, int mouseY) {
-        int left = this.leftPos;
-        int top = this.topPos;
-        g.fill(left, top, left + SCREEN_W, top + SCREEN_H, 0xCC101820);
-        g.fill(left + 1, top + 1, left + SCREEN_W - 1, top + SCREEN_H - 1, 0xCC182632);
+    private UIElement buildStoragePage() {
+        UIElement page = Ui.column();
+        page.layout(l -> l.flexGrow(1).flexShrink(1).flexBasis(0).minHeight(0).gapAll(Ui.GAP_S));
 
-        g.fill(left + 12, top + CONTENT_TOP, left + SCREEN_W - 12, top + CONTENT_BOTTOM, 0x40202F3B);
-        if (activeTab == BankTab.STORAGE) {
-            g.fill(left + 12, top + INVENTORY_TOP, left + SCREEN_W - 12, top + INVENTORY_BOTTOM + 12, 0x34263341);
+        UIElement top = Ui.row();
+        top.layout(l -> l.gapAll(Ui.GAP_M).alignItems(AlignItems.STRETCH).flexGrow(1).flexBasis(0).minHeight(40));
+        UIElement listColumn = Ui.column();
+        listColumn.layout(l -> l.flexGrow(1).minWidth(0).gapAll(Ui.GAP_XS));
+        Label storageHeading = Ui.muted(Component.translatable("screen.sailboatmod.bank.items_title"));
+        // A fixed single line avoids LDLib2's adaptive-height rounding loop at fractional centred positions.
+        storageHeading.textStyle(s -> s.adaptiveHeight(false));
+        storageHeading.layout(l -> l.height(9).flexShrink(0));
+        listColumn.addChildren(storageHeading, itemList);
+
+        UIElement side = Ui.column("sm-pane");
+        side.layout(l -> l.widthPercent(100).paddingAll(Ui.GAP_M).gapAll(Ui.GAP_S));
+        UIElement head = Ui.row();
+        head.layout(l -> l.gapAll(Ui.GAP_S));
+        UIElement names = Ui.column();
+        names.layout(l -> l.flexGrow(1).minWidth(0));
+        names.addChildren(selectionName, selectionCount);
+        head.addChildren(selectionSlot, names);
+        withdrawItemButton = new ActionButton(Component.translatable("screen.sailboatmod.bank.withdraw_item"), Ui.Tone.PRIMARY, this::sendWithdrawItem);
+        withdrawItemButton.element().layout(l -> l.widthPercent(100));
+        side.addChildren(head, selectionDepositor, Ui.spacer(), withdrawItemButton.element());
+        ScrollerView sideViewport = Ui.scroller();
+        sideViewport.layout(l -> l.width(118).flexGrow(0).flexShrink(0));
+        sideViewport.addScrollViewChild(side);
+        top.addChildren(listColumn, sideViewport);
+
+        inventory = playerInventory(menu.playerInventoryStart());
+        page.addChildren(top, Ui.paragraph(Component.translatable("screen.sailboatmod.bank.storage_shift_hint"), "sm-muted"),
+                Ui.divider(), inventory);
+        return page;
+    }
+
+    private UIElement buildLoansPage() {
+        UIElement page = Ui.column("sm-pane");
+        page.layout(l -> l.flexGrow(1).flexShrink(1).flexBasis(0).minHeight(0).paddingAll(Ui.GAP_L).gapAll(Ui.GAP_S));
+        loanFigures.layout(l -> l.gapAll(Ui.GAP_XS).widthPercent(100));
+        ScrollerView figuresViewport = Ui.scroller();
+        figuresViewport.addScrollViewChild(loanFigures);
+        loanAmountField = Ui.numberField("", Component.translatable("screen.sailboatmod.bank.amount"), MAX_AMOUNT, value -> refreshValidation());
+        loanAmountField.layout(l -> l.flexGrow(1).flexBasis(0).flexShrink(1).minWidth(40));
+        borrowButton = new ActionButton(Component.translatable("screen.sailboatmod.bank.loan_borrow"), Ui.Tone.PRIMARY, () -> sendLoan(true)).inRow();
+        repayButton = new ActionButton(Component.translatable("screen.sailboatmod.bank.loan_repay"), Ui.Tone.SECONDARY, () -> sendLoan(false)).inRow();
+        UIElement actions = Ui.row();
+        actions.layout(l -> l.widthPercent(100).minWidth(0).flexWrap(FlexWrap.WRAP).gapAll(Ui.GAP_S));
+        actions.addChildren(loanAmountField, borrowButton.element(), repayButton.element());
+        page.addChildren(loanTabs.element(), figuresViewport, Ui.divider(),
+                Ui.muted(Component.translatable("screen.sailboatmod.bank.amount_label")), actions, loanHint);
+        return page;
+    }
+
+    // ================================================================= actions (same packets as before)
+
+    private void openPage(BankLogic.Page next) {
+        page = next;
+        if (next != BankLogic.Page.STORAGE) {
+            clearSelection();
         }
+        refresh();
+    }
 
-        for (Button button : tabButtons) {
-            if (isActiveTab(button)) {
-                g.fill(button.getX() - 1, button.getY() - 1, button.getX() + button.getWidth() + 1, button.getY() + button.getHeight() + 1, 0x55E7C977);
+    private void sendCurrency(BankLogic.CurrencyAction action) {
+        long amount = BankLogic.parseAmount(amountField.getValue());
+        if (amount < 0) {
+            toast.show(Component.translatable("command.sailboatmod.nation.treasury.invalid_amount"), false, ticks());
+            return;
+        }
+        if (!pending.begin(REQUEST, ticks())) {
+            return;
+        }
+        ModNetwork.CHANNEL.sendToServer(new BankActionPacket(action.packetAction, menu.getBankPos(), amount, 0));
+        toast.show(Component.translatable(action == BankLogic.CurrencyAction.DEPOSIT
+                ? "screen.sailboatmod.bank.depositing" : "screen.sailboatmod.bank.withdrawing", amount), true, ticks());
+        refresh();
+    }
+
+    private void sendWithdrawItem() {
+        ItemStack current = currentSelection();
+        if (current.isEmpty()) {
+            toast.show(Component.translatable("screen.sailboatmod.bank.select_item"), false, ticks());
+            return;
+        }
+        if (!pending.begin(REQUEST, ticks())) {
+            return;
+        }
+        ModNetwork.CHANNEL.sendToServer(new BankActionPacket(BankActionPacket.Action.WITHDRAW_ITEM, menu.getBankPos(),
+                current.getCount(), selectedSlot, current.copy()));
+        toast.show(Component.translatable("screen.sailboatmod.bank.withdrawing_item"), true, ticks());
+        clearSelection();
+        refresh();
+    }
+
+    private void sendLoan(boolean borrow) {
+        long amount = BankLogic.parseAmount(loanAmountField.getValue());
+        if (amount < 0) {
+            toast.show(Component.translatable("command.sailboatmod.nation.treasury.invalid_amount"), false, ticks());
+            return;
+        }
+        if (!pending.begin(REQUEST, ticks())) {
+            return;
+        }
+        ModNetwork.CHANNEL.sendToServer(new BankActionPacket(BankLogic.loanAction(loanAccount, borrow), menu.getBankPos(), amount, 0));
+        toast.show(Component.translatable(borrow ? "screen.sailboatmod.bank.borrowing" : "screen.sailboatmod.bank.repaying", amount), true, ticks());
+        refresh();
+    }
+
+    // ================================================================= refresh
+
+    @Override
+    protected void onUiTick() {
+        if (cacheChanged()) {
+            pending.resolve(REQUEST);
+            refresh();
+        }
+        pending.pollTimedOut(ticks()).ifPresent(key -> {
+            toast.show(Component.translatable("screen.sailboatmod.ui.no_reply_server"), false, ticks());
+            refresh();
+        });
+    }
+
+    private boolean cacheChanged() {
+        return SyncTreasuryPacket.ClientTreasuryCache.getItems() != shownItems
+                || SyncTreasuryPacket.ClientTreasuryCache.getBalance() != shownBalance
+                || SyncTreasuryPacket.ClientTreasuryCache.getPersonalLoan() != shownPersonal
+                || SyncTreasuryPacket.ClientTreasuryCache.getNationLoan() != shownNation;
+    }
+
+    private void refresh() {
+        shownItems = SyncTreasuryPacket.ClientTreasuryCache.getItems();
+        shownBalance = SyncTreasuryPacket.ClientTreasuryCache.getBalance();
+        shownPersonal = SyncTreasuryPacket.ClientTreasuryCache.getPersonalLoan();
+        shownNation = SyncTreasuryPacket.ClientTreasuryCache.getNationLoan();
+
+        String balance = GoldStandardEconomy.formatBalance(shownBalance);
+        headerBalance.setValue(Component.literal(balance));
+        treasuryBalance.setValue(Component.literal(balance));
+
+        pageTabs.select(page);
+        pages.forEach((p, element) -> element.setDisplay(p == page));
+        boolean storage = page == BankLogic.Page.STORAGE;
+        inventory.setDisplay(storage);
+        menu.setPlayerInventoryVisible(storage);
+
+        refreshItems();
+        refreshLoans();
+        refreshValidation();
+    }
+
+    private void refreshItems() {
+        List<ItemStack> items = SyncTreasuryPacket.ClientTreasuryCache.getItems();
+        // Keep the selection only while the same item still sits in that treasury slot.
+        if (selectedSlot >= 0 && (selectedSlot >= items.size()
+                || !ItemStack.isSameItemSameComponents(items.get(selectedSlot), selectedStack))) {
+            clearSelection();
+        }
+        itemList.clearAllScrollViewChildren();
+        boolean any = false;
+        for (int i = 0; i < items.size(); i++) {
+            ItemStack stack = items.get(i);
+            if (stack.isEmpty()) {
+                continue;
             }
-        }
-        if (activeTab == BankTab.LOANS) {
-            for (Button button : loanSubtabButtons) {
-                if ((button == loanSubtabButtons.get(0) && activeLoanTab == LoanTab.PERSONAL)
-                        || (button == loanSubtabButtons.get(1) && activeLoanTab == LoanTab.NATION)) {
-                    g.fill(button.getX() - 1, button.getY() - 1, button.getX() + button.getWidth() + 1, button.getY() + button.getHeight() + 1, 0x4487D7C3);
-                }
+            any = true;
+            int slotIndex = i;
+            UIElement row = Ui.itemRow(stack, stack.getHoverName(), Component.literal("x" + stack.getCount()), "sm-price");
+            Ui.setClass(row, "selected", slotIndex == selectedSlot);
+            String depositor = SyncTreasuryPacket.ClientTreasuryCache.getDepositor(slotIndex);
+            if (!depositor.isBlank()) {
+                row.style(s -> s.tooltips(Component.translatable("screen.sailboatmod.bank.depositor", depositor).withStyle(ChatFormatting.GRAY)));
             }
+            Ui.clickable(row, () -> {
+                selectedSlot = slotIndex;
+                selectedStack = stack.copy();
+                refresh();
+            });
+            itemList.addScrollViewChild(row);
         }
-        if (activeTab == BankTab.STORAGE) {
-            int listBottom = ITEM_LIST_Y + ITEM_VISIBLE_ROWS * ITEM_ROW_H;
-            g.fill(left + ITEM_LIST_X, top + ITEM_LIST_Y, left + ITEM_LIST_X + ITEM_LIST_W, top + listBottom, 0x42000000);
-            for (int row = 0; row < ITEM_VISIBLE_ROWS; row++) {
-                int rowTop = top + ITEM_LIST_Y + row * ITEM_ROW_H;
-                g.fill(left + ITEM_LIST_X + 1, rowTop + 1, left + ITEM_LIST_X + ITEM_LIST_W - 1, rowTop + ITEM_ROW_H - 1, 0x182A3946);
-            }
+        if (!any) {
+            itemList.addScrollViewChild(Ui.emptyState(Component.translatable("screen.sailboatmod.ui.treasury_empty")));
         }
-    }
 
-    @Override
-    protected void renderLabels(GuiGraphics g, int mouseX, int mouseY) {
-        g.drawString(this.font, this.title, 14, 10, 0xFFE7C977);
-        NationTreasuryRecord treasury = getTreasury();
-
-        if (activeTab == BankTab.TREASURY) {
-            String balanceText = treasury == null ? "0" : GoldStandardEconomy.formatBalance(treasury.currencyBalance());
-            g.drawString(this.font, Component.translatable("screen.sailboatmod.bank.currency_label"), 14, 58, 0xFFB8C0C8);
-            g.drawString(this.font, balanceText, 120, 58, 0xFFE7C977);
-            g.drawString(this.font, Component.translatable("screen.sailboatmod.bank.amount_label"), 14, 66, 0xFFDCEEFF);
-            drawWrapped(g, Component.translatable("screen.sailboatmod.bank.treasury_help"), 14, 132, 218, 0xFFB8C0C8);
-        } else if (activeTab == BankTab.STORAGE) {
-            g.drawString(this.font, Component.translatable("screen.sailboatmod.bank.items_title"), ITEM_LIST_X, 62, 0xFFDCEEFF);
-            drawWrapped(g, Component.translatable("screen.sailboatmod.bank.storage_shift_hint"), 14, 58, SCREEN_W - 28, 0xFFB8C0C8);
-
-            if (treasury != null) {
-                int startIdx = Math.max(0, itemScroll);
-                int drawn = 0;
-                for (int i = 0; i < treasury.items().size() && drawn < ITEM_VISIBLE_ROWS; i++) {
-                    ItemStack stack = treasury.items().get(i);
-                    if (stack.isEmpty()) {
-                        continue;
-                    }
-                    if (startIdx > 0) {
-                        startIdx--;
-                        continue;
-                    }
-                    int rowY = ITEM_LIST_Y + drawn * ITEM_ROW_H + 3;
-                    if (i == this.selectedItemSlot) {
-                        g.fill(ITEM_LIST_X + 1, rowY - 1, ITEM_LIST_X + ITEM_LIST_W - 1, rowY + ITEM_ROW_H - 2, 0x44FFFFFF);
-                    }
-                    g.renderItem(stack, ITEM_LIST_X + 4, rowY);
-                    String name = trimName(stack.getHoverName().getString(), 22);
-                    g.drawString(this.font, name, ITEM_LIST_X + 26, rowY + 5, 0xFFDCEEFF);
-                    g.drawString(this.font, "x" + stack.getCount(), ITEM_LIST_X + ITEM_LIST_W - 42, rowY + 5, 0xFFE7C977);
-                    drawn++;
-                }
-            }
-            g.drawString(this.font, this.playerInventoryTitle, 14, this.inventoryLabelY, 0xFFB8C0C8);
+        ItemStack current = currentSelection();
+        selectionSlot.clearAllChildren();
+        selectionSlot.addChild(Ui.slot(current, Ui.SLOT));
+        if (current.isEmpty()) {
+            selectionName.setValue(Component.translatable("screen.sailboatmod.bank.select_item"));
+            selectionCount.setValue(Component.empty());
+            selectionDepositor.setValue(Component.empty());
         } else {
-            String balanceText = treasury == null ? "0" : GoldStandardEconomy.formatBalance(treasury.currencyBalance());
-            g.drawString(this.font, Component.translatable("screen.sailboatmod.bank.currency_label"), 14, 58, 0xFFB8C0C8);
-            g.drawString(this.font, balanceText, 120, 58, 0xFFE7C977);
-            LoanAccountView view = activeLoanView();
-            g.drawString(this.font, Component.translatable("screen.sailboatmod.bank.amount_label"), 14, LOAN_AMOUNT_LABEL_Y, 0xFFDCEEFF);
-            if (!view.enabled()) {
-                g.drawString(this.font, Component.translatable("screen.sailboatmod.bank.loan_disabled"), 14, 106, 0xFFE57373);
-            } else {
-                int metricsY = LOAN_METRIC_START_Y;
-                g.drawString(this.font, Component.translatable("screen.sailboatmod.bank.loan_outstanding", GoldStandardEconomy.formatBalance(view.outstanding())), 14, metricsY, 0xFFDCEEFF);
-                g.drawString(this.font, Component.translatable("screen.sailboatmod.bank.loan_max", GoldStandardEconomy.formatBalance(view.maxBorrowable())), 14, metricsY + LOAN_METRIC_STEP_Y, 0xFFB8C0C8);
-                g.drawString(this.font, Component.translatable("screen.sailboatmod.bank.loan_interest", GoldStandardEconomy.formatBalance(view.nextInterestCharge())), 14, LOAN_AMOUNT_INPUT_Y + 26, 0xFFB8C0C8);
-                g.drawString(this.font, Component.translatable("screen.sailboatmod.bank.loan_due", formatWhen(view.nextDueAt())), 14, LOAN_AMOUNT_INPUT_Y + 38, 0xFFB8C0C8);
-                g.drawString(this.font, Component.translatable("screen.sailboatmod.bank.loan_principal", GoldStandardEconomy.formatBalance(view.principal())), 14, LOAN_AMOUNT_INPUT_Y + 50, 0xFFB8C0C8);
-                g.drawString(this.font, Component.translatable("screen.sailboatmod.bank.loan_interest_total", GoldStandardEconomy.formatBalance(view.accruedInterest())), 14, LOAN_AMOUNT_INPUT_Y + 62, 0xFFB8C0C8);
-                g.drawString(this.font, Component.translatable("screen.sailboatmod.bank.loan_delinquent", yesNo(view.delinquent())), 14, LOAN_AMOUNT_INPUT_Y + 74, view.delinquent() ? 0xFFE57373 : 0xFF82D7A3);
-            }
+            selectionName.setValue(current.getHoverName());
+            selectionCount.setValue(Component.literal("x" + current.getCount()));
+            String depositor = SyncTreasuryPacket.ClientTreasuryCache.getDepositor(selectedSlot);
+            selectionDepositor.setValue(depositor.isBlank() ? Component.empty()
+                    : Component.translatable("screen.sailboatmod.bank.depositor", depositor));
         }
-
-        if (!this.statusLine.getString().isBlank()) {
-            g.drawCenteredString(this.font, this.statusLine, SCREEN_W / 2, activeTab == BankTab.STORAGE ? STORAGE_STATUS_Y : STATUS_Y, 0xFFF1D98A);
-        }
+        withdrawItemButton.sync(!current.isEmpty(), pending.isPending(REQUEST), false);
     }
 
-    @Override
-    public boolean mouseClicked(double mouseX, double mouseY, int button) {
-        if (activeTab == BankTab.STORAGE) {
-            int listScreenX = this.leftPos + ITEM_LIST_X;
-            int listScreenY = this.topPos + ITEM_LIST_Y;
-            if (mouseX >= listScreenX && mouseX < listScreenX + ITEM_LIST_W
-                    && mouseY >= listScreenY && mouseY < listScreenY + ITEM_VISIBLE_ROWS * ITEM_ROW_H) {
-                int row = (int) ((mouseY - listScreenY) / ITEM_ROW_H);
-                this.selectedItemSlot = getVisibleSlot(row);
-                return true;
-            }
+    private void refreshLoans() {
+        loanTabs.select(loanAccount);
+        LoanAccountView view = loanAccount == BankLogic.LoanAccount.PERSONAL ? shownPersonal : shownNation;
+        loanFigures.clearAllChildren();
+        if (!view.enabled()) {
+            loanFigures.addChild(Ui.text(Component.translatable("screen.sailboatmod.bank.loan_disabled"), "sm-down"));
+        } else {
+            figure("screen.sailboatmod.ui.loan.outstanding", GoldStandardEconomy.formatBalance(view.outstanding()), "sm-price");
+            figure("screen.sailboatmod.ui.loan.max", GoldStandardEconomy.formatBalance(view.maxBorrowable()));
+            figure("screen.sailboatmod.ui.loan.principal", GoldStandardEconomy.formatBalance(view.principal()));
+            figure("screen.sailboatmod.ui.loan.accrued", GoldStandardEconomy.formatBalance(view.accruedInterest()));
+            figure("screen.sailboatmod.ui.loan.next_interest", GoldStandardEconomy.formatBalance(view.nextInterestCharge()));
+            figure("screen.sailboatmod.ui.loan.due", formatWhen(view.nextDueAt()));
+            Label delinquent = Ui.keyValue(loanFigures, Component.translatable("screen.sailboatmod.ui.loan.delinquent"),
+                    view.delinquent() ? "sm-down" : "sm-up");
+            delinquent.setValue(Component.translatable(view.delinquent() ? "screen.sailboatmod.bank.loan_yes" : "screen.sailboatmod.bank.loan_no"));
         }
-        return super.mouseClicked(mouseX, mouseY, button);
+        loanHint.setValue(Component.translatable(BankLogic.loanHintKey(loanAccount)));
     }
 
-    @Override
-    public boolean mouseScrolled(double mouseX, double mouseY, double scrollX, double delta) {
-        if (activeTab == BankTab.STORAGE) {
-            int listScreenX = this.leftPos + ITEM_LIST_X;
-            int listScreenY = this.topPos + ITEM_LIST_Y;
-            if (mouseX >= listScreenX && mouseX < listScreenX + ITEM_LIST_W
-                    && mouseY >= listScreenY && mouseY < listScreenY + ITEM_VISIBLE_ROWS * ITEM_ROW_H) {
-                this.itemScroll = Math.max(0, this.itemScroll - (int) delta);
-                return true;
-            }
-        }
-        return super.mouseScrolled(mouseX, mouseY, scrollX, delta);
+    private void figure(String key, String value, String... classes) {
+        Ui.keyValue(loanFigures, Component.translatable(key), classes).setValue(Component.literal(value));
     }
 
-    @Override
-    public boolean isPauseScreen() {
-        return false;
+    private void refreshValidation() {
+        boolean busy = pending.isPending(REQUEST);
+        boolean amountBad = BankLogic.isInvalidInput(amountField.getValue());
+        boolean amountOk = BankLogic.parseAmount(amountField.getValue()) > 0;
+        Ui.setClass(amountField, "sm-invalid", amountBad);
+        currencyButtons.values().forEach(button -> button.sync(amountOk, busy, false));
+
+        LoanAccountView view = loanAccount == BankLogic.LoanAccount.PERSONAL ? shownPersonal : shownNation;
+        boolean loanBad = BankLogic.isInvalidInput(loanAmountField.getValue());
+        boolean loanOk = BankLogic.parseAmount(loanAmountField.getValue()) > 0 && view != null && view.enabled();
+        Ui.setClass(loanAmountField, "sm-invalid", loanBad);
+        borrowButton.sync(loanOk, busy, false);
+        repayButton.sync(loanOk, busy, false);
     }
 
-    private void switchTab(BankTab tab) {
-        this.activeTab = tab;
-        if (tab != BankTab.STORAGE) {
-            this.selectedItemSlot = -1;
+    private ItemStack currentSelection() {
+        List<ItemStack> items = SyncTreasuryPacket.ClientTreasuryCache.getItems();
+        if (selectedSlot < 0 || selectedSlot >= items.size()) {
+            return ItemStack.EMPTY;
         }
-        refreshStatus();
-        updateWidgetVisibility();
+        return items.get(selectedSlot);
     }
 
-    private void updateWidgetVisibility() {
-        boolean treasury = activeTab == BankTab.TREASURY;
-        boolean storage = activeTab == BankTab.STORAGE;
-        boolean loans = activeTab == BankTab.LOANS;
-        if (this.amountInput != null) {
-            this.amountInput.visible = treasury;
-            this.amountInput.setEditable(treasury);
-        }
-        if (this.loanAmountInput != null) {
-            this.loanAmountInput.visible = loans;
-            this.loanAmountInput.setEditable(loans);
-        }
-        setVisible(this.treasuryButtons, treasury);
-        setVisible(this.storageButtons, storage);
-        setVisible(this.loanButtons, loans);
-        setVisible(this.loanSubtabButtons, loans);
-        if (this.closeButton != null) {
-            this.closeButton.visible = true;
-            this.closeButton.active = true;
-        }
-        applyPlayerInventoryLayout(storage);
+    private void clearSelection() {
+        selectedSlot = -1;
+        selectedStack = ItemStack.EMPTY;
     }
 
-    private void applyPlayerInventoryLayout(boolean storageVisible) {
-        this.menu.setPlayerInventoryVisible(storageVisible);
-    }
-
-    private void setVisible(List<Button> buttons, boolean visible) {
-        for (Button button : buttons) {
-            button.visible = visible;
-            button.active = visible;
-        }
-    }
-
-    private boolean isActiveTab(Button button) {
-        return (activeTab == BankTab.TREASURY && button == tabButtons.get(0))
-                || (activeTab == BankTab.STORAGE && button == tabButtons.get(1))
-                || (activeTab == BankTab.LOANS && button == tabButtons.get(2));
-    }
-
-    private void refreshStatus() {
-        if (activeTab == BankTab.STORAGE) {
-            this.statusLine = Component.translatable("screen.sailboatmod.bank.storage_hint");
-            return;
-        }
-        if (activeTab == BankTab.LOANS) {
-            this.statusLine = Component.translatable(activeLoanTab == LoanTab.PERSONAL
-                    ? "screen.sailboatmod.bank.loan_personal_hint"
-                    : "screen.sailboatmod.bank.loan_nation_hint");
-            return;
-        }
-        this.statusLine = Component.empty();
-    }
-
-    private void renderTreasuryItemTooltip(GuiGraphics g, int mouseX, int mouseY) {
-        if (activeTab != BankTab.STORAGE) {
-            return;
-        }
-        int listScreenX = this.leftPos + ITEM_LIST_X;
-        int listScreenY = this.topPos + ITEM_LIST_Y;
-        if (mouseX < listScreenX || mouseX >= listScreenX + ITEM_LIST_W
-                || mouseY < listScreenY || mouseY >= listScreenY + ITEM_VISIBLE_ROWS * ITEM_ROW_H) {
-            return;
-        }
-        int row = (mouseY - listScreenY) / ITEM_ROW_H;
-        int slot = getVisibleSlot(row);
-        if (slot < 0) {
-            return;
-        }
-        NationTreasuryRecord treasury = getTreasury();
-        if (treasury == null) {
-            return;
-        }
-        ItemStack stack = treasury.items().get(slot);
-        if (stack.isEmpty()) {
-            return;
-        }
-        List<Component> tooltip = new ArrayList<>(stack.getTooltipLines(net.minecraft.world.item.Item.TooltipContext.of(Minecraft.getInstance().level), Minecraft.getInstance().player, net.minecraft.world.item.TooltipFlag.NORMAL));
-        String depositor = getCachedDepositor(slot);
-        if (!depositor.isBlank()) {
-            tooltip.add(Component.translatable("screen.sailboatmod.bank.depositor", depositor).withStyle(ChatFormatting.GRAY));
-        }
-        g.renderTooltip(this.font, tooltip, java.util.Optional.empty(), mouseX, mouseY);
-    }
-
-    private NationTreasuryRecord getTreasury() {
-        long bal = SyncTreasuryPacket.ClientTreasuryCache.getBalance();
-        net.minecraft.core.NonNullList<ItemStack> items = SyncTreasuryPacket.ClientTreasuryCache.getItems();
-        if (bal <= 0 && items.stream().allMatch(ItemStack::isEmpty)) {
-            return null;
-        }
-        return new NationTreasuryRecord("", bal, items, new String[NationTreasuryRecord.TREASURY_SLOTS], 0, 0, 0, 0L);
-    }
-
-    private String getCachedDepositor(int slot) {
-        return SyncTreasuryPacket.ClientTreasuryCache.getDepositor(slot);
-    }
-
-    private int getVisibleSlot(int row) {
-        NationTreasuryRecord treasury = getTreasury();
-        if (treasury == null) {
-            return -1;
-        }
-        int startIdx = Math.max(0, itemScroll);
-        int drawn = 0;
-        for (int i = 0; i < treasury.items().size(); i++) {
-            if (treasury.items().get(i).isEmpty()) {
-                continue;
-            }
-            if (startIdx > 0) {
-                startIdx--;
-                continue;
-            }
-            if (drawn == row) {
-                return i;
-            }
-            drawn++;
-        }
-        return -1;
-    }
-
-    private void doDeposit() {
-        long amount = parseAmount(this.amountInput);
-        if (amount <= 0) {
-            this.statusLine = Component.translatable("command.sailboatmod.nation.treasury.invalid_amount");
-            return;
-        }
-        ModNetwork.CHANNEL.sendToServer(new BankActionPacket(BankActionPacket.Action.DEPOSIT_CURRENCY, this.menu.getBankPos(), amount, 0));
-        this.statusLine = Component.translatable("screen.sailboatmod.bank.depositing", amount);
-    }
-
-    private void doWithdraw() {
-        long amount = parseAmount(this.amountInput);
-        if (amount <= 0) {
-            this.statusLine = Component.translatable("command.sailboatmod.nation.treasury.invalid_amount");
-            return;
-        }
-        ModNetwork.CHANNEL.sendToServer(new BankActionPacket(BankActionPacket.Action.WITHDRAW_CURRENCY, this.menu.getBankPos(), amount, 0));
-        this.statusLine = Component.translatable("screen.sailboatmod.bank.withdrawing", amount);
-    }
-
-    private void doWithdrawAsGold() {
-        long amount = parseAmount(this.amountInput);
-        if (amount <= 0) {
-            this.statusLine = Component.translatable("command.sailboatmod.nation.treasury.invalid_amount");
-            return;
-        }
-        ModNetwork.CHANNEL.sendToServer(new BankActionPacket(BankActionPacket.Action.WITHDRAW_AS_GOLD, this.menu.getBankPos(), amount, 0));
-        this.statusLine = Component.translatable("screen.sailboatmod.bank.withdrawing", amount);
-    }
-
-    private void doWithdrawItem() {
-        if (this.selectedItemSlot < 0) {
-            this.statusLine = Component.translatable("screen.sailboatmod.bank.select_item");
-            return;
-        }
-        NationTreasuryRecord treasury = getTreasury();
-        if (treasury == null) {
-            return;
-        }
-        ItemStack selected = treasury.items().get(this.selectedItemSlot);
-        if (selected.isEmpty()) {
-            this.statusLine = Component.translatable("screen.sailboatmod.bank.select_item");
-            return;
-        }
-        ModNetwork.CHANNEL.sendToServer(new BankActionPacket(BankActionPacket.Action.WITHDRAW_ITEM, this.menu.getBankPos(), selected.getCount(), this.selectedItemSlot, selected.copy()));
-        this.statusLine = Component.translatable("screen.sailboatmod.bank.withdrawing_item");
-        this.selectedItemSlot = -1;
-    }
-
-    private void doLoanBorrow() {
-        long amount = parseAmount(this.loanAmountInput);
-        if (amount <= 0) {
-            this.statusLine = Component.translatable("command.sailboatmod.nation.treasury.invalid_amount");
-            return;
-        }
-        BankActionPacket.Action action = activeLoanTab == LoanTab.PERSONAL
-                ? BankActionPacket.Action.BORROW_PERSONAL
-                : BankActionPacket.Action.BORROW_NATION;
-        ModNetwork.CHANNEL.sendToServer(new BankActionPacket(action, this.menu.getBankPos(), amount, 0));
-        this.statusLine = Component.translatable("screen.sailboatmod.bank.borrowing", amount);
-    }
-
-    private void doLoanRepay() {
-        long amount = parseAmount(this.loanAmountInput);
-        if (amount <= 0) {
-            this.statusLine = Component.translatable("command.sailboatmod.nation.treasury.invalid_amount");
-            return;
-        }
-        BankActionPacket.Action action = activeLoanTab == LoanTab.PERSONAL
-                ? BankActionPacket.Action.REPAY_PERSONAL
-                : BankActionPacket.Action.REPAY_NATION;
-        ModNetwork.CHANNEL.sendToServer(new BankActionPacket(action, this.menu.getBankPos(), amount, 0));
-        this.statusLine = Component.translatable("screen.sailboatmod.bank.repaying", amount);
-    }
-
-    private LoanAccountView activeLoanView() {
-        return activeLoanTab == LoanTab.PERSONAL
-                ? SyncTreasuryPacket.ClientTreasuryCache.getPersonalLoan()
-                : SyncTreasuryPacket.ClientTreasuryCache.getNationLoan();
-    }
-
-    private long parseAmount(EditBox input) {
-        if (input == null) {
-            return 0L;
-        }
-        try {
-            return Long.parseLong(input.getValue().trim());
-        } catch (NumberFormatException ignored) {
-            return 0L;
-        }
-    }
-
-    private void drawWrapped(GuiGraphics g, Component text, int x, int y, int width, int color) {
-        int lineY = y;
-        for (var line : this.font.split(text, width)) {
-            g.drawString(this.font, line, x, lineY, color);
-            lineY += 10;
-        }
-    }
-
-    private String trimName(String value, int maxChars) {
-        if (value.length() <= maxChars) {
-            return value;
-        }
-        return value.substring(0, Math.max(1, maxChars - 3)) + "...";
-    }
-
-    private String formatWhen(long epochMillis) {
+    private static String formatWhen(long epochMillis) {
         if (epochMillis <= 0L) {
             return "-";
         }
         return new SimpleDateFormat("MM-dd HH:mm", Locale.ROOT).format(new Date(epochMillis));
     }
 
-    private String yesNo(boolean value) {
-        return value ? Component.translatable("screen.sailboatmod.bank.loan_yes").getString()
-                : Component.translatable("screen.sailboatmod.bank.loan_no").getString();
-    }
-
-    private enum BankTab {
-        TREASURY,
-        STORAGE,
-        LOANS
-    }
-
-    private enum LoanTab {
-        PERSONAL,
-        NATION
+    @Override
+    public boolean isPauseScreen() {
+        return false;
     }
 }

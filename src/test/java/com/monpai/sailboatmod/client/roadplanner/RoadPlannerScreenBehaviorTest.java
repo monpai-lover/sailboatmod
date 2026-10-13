@@ -22,7 +22,6 @@ import com.monpai.sailboatmod.roadplanner.graph.RoadGraphEdge;
 import com.monpai.sailboatmod.roadplanner.graph.RoadGraphNode;
 import com.monpai.sailboatmod.roadplanner.graph.RoadNetworkGraph;
 import com.monpai.sailboatmod.roadplanner.graph.RoadRouteMetadata;
-import gg.essential.elementa.WindowScreen;
 import net.minecraft.core.BlockPos;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -50,7 +49,7 @@ class RoadPlannerScreenBehaviorTest {
     void screenIsVanillaAndHandlesEscapeLayers() {
         RoadPlannerScreen screen = RoadPlannerScreen.forTest(UUID.randomUUID(), 1280, 720);
 
-        assertFalse(WindowScreen.class.isAssignableFrom(screen.getClass()));
+        assertFalse(extendsElementaScreen(screen.getClass()), "road planner must not depend on Elementa");
         assertEquals(RoadPlannerScreen.EscapeResult.CLOSE_CONTEXT_MENU, screen.handleEscapeForTest(true, false));
         assertEquals(RoadPlannerScreen.EscapeResult.CLOSE_SCREEN, screen.handleEscapeForTest(false, false));
         assertEquals(5, screen.actionCountForTest());
@@ -1355,5 +1354,14 @@ class RoadPlannerScreenBehaviorTest {
         Method method = RoadPlannerScreen.class.getDeclaredMethod("submitPreviewWithSettings", RoadPlannerBuildSettings.class);
         method.setAccessible(true);
         method.invoke(screen, settings);
+    }
+
+    private static boolean extendsElementaScreen(Class<?> type) {
+        for (Class<?> current = type; current != null; current = current.getSuperclass()) {
+            if (current.getName().startsWith("gg.essential.elementa.")) {
+                return true;
+            }
+        }
+        return false;
     }
 }

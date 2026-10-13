@@ -151,7 +151,18 @@ public record MarketOverviewData(
 
     public record StorageEntry(String label, String commodityKey, String itemName, int quantity, int suggestedUnitPrice,
                                int minAllowedUnitPrice, int maxAllowedUnitPrice,
-                               boolean priceConstrained, String detail, String category, int rarity) {
+                               boolean priceConstrained, String detail, String category, int rarity, String stockIdentity) {
+        public StorageEntry {
+            stockIdentity = stockIdentity == null ? "" : stockIdentity;
+        }
+
+        /** Legacy display-only entries lack a verifiable component identity and cannot be listed by the client. */
+        public StorageEntry(String label, String commodityKey, String itemName, int quantity, int suggestedUnitPrice,
+                            int minAllowedUnitPrice, int maxAllowedUnitPrice, boolean priceConstrained,
+                            String detail, String category, int rarity) {
+            this(label, commodityKey, itemName, quantity, suggestedUnitPrice, minAllowedUnitPrice,
+                    maxAllowedUnitPrice, priceConstrained, detail, category, rarity, "");
+        }
     }
 
     public record ListingEntry(String listingId, String label, String commodityKey, String itemName, int availableCount, int reservedCount,

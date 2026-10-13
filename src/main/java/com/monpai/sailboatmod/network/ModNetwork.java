@@ -109,7 +109,7 @@ import net.neoforged.bus.api.IEventBus;
 import java.util.Optional;
 
 public final class ModNetwork {
-    private static final String PROTOCOL_VERSION = "11"; // 10→11:新增 InteractCarriagePacket(整模型点击上车);版本不匹配握手即拒(防新旧 jar 混用运行时崩)
+    private static final String PROTOCOL_VERSION = "12"; // 11→12: component-aware market stock overview and listing request; reject mixed jars.
     public static final PayloadChannel CHANNEL = new PayloadChannel(PROTOCOL_VERSION);
 
     private static int packetId = 0;
