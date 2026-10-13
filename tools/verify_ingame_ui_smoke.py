@@ -17,12 +17,27 @@ def main():
         if not condition:
             failures.append(message)
 
+    def scrollbars(capture):
+        check("scrollbarChecks" in capture, f'{capture["name"]}: missing scrollbar audit')
+        for result in capture.get("scrollbarChecks", []):
+            check(result.get("passed"), f'{capture["name"]}: {result["name"]}')
+        for interaction in capture.get("scrollbarInteractions", []):
+            for result in interaction.get("checks", []):
+                check(result.get("passed"), f'{capture["name"]}: {result["name"]}')
+        if "territoryAccessibility" in capture:
+            check(capture["territoryAccessibility"].get("passed"),
+                  f'{capture["name"]}: territory controls exceed window without scrolling')
+        if "controlAccessibility" in capture:
+            check(capture["controlAccessibility"].get("passed"),
+                  f'{capture["name"]}: container controls are not reachable')
+
     market_file = args.directory / "all-ui-runtime-report.json"
     if market_file.exists():
         market = json.loads(market_file.read_text(encoding="utf-8"))
         check(market.get("status") == "COMPLETED", "market run did not complete")
         check(market.get("regressionChecksPassed"), "market input/selection regression failed")
         for capture in market.get("captures", []):
+            scrollbars(capture)
             if "left" in capture:
                 check(capture["left"] >= -1 and capture["left"] + capture["windowWidth"] <= capture["screenWidth"] + 1,
                       f'{capture["name"]}: window outside horizontal viewport')
@@ -46,6 +61,7 @@ def main():
         heading_changes = [event for event in trace if event.get("text") == "Treasury Items:"]
         check(len(heading_changes) <= 1, "bank storage heading keeps changing layout after settling")
         for capture in containers.get("captures", []):
+            scrollbars(capture)
             check(capture.get("allSlotsBound"), f'{capture["name"]}: unbound menu slots')
             check(capture.get("positiveWindowArea"), f'{capture["name"]}: empty window')
             check(capture["left"] >= -1 and capture["left"] + capture["windowWidth"] <= capture["guiWidth"] + 1,

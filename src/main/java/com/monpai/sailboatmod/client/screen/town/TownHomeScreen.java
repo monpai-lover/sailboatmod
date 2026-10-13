@@ -226,16 +226,25 @@ public class TownHomeScreen extends ThemedScreen implements RoadPlannerTileSyncR
         tabs.element().layout(l -> l.width(76));
 
         UIElement content = Ui.column();
-        content.layout(l -> l.flexGrow(1).minWidth(0).gapAll(Ui.GAP_S));
+        content.layout(l -> l.width(0).flexGrow(1).flexShrink(1).minWidth(0).minHeight(0).gapAll(Ui.GAP_S));
         pageTitle = Ui.text("", "sm-title");
+        pageTitle.textStyle(t -> t.adaptiveWidth(false));
+        pageTitle.layout(l -> l.widthPercent(100).minWidth(0).flexShrink(0));
+        pageTitle.setOverflowVisible(false);
         content.addChild(pageTitle);
         pages.put(Page.OVERVIEW, page(buildOverviewPage()));
         pages.put(Page.MEMBERS, buildMembersPage());
-        pages.put(Page.CLAIMS, buildClaimsPage());
+        pages.put(Page.CLAIMS, page(buildClaimsPage()));
         pages.put(Page.FLAG, page(buildFlagPage()));
         pages.put(Page.ECONOMY, page(buildEconomyPage()));
-        pages.values().forEach(content::addChild);
+        pages.values().forEach(page -> {
+            page.layout(l -> l.widthPercent(100).minWidth(0).height(0).flexGrow(1).flexShrink(1).minHeight(0));
+            content.addChild(page);
+        });
         statusLabel = Ui.text("", "sm-warn");
+        statusLabel.textStyle(t -> t.adaptiveWidth(false));
+        statusLabel.layout(l -> l.widthPercent(100).minWidth(0).flexShrink(0));
+        statusLabel.setOverflowVisible(false);
         content.addChild(statusLabel);
         body.addChildren(tabs.element(), content);
         built = true;
@@ -311,11 +320,11 @@ public class TownHomeScreen extends ThemedScreen implements RoadPlannerTileSyncR
         UIElement page = Ui.row();
         page.layout(l -> l.gapAll(Ui.GAP_M).alignItems(AlignItems.STRETCH).flexGrow(1).minHeight(0));
         UIElement left = Ui.column();
-        left.layout(l -> l.width(190).flexShrink(0).gapAll(Ui.GAP_XS));
+        left.layout(l -> l.widthPercent(45).maxWidth(190).minHeight(0).flexShrink(0).gapAll(Ui.GAP_XS));
         memberList = Ui.scroller();
         left.addChildren(Ui.muted(Component.translatable("screen.sailboatmod.town.members.list_title")), memberList);
         UIElement right = Ui.column("sm-pane");
-        right.layout(l -> l.flexGrow(1).minWidth(0).paddingAll(Ui.GAP_M).gapAll(Ui.GAP_S));
+        right.layout(l -> l.widthPercent(100).minWidth(0).paddingAll(Ui.GAP_M).gapAll(Ui.GAP_S));
         mayorLabel = Ui.text("");
         memberTotal = Ui.text("", "sm-muted");
         memberName = Ui.text("", "sm-title");
@@ -325,7 +334,10 @@ public class TownHomeScreen extends ThemedScreen implements RoadPlannerTileSyncR
         right.addChildren(Ui.muted(Component.translatable("screen.sailboatmod.town.members.detail_title")), mayorLabel, memberTotal, Ui.divider(),
                 memberName, memberOffice, memberStatus, appointMayorButton.element(), Ui.spacer(),
                 Ui.paragraph(Component.translatable("screen.sailboatmod.town.members.manage_hint"), "sm-muted"));
-        page.addChildren(left, right);
+        ScrollerView detail = Ui.scroller();
+        detail.layout(l -> l.heightAuto().width(0).flexGrow(1).minWidth(0));
+        detail.addScrollViewChild(right);
+        page.addChildren(left, detail);
         return page;
     }
 
@@ -339,9 +351,9 @@ public class TownHomeScreen extends ThemedScreen implements RoadPlannerTileSyncR
         claimsTabs.add(0, new ItemStack(Items.FILLED_MAP), Component.translatable("screen.sailboatmod.nation.claims.show_map"))
                 .add(1, new ItemStack(Items.SHIELD), Component.translatable("screen.sailboatmod.nation.claims.show_perms"));
         claimsMapView = Ui.row();
-        claimsMapView.layout(l -> l.gapAll(Ui.GAP_M).alignItems(AlignItems.STRETCH).flexGrow(1).minHeight(0));
+        claimsMapView.layout(l -> l.gapAll(Ui.GAP_M).flexWrap(FlexWrap.WRAP).alignItems(AlignItems.STRETCH).flexGrow(1).minHeight(0));
         UIElement info = Ui.column();
-        info.layout(l -> l.flexGrow(1).minWidth(0).gapAll(Ui.GAP_S));
+        info.layout(l -> l.width(0).flexGrow(1).minWidth(120).gapAll(Ui.GAP_S));
         claimLines = Ui.column("sm-pane");
         claimLines.layout(l -> l.paddingAll(Ui.GAP_M).gapAll(Ui.GAP_XS));
         claimButton = new ActionButton(Component.translatable("screen.sailboatmod.nation.action.claim"), Ui.Tone.PRIMARY, this::claimSelectedChunk);
@@ -388,11 +400,11 @@ public class TownHomeScreen extends ThemedScreen implements RoadPlannerTileSyncR
         UIElement page = Ui.column();
         page.layout(l -> l.gapAll(Ui.GAP_S));
         UIElement top = Ui.row();
-        top.layout(l -> l.gapAll(Ui.GAP_M).alignItems(AlignItems.STRETCH));
+        top.layout(l -> l.gapAll(Ui.GAP_M).flexWrap(FlexWrap.WRAP).alignItems(AlignItems.STRETCH));
         flagPreview = new FlagPreview();
         flagPreview.layout(l -> l.width(130).height(70).flexShrink(0).paddingAll(Ui.GAP_XS));
         UIElement meta = Ui.column();
-        meta.layout(l -> l.flexGrow(1).minWidth(0).gapAll(Ui.GAP_XS));
+        meta.layout(l -> l.width(0).flexGrow(1).minWidth(100).gapAll(Ui.GAP_XS));
         flagLine1 = Ui.text("");
         flagLine2 = Ui.text("");
         flagLine3 = Ui.text("", "sm-muted");

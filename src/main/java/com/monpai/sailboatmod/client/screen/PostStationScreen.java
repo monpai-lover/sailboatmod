@@ -92,9 +92,12 @@ public class PostStationScreen extends TransportTerminalScreen<PostStationMenu> 
         pages.put(Page.DESTINATIONS, listPage(text("destinations"), townList));
         pages.put(Page.VEHICLES, listPage(text("vehicles"), vehicleList));
         pages.put(Page.DISPATCH, buildDispatchPage());
-        pages.put(Page.ADVANCED, buildAdvancedPage());
-        pages.put(Page.RENAME_ZONE, buildRenameZonePage());
-        pages.values().forEach(terminal::addChild);
+        pages.put(Page.ADVANCED, scrollPage(buildAdvancedPage()));
+        pages.put(Page.RENAME_ZONE, scrollPage(buildRenameZonePage()));
+        pages.values().forEach(content -> {
+            content.layout(l -> l.flexGrow(1).flexShrink(1).minWidth(0).minHeight(0));
+            terminal.addChild(content);
+        });
 
         UIElement body = twoHalves(cargoBay(text("book_slot"), text("storage_slot"), text("slot_hint")), terminal);
         UIElement townChip = Ui.row("sm-chip");
@@ -129,10 +132,18 @@ public class PostStationScreen extends TransportTerminalScreen<PostStationMenu> 
 
     // ================================================================= building
 
+    private static UIElement scrollPage(UIElement content) {
+        content.layout(l -> l.heightAuto().flexGrow(0).widthPercent(100).minWidth(0));
+        ScrollerView viewport = Ui.scroller();
+        viewport.layout(l -> l.height(170));
+        viewport.addScrollViewChild(content);
+        return viewport;
+    }
+
     private static UIElement listPage(Component heading, ScrollerView list) {
         UIElement page = Ui.column();
         page.layout(l -> l.gapAll(Ui.GAP_XS).height(170));
-        page.addChildren(Ui.text(heading, "sm-muted"), list);
+        page.addChildren(panelHeading(heading), list);
         return page;
     }
 
@@ -142,7 +153,7 @@ public class PostStationScreen extends TransportTerminalScreen<PostStationMenu> 
         UIElement picks = Ui.column("sm-pane");
         picks.layout(l -> l.paddingAll(Ui.GAP_S).gapAll(Ui.GAP_XS));
         picks.addChildren(pickLine(text("selected_town"), dispatchTown), pickLine(text("selected_vehicle"), dispatchVehicle));
-        routeSummary.layout(l -> l.flexGrow(1).minHeight(0).paddingAll(Ui.GAP_S).gapAll(Ui.GAP_XS));
+        routeSummary.layout(l -> l.widthPercent(100).minWidth(0).paddingAll(Ui.GAP_S).gapAll(Ui.GAP_XS));
 
         autoReturnButton = new ActionButton(Component.empty(), Ui.Tone.SECONDARY, () -> send(PostStationGuiActionPacket.Action.TOGGLE_AUTO_RETURN));
         autoUnloadButton = new ActionButton(Component.empty(), Ui.Tone.SECONDARY, () -> send(PostStationGuiActionPacket.Action.TOGGLE_AUTO_UNLOAD));
@@ -154,7 +165,9 @@ public class PostStationScreen extends TransportTerminalScreen<PostStationMenu> 
         UIElement actions = Ui.row();
         actions.layout(l -> l.widthPercent(100).minWidth(0).flexWrap(FlexWrap.WRAP).gapAll(Ui.GAP_S).flexShrink(0));
         actions.addChildren(Ui.spacer(), recallButton.inRow().element(), dispatchButton.inRow().element());
-        page.addChildren(picks, routeSummary, toggles, actions);
+        ScrollerView summaryViewport = Ui.scroller();
+        summaryViewport.addScrollViewChild(routeSummary);
+        page.addChildren(picks, summaryViewport, toggles, actions);
         return page;
     }
 
@@ -194,7 +207,7 @@ public class PostStationScreen extends TransportTerminalScreen<PostStationMenu> 
     private static UIElement section(ScrollerView list, float height, ActionButton... buttons) {
         UIElement row = Ui.row();
         row.layout(l -> l.gapAll(Ui.GAP_S).alignItems(AlignItems.STRETCH).height(height).flexShrink(0));
-        list.layout(l -> l.flexGrow(1).minWidth(0));
+        list.layout(l -> l.heightAuto().flexGrow(1).minWidth(0));
         UIElement side = Ui.column();
         side.layout(l -> l.width(52).flexShrink(0).gapAll(Ui.GAP_XS));
         for (ActionButton button : buttons) {
@@ -220,7 +233,7 @@ public class PostStationScreen extends TransportTerminalScreen<PostStationMenu> 
         });
         renameRow.addChildren(nameInput, renameButton.inRow().element());
         zoneHint = Ui.text(text("zone_hint"), "sm-muted");
-        miniMap.layout(l -> l.widthPercent(100).flexGrow(1).minHeight(60));
+        miniMap.layout(l -> l.widthPercent(100).height(100).flexGrow(0).flexShrink(0));
         page.addChildren(renameRow, zoneHint, miniMap);
         return page;
     }

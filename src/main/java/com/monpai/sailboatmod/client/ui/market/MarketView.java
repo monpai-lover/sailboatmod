@@ -9,6 +9,7 @@ import com.lowdragmc.lowdraglib2.gui.ui.elements.TextField;
 import com.monpai.sailboatmod.client.ui.kit.ActionButton;
 import com.monpai.sailboatmod.client.ui.kit.PriceChart;
 import com.monpai.sailboatmod.client.ui.kit.Ui;
+import com.monpai.sailboatmod.client.ui.kit.Scrollbars;
 import com.monpai.sailboatmod.client.ui.theme.UiTheme;
 import com.monpai.sailboatmod.market.MarketOverviewData;
 import com.monpai.sailboatmod.market.analytics.CommodityCandlePoint;
@@ -170,10 +171,10 @@ public final class MarketView {
 
         window.addChild(buildHeader());
         UIElement body = Ui.row();
-        body.layout(l -> l.flexGrow(1).minWidth(0).minHeight(0).widthPercent(100).alignItems(AlignItems.STRETCH));
+        body.layout(l -> l.height(0).flexGrow(1).flexShrink(1).minWidth(0).minHeight(0).widthPercent(100).alignItems(AlignItems.STRETCH));
         body.addChild(buildNavRail());
         UIElement content = Ui.column();
-        content.layout(l -> l.width(0).flexGrow(1).minWidth(0).paddingAll(Ui.GAP_M).gapAll(Ui.GAP_M));
+        content.layout(l -> l.width(0).flexGrow(1).minWidth(0).minHeight(0).paddingAll(Ui.GAP_M).gapAll(Ui.GAP_M));
         pages.put(MarketViewModel.Page.GOODS, buildGoodsPage());
         pages.put(MarketViewModel.Page.MARKET_INDEX, buildIndexPage());
         pages.put(MarketViewModel.Page.SELL, buildSellPage());
@@ -181,7 +182,10 @@ public final class MarketView {
         pages.put(MarketViewModel.Page.FINANCE, buildFinancePage());
         pages.put(MarketViewModel.Page.BUY_ORDERS, buildBuyOrdersPage());
         pages.put(MarketViewModel.Page.MY_ORDERS, buildMyOrdersPage());
-        pages.values().forEach(content::addChild);
+        pages.values().forEach(page -> {
+            page.layout(l -> l.height(0).flexGrow(1).flexShrink(1).minHeight(0));
+            content.addChild(page);
+        });
         body.addChild(content);
         window.addChild(body);
 
@@ -267,11 +271,11 @@ public final class MarketView {
         page.layout(l -> l.widthPercent(100).minWidth(0).flexGrow(1).minHeight(0).gapAll(Ui.GAP_M).alignItems(AlignItems.STRETCH));
 
         UIElement left = Ui.column();
-        left.layout(l -> l.width(0).flexGrow(1).minWidth(0).gapAll(Ui.GAP_S));
+        left.layout(l -> l.width(0).flexGrow(1).minWidth(0).minHeight(0).gapAll(Ui.GAP_S));
 
         // catalog
         catalogArea = Ui.column();
-        catalogArea.layout(l -> l.widthPercent(100).minWidth(0).flexGrow(1).minHeight(0).gapAll(Ui.GAP_S));
+        catalogArea.layout(l -> l.height(0).widthPercent(100).minWidth(0).flexGrow(1).flexShrink(1).minHeight(0).gapAll(Ui.GAP_S));
         UIElement toolbar = Ui.wrapRow(Ui.GAP_S);
         toolbar.layout(l -> l.gapAll(Ui.GAP_S).flexShrink(0));
         TextField search = Ui.field(model.search(), MarketText.market("catalog.search"), value -> {
@@ -303,7 +307,7 @@ public final class MarketView {
 
         // product (sellers of one commodity)
         productArea = Ui.column();
-        productArea.layout(l -> l.flexGrow(1).minHeight(0).gapAll(Ui.GAP_S));
+        productArea.layout(l -> l.height(0).flexGrow(1).flexShrink(1).minHeight(0).gapAll(Ui.GAP_S));
         UIElement productHead = Ui.row();
         productHead.layout(l -> l.gapAll(Ui.GAP_S).flexShrink(0));
         productSlotHolder = Ui.row();
@@ -326,7 +330,7 @@ public final class MarketView {
 
         left.addChildren(catalogArea, productArea);
         detailPane = Ui.column("sm-pane");
-        detailPane.layout(l -> l.width(PANE_WIDTH).flexShrink(0).paddingAll(Ui.GAP_M).gapAll(Ui.GAP_S));
+        detailPane.layout(l -> l.width(PANE_WIDTH).flexShrink(0).minHeight(0).paddingAll(Ui.GAP_M).gapAll(Ui.GAP_S));
         buildDetailPane();
         page.addChildren(left, detailPane);
         return page;
@@ -678,7 +682,7 @@ public final class MarketView {
         UIElement page = Ui.row();
         page.layout(l -> l.flexGrow(1).minHeight(0).gapAll(Ui.GAP_M).alignItems(AlignItems.STRETCH));
         UIElement left = Ui.column();
-        left.layout(l -> l.flexGrow(1).minWidth(0).gapAll(Ui.GAP_S));
+        left.layout(l -> l.flexGrow(1).minWidth(0).minHeight(0).gapAll(Ui.GAP_S));
         TextField search = Ui.field(model.storageSearch(), MarketText.market("sell.search_storage"), value -> {
             model.setStorageSearch(value);
             refreshStorage();
@@ -687,7 +691,7 @@ public final class MarketView {
         left.addChildren(search, storageList);
 
         sellPane = Ui.column("sm-pane");
-        sellPane.layout(l -> l.width(PANE_WIDTH).flexShrink(0).paddingAll(Ui.GAP_M).gapAll(Ui.GAP_S));
+        sellPane.layout(l -> l.width(PANE_WIDTH).flexShrink(0).minHeight(0).paddingAll(Ui.GAP_M).gapAll(Ui.GAP_S));
         buildSellPane();
         page.addChildren(left, sellPane);
         return page;
@@ -818,12 +822,12 @@ public final class MarketView {
         UIElement page = Ui.row();
         page.layout(l -> l.flexGrow(1).minHeight(0).gapAll(Ui.GAP_M).alignItems(AlignItems.STRETCH));
         UIElement left = Ui.column();
-        left.layout(l -> l.flexGrow(1).minWidth(0).gapAll(Ui.GAP_S));
+        left.layout(l -> l.flexGrow(1).minWidth(0).minHeight(0).gapAll(Ui.GAP_S));
         orderList = Ui.scroller();
         left.addChildren(Ui.text(MarketText.market("dispatch.metric.orders"), "sm-muted"), orderList);
 
         UIElement pane = Ui.column("sm-pane");
-        pane.layout(l -> l.width(PANE_WIDTH).flexShrink(0).paddingAll(Ui.GAP_M).gapAll(Ui.GAP_S));
+        pane.layout(l -> l.width(PANE_WIDTH).flexShrink(0).minHeight(0).paddingAll(Ui.GAP_M).gapAll(Ui.GAP_S));
         carrierList = Ui.scroller();
         dispatchAction = action(MarketText.market("dispatch"), Ui.Tone.PRIMARY, controller::dispatchSelectedOrder);
         cancelOrderAction = action(MarketText.market("order.cancel"), Ui.Tone.DANGER, () -> {
@@ -973,7 +977,7 @@ public final class MarketView {
         UIElement page = Ui.row();
         page.layout(l -> l.flexGrow(1).minHeight(0).gapAll(Ui.GAP_M).alignItems(AlignItems.STRETCH));
         UIElement left = Ui.column();
-        left.layout(l -> l.flexGrow(1).minWidth(0).gapAll(Ui.GAP_S));
+        left.layout(l -> l.flexGrow(1).minWidth(0).minHeight(0).gapAll(Ui.GAP_S));
         buyOrderList = Ui.scroller();
         cancelBuyOrderAction = action(MarketText.market("buy_order.cancel"), Ui.Tone.DANGER, controller::cancelSelectedBuyOrder);
         left.addChildren(Ui.text(MarketText.market("buy_orders_overview"), "sm-muted"), buyOrderList, cancelBuyOrderAction.element());
@@ -1015,7 +1019,7 @@ public final class MarketView {
                 Ui.text(MarketText.ui("price_band_bp"), "sm-muted"), band,
                 Ui.paragraph(MarketText.market("buy_order.price_range_hint"), "sm-muted"), Ui.spacer(), createBuyOrderAction.element());
         ScrollerView formViewport = Ui.scroller();
-        formViewport.layout(l -> l.width(PANE_WIDTH).flexGrow(0).flexShrink(0));
+        formViewport.layout(l -> l.heightAuto().width(PANE_WIDTH).flexGrow(0).flexShrink(0));
         formViewport.addScrollViewChild(form);
         page.addChildren(left, formViewport);
         return page;
@@ -1114,9 +1118,9 @@ public final class MarketView {
         UIElement page = Ui.row();
         page.layout(l -> l.flexGrow(1).minHeight(0).gapAll(Ui.GAP_M).alignItems(AlignItems.STRETCH));
         seriesList = Ui.scroller();
-        seriesList.layout(l -> l.width(PANE_WIDTH).flexGrow(0));
+        seriesList.layout(l -> l.heightAuto().width(PANE_WIDTH).flexGrow(0));
         UIElement right = Ui.column();
-        right.layout(l -> l.flexGrow(1).minWidth(0).gapAll(Ui.GAP_S));
+        right.layout(l -> l.flexGrow(1).minWidth(0).minHeight(0).gapAll(Ui.GAP_S));
         indexTitle = Ui.text("", "sm-title");
         indexChart = new PriceChart(false, 24);
         indexChart.layout(l -> l.flexGrow(1).minHeight(60));
@@ -1302,6 +1306,7 @@ public final class MarketView {
     private <T> Selector<T> selector(List<T> values, T current, java.util.function.Function<T, Component> label,
                                      Consumer<T> onChange, float width) {
         Selector<T> selector = new Selector<>();
+        Scrollbars.install(selector.scrollerView);
         // Order matters with LDLib2 2.2.42: installing the provider redraws the preview immediately with the current
         // value, so the value is set first and the provider also tolerates null (it ran with null and crashed the
         // market on open).

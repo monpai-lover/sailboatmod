@@ -47,7 +47,7 @@ public class RoadPlannerOptionSelectionScreen extends ThemedScreen {
         UIElement body = Ui.column();
         body.addChild(Ui.text(Component.translatable("screen.sailboatmod.road_planner.option.route", sourceTownName, targetTownName)));
         ScrollerView list = Ui.scroller();
-        list.layout(l -> l.maxHeight(150));
+        list.layout(l -> l.height(150).maxHeight(150));
         for (int i = 0; i < options.size(); i++) {
             int index = i;
             RoadPlannerClientHooks.PreviewOption option = options.get(i);

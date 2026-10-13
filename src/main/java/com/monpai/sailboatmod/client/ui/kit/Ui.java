@@ -68,11 +68,12 @@ public final class Ui {
     public static ScrollerView scroller(String... classes) {
         ScrollerView view = new ScrollerView();
         view.addClasses(classes);
-        view.layout(l -> l.flexGrow(1).flexShrink(1).minWidth(0).minHeight(0));
+        view.layout(l -> l.height(0).flexGrow(1).flexShrink(1).minWidth(0).minHeight(0));
         // Content must wrap to the viewport rather than expand the screen to its intrinsic width.
         view.scrollerStyle(s -> s.adaptiveWidth(false).adaptiveHeight(false));
         view.viewPort.layout(l -> l.paddingAll(1).minWidth(0).minHeight(0));
         view.viewContainer.layout(l -> l.widthPercent(100).minWidth(0));
+        Scrollbars.install(view);
         return view;
     }
 

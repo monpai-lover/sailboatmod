@@ -37,7 +37,7 @@ public final class WindowFrame {
         header.addChild(Ui.iconButton(new ItemStack(Items.MAP), Component.translatable("screen.sailboatmod.ui.theme.toggle"),
                 () -> UiPreferences.get().toggleTheme()));
         header.addChild(Ui.iconButton(new ItemStack(Items.BARRIER), Component.translatable("screen.sailboatmod.ui.close"), onClose));
-        body.layout(l -> l.paddingAll(Ui.GAP_M).gapAll(Ui.GAP_M).flexGrow(1).minHeight(0));
+        body.layout(l -> l.paddingAll(Ui.GAP_M).gapAll(Ui.GAP_M).flexGrow(1).flexShrink(1).minHeight(0));
         window.addChildren(header, body, toast.element());
         return new WindowFrame(window, title);
     }

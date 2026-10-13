@@ -92,7 +92,10 @@ public class DockScreen<T extends DockMenu> extends TransportTerminalScreen<T> {
         pages.put(Page.DISPATCH, buildDispatchPage());
         pages.put(Page.STORAGE, buildStoragePage());
         pages.put(Page.INBOX, buildInboxPage());
-        pages.values().forEach(terminal::addChild);
+        pages.values().forEach(content -> {
+            content.layout(l -> l.flexGrow(1).flexShrink(1).minWidth(0).minHeight(0));
+            terminal.addChild(content);
+        });
 
         UIElement body = twoHalves(cargoBay(screenText("book_slot"), screenText("storage_slot"), screenText("slot_hint")), terminal);
         UIElement window = window(Component.literal(data.dockName()), body,
@@ -172,12 +175,12 @@ public class DockScreen<T extends DockMenu> extends TransportTerminalScreen<T> {
         UIElement page = Ui.row();
         page.layout(l -> l.gapAll(Ui.GAP_S).alignItems(AlignItems.STRETCH).height(150));
         UIElement listColumn = Ui.column();
-        listColumn.layout(l -> l.flexGrow(1).minWidth(0).gapAll(Ui.GAP_XS));
-        listColumn.addChildren(Ui.text(screenText("routes_title"), "sm-muted"), routeList);
+        listColumn.layout(l -> l.width(0).flexGrow(1).minWidth(0).minHeight(0).gapAll(Ui.GAP_XS));
+        listColumn.addChildren(panelHeading(screenText("routes_title")), routeList);
 
         UIElement side = Ui.column();
-        side.layout(l -> l.width(82).flexShrink(0).gapAll(Ui.GAP_XS));
-        miniMap.layout(l -> l.width(82).height(54).flexShrink(0));
+        side.layout(l -> l.widthPercent(100).minWidth(0).gapAll(Ui.GAP_XS));
+        miniMap.layout(l -> l.widthPercent(100).maxWidth(82).height(54).flexShrink(0));
         importButton = new ActionButton(screenText("import"), Ui.Tone.SECONDARY, () -> send(KEY_ACTION, DockGuiActionPacket.Action.IMPORT_BOOK));
         reverseButton = new ActionButton(screenText("reverse"), Ui.Tone.SECONDARY, () -> send(KEY_ACTION, DockGuiActionPacket.Action.REVERSE_ROUTE));
         autoRouteButton = new ActionButton(screenText("auto_route"), Ui.Tone.SECONDARY, () -> {
@@ -196,9 +199,12 @@ public class DockScreen<T extends DockMenu> extends TransportTerminalScreen<T> {
         for (ActionButton button : List.of(importButton, reverseButton, autoRouteButton, deleteButton)) {
             button.element().layout(l -> l.widthPercent(100));
         }
-        side.addChildren(Ui.text(screenText("zone_map"), "sm-muted"), miniMap,
+        side.addChildren(panelHeading(screenText("zone_map")), miniMap,
                 importButton.element(), reverseButton.element(), autoRouteButton.element(), deleteButton.element());
-        page.addChildren(listColumn, side);
+        ScrollerView sideViewport = Ui.scroller();
+        sideViewport.layout(l -> l.heightAuto().width(82).flexGrow(0).flexShrink(0));
+        sideViewport.addScrollViewChild(side);
+        page.addChildren(listColumn, sideViewport);
         return page;
     }
 
@@ -209,10 +215,10 @@ public class DockScreen<T extends DockMenu> extends TransportTerminalScreen<T> {
         lists.layout(l -> l.gapAll(Ui.GAP_S).alignItems(AlignItems.STRETCH).flexGrow(1).minHeight(0));
         UIElement boats = Ui.column();
         boats.layout(l -> l.flexGrow(1).flexBasis(0).minWidth(0).gapAll(Ui.GAP_XS));
-        boats.addChildren(Ui.text(screenText("boats_title"), "sm-muted"), boatList);
+        boats.addChildren(panelHeading(screenText("boats_title")), boatList);
         UIElement routes = Ui.column();
         routes.layout(l -> l.flexGrow(1).flexBasis(0).minWidth(0).gapAll(Ui.GAP_XS));
-        routes.addChildren(Ui.text(screenText("routes_title"), "sm-muted"), dispatchRouteList);
+        routes.addChildren(panelHeading(screenText("routes_title")), dispatchRouteList);
         lists.addChildren(boats, routes);
 
         assignButton = new ActionButton(screenText("assign"), Ui.Tone.PRIMARY, () -> send(KEY_ACTION, DockGuiActionPacket.Action.ASSIGN_SELECTED));
@@ -233,7 +239,7 @@ public class DockScreen<T extends DockMenu> extends TransportTerminalScreen<T> {
         UIElement actions = Ui.row();
         actions.layout(l -> l.widthPercent(100).minWidth(0).flexWrap(FlexWrap.WRAP).gapAll(Ui.GAP_S).flexShrink(0));
         actions.addChildren(Ui.spacer(), takeStorageButton.inRow().element(), shipCargoButton.inRow().element());
-        page.addChildren(Ui.text(screenText("storage_title"), "sm-muted"), storageList, actions);
+        page.addChildren(panelHeading(screenText("storage_title")), storageList, actions);
         return page;
     }
 
@@ -241,12 +247,14 @@ public class DockScreen<T extends DockMenu> extends TransportTerminalScreen<T> {
         UIElement page = Ui.column();
         page.layout(l -> l.gapAll(Ui.GAP_XS).height(150));
         waybillList.layout(l -> l.height(52).flexGrow(0).flexShrink(0));
-        waybillInfo.layout(l -> l.flexGrow(1).minHeight(0).paddingAll(Ui.GAP_S).gapAll(1));
+        waybillInfo.layout(l -> l.widthPercent(100).minWidth(0).paddingAll(Ui.GAP_S).gapAll(1));
         takeWaybillButton = new ActionButton(screenText("take"), Ui.Tone.PRIMARY, () -> send(KEY_ACTION, DockGuiActionPacket.Action.TAKE_SELECTED_WAYBILL));
         UIElement actions = Ui.row();
         actions.layout(l -> l.widthPercent(100).minWidth(0).flexWrap(FlexWrap.WRAP).flexShrink(0));
         actions.addChildren(Ui.spacer(), takeWaybillButton.inRow().element());
-        page.addChildren(waybillList, waybillInfo, actions);
+        ScrollerView infoViewport = Ui.scroller();
+        infoViewport.addScrollViewChild(waybillInfo);
+        page.addChildren(waybillList, infoViewport, actions);
         return page;
     }
 

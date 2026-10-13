@@ -74,6 +74,15 @@ public abstract class TransportTerminalScreen<M extends DockMenu> extends Themed
         return panel;
     }
 
+    /** A column heading must roll inside its allocated width instead of painting over its neighbour. */
+    protected static Label panelHeading(Component title) {
+        Label label = Ui.text(title, "sm-muted");
+        label.textStyle(style -> style.adaptiveWidth(false).adaptiveHeight(false));
+        label.layout(layout -> layout.widthPercent(100).height(9).flexShrink(0).minWidth(0));
+        label.setOverflowVisible(false);
+        return label;
+    }
+
     protected UIElement twoHalves(UIElement cargoBay, UIElement terminal) {
         UIElement body = Ui.row();
         body.layout(l -> l.gapAll(PANEL_GAP).alignItems(AlignItems.STRETCH));

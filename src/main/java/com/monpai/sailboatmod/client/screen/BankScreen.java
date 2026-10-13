@@ -178,7 +178,7 @@ public class BankScreen extends ThemedContainerScreen<BankMenu> {
         withdrawItemButton.element().layout(l -> l.widthPercent(100));
         side.addChildren(head, selectionDepositor, Ui.spacer(), withdrawItemButton.element());
         ScrollerView sideViewport = Ui.scroller();
-        sideViewport.layout(l -> l.width(118).flexGrow(0).flexShrink(0));
+        sideViewport.layout(l -> l.heightAuto().width(118).flexGrow(0).flexShrink(0));
         sideViewport.addScrollViewChild(side);
         top.addChildren(listColumn, sideViewport);
 

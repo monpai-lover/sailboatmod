@@ -86,8 +86,8 @@ text-field, text-area { text-color: #E7ECF5; cursor-color: #34D399; text-shadow:
 
 // ---- scrollbars
 .sm-controls .__scroller_view_view-port__ { background: rect(#00000000); }
-scroller-vertical .__scroller_scroll_bar__ { base-background: rect(#FF33415A); hover-background: rect(#FF4A5874); pressed-background: rect(#FF4A5874); }
-scroller-horizontal .__scroller_scroll_bar__ { base-background: rect(#FF33415A); hover-background: rect(#FF4A5874); pressed-background: rect(#FF4A5874); }
+.sm-controls .__scroller_scroll_container__ { background: rect(#FF243046); }
+.sm-controls .__scroller_scroll_bar__ { base-background: rect(#FF7D8AA3); hover-background: rect(#FFB2C1DC); pressed-background: rect(#FFB2C1DC); }
 
 // ---- charts (drawn in Java, colours read from these classes)
 .sm-chart { background: rect(#FF0F1420, 0, 1, #FF243046); }
