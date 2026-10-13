@@ -45,7 +45,7 @@ public class RoadPlannerOptionSelectionScreen extends ThemedScreen {
     @Override
     protected UIElement buildBody() {
         UIElement body = Ui.column();
-        body.addChild(Ui.text(Component.translatable("screen.sailboatmod.road_planner.option.route", sourceTownName, targetTownName)));
+        body.addChild(Ui.clippedText(Component.translatable("screen.sailboatmod.road_planner.option.route", sourceTownName, targetTownName)));
         ScrollerView list = Ui.scroller();
         list.layout(l -> l.height(150).maxHeight(150));
         for (int i = 0; i < options.size(); i++) {
@@ -54,9 +54,9 @@ public class RoadPlannerOptionSelectionScreen extends ThemedScreen {
             UIElement row = Ui.row("sm-row");
             row.layout(l -> l.widthPercent(100).height(26).paddingHorizontal(Ui.GAP_S).gapAll(Ui.GAP_S).flexShrink(0));
             UIElement names = Ui.column();
-            names.layout(l -> l.flexGrow(1).minWidth(0));
-            names.addChildren(Ui.text(option.label(), "sm-title"),
-                    Ui.text(Component.translatable(option.bridgeBacked() ? "screen.sailboatmod.ui.road.option_bridge" : "screen.sailboatmod.ui.road.option_detour",
+            names.layout(l -> l.width(0).flexGrow(1).minWidth(0));
+            names.addChildren(Ui.clippedText(option.label(), "sm-title"),
+                    Ui.clippedText(Component.translatable(option.bridgeBacked() ? "screen.sailboatmod.ui.road.option_bridge" : "screen.sailboatmod.ui.road.option_detour",
                             option.pathNodeCount()), "sm-muted"));
             row.addChildren(Ui.slot(new ItemStack(option.bridgeBacked() ? Items.OAK_FENCE : Items.DIRT_PATH), Ui.SLOT), names);
             Ui.clickable(row, () -> {

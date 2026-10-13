@@ -1,6 +1,7 @@
 package com.monpai.sailboatmod.client.screen;
 
 import com.lowdragmc.lowdraglib2.gui.ui.UIElement;
+import com.lowdragmc.lowdraglib2.gui.ui.data.TextWrap;
 import com.lowdragmc.lowdraglib2.gui.ui.elements.Button;
 import com.lowdragmc.lowdraglib2.gui.ui.elements.Label;
 import com.lowdragmc.lowdraglib2.gui.ui.elements.TextField;
@@ -22,8 +23,8 @@ import net.minecraft.network.chat.Component;
 public class CarriageInfoScreen extends ThemedScreen {
     private final CarriageEntity carriage;
     private TextField nameInput;
-    private final Label owner = Ui.text("", "sm-muted");
-    private final Label storage = Ui.text("", "sm-muted");
+    private final Label owner = Ui.clippedText("", "sm-muted");
+    private final Label storage = Ui.clippedText("", "sm-muted");
     private Button unloadButton;
     private AutopilotPanel autopilot;
 
@@ -34,7 +35,7 @@ public class CarriageInfoScreen extends ThemedScreen {
 
     @Override
     protected float windowWidth() {
-        return 240;
+        return 320;
     }
 
     @Override
@@ -45,17 +46,22 @@ public class CarriageInfoScreen extends ThemedScreen {
         nameInput = Ui.field(carriage.hasCustomName() ? carriage.getCustomName().getString() : "",
                 Component.translatable("screen.sailboatmod.name"), value -> { });
         nameInput.layout(l -> l.widthPercent(100));
-        UIElement actions = Ui.row();
-        actions.layout(l -> l.gapAll(Ui.GAP_S));
-        actions.addChildren(Ui.spacer(),
-                Ui.button(Component.translatable("screen.sailboatmod.open_storage"), Ui.Tone.SECONDARY,
-                        () -> ModNetwork.CHANNEL.sendToServer(new OpenSailboatStoragePacket())),
-                Ui.button(Component.translatable("screen.sailboatmod.save"), Ui.Tone.PRIMARY, () -> {
+        UIElement actions = Ui.wrapRow(Ui.GAP_S);
+        actions.layout(l -> l.widthPercent(100).minWidth(0));
+        Button openStorage = Ui.button(Component.translatable("screen.sailboatmod.open_storage"), Ui.Tone.SECONDARY,
+                () -> ModNetwork.CHANNEL.sendToServer(new OpenSailboatStoragePacket()));
+        Button save = Ui.button(Component.translatable("screen.sailboatmod.save"), Ui.Tone.PRIMARY, () -> {
                     ModNetwork.CHANNEL.sendToServer(new RenameSailboatPacket(carriage.getId(), this.nameInput.getValue()));
                     toast.show(Component.translatable("screen.sailboatmod.ui.saved"), true, ticks());
-                }));
-        UIElement facts = Ui.row();
-        facts.layout(l -> l.gapAll(Ui.GAP_M));
+                });
+        for (Button button : new Button[] {openStorage, save}) {
+            button.layout(l -> l.widthAuto().flexBasis(0).flexGrow(1).flexShrink(1).minWidth(104));
+            button.text.layout(l -> l.widthPercent(100).minWidth(0).flexShrink(1));
+            button.textStyle(t -> t.adaptiveWidth(false).textWrap(TextWrap.HOVER_ROLL));
+        }
+        actions.addChildren(openStorage, save);
+        UIElement facts = Ui.column();
+        facts.layout(l -> l.widthPercent(100).minWidth(0).gapAll(Ui.GAP_S));
         facts.addChildren(owner, storage);
         identity.addChildren(nameInput, actions, facts);
 
@@ -67,9 +73,15 @@ public class CarriageInfoScreen extends ThemedScreen {
             refresh();
         });
         unloadButton.layout(l -> l.widthPercent(100));
+        unloadButton.text.layout(l -> l.widthPercent(100).minWidth(0).flexShrink(1));
+        unloadButton.textStyle(t -> t.adaptiveWidth(false).textWrap(TextWrap.HOVER_ROLL));
+        body.layout(l -> l.widthPercent(100).minWidth(0).gapAll(Ui.GAP_M));
         body.addChildren(identity, autopilot.element(), unloadButton);
         refresh();
-        return body;
+        var viewport = Ui.scroller();
+        viewport.layout(l -> l.height(190).flexGrow(0));
+        viewport.addScrollViewChild(body);
+        return viewport;
     }
 
     @Override

@@ -1,11 +1,13 @@
 package com.monpai.sailboatmod.client.ui.market;
 
 import com.lowdragmc.lowdraglib2.gui.ui.UIElement;
+import com.lowdragmc.lowdraglib2.gui.ui.data.TextWrap;
 import com.lowdragmc.lowdraglib2.gui.ui.elements.Button;
 import com.lowdragmc.lowdraglib2.gui.ui.elements.Label;
 import com.lowdragmc.lowdraglib2.gui.ui.elements.ScrollerView;
 import com.lowdragmc.lowdraglib2.gui.ui.elements.Selector;
 import com.lowdragmc.lowdraglib2.gui.ui.elements.TextField;
+import com.lowdragmc.lowdraglib2.gui.ui.event.UIEvents;
 import com.monpai.sailboatmod.client.ui.kit.ActionButton;
 import com.monpai.sailboatmod.client.ui.kit.PriceChart;
 import com.monpai.sailboatmod.client.ui.kit.Ui;
@@ -19,6 +21,7 @@ import com.monpai.sailboatmod.market.analytics.MarketAnalyticsSeries;
 import com.monpai.sailboatmod.network.packet.MarketWalletActionPacket;
 import dev.vfyjxf.taffy.style.AlignContent;
 import dev.vfyjxf.taffy.style.AlignItems;
+import dev.vfyjxf.taffy.style.FlexDirection;
 import dev.vfyjxf.taffy.style.TaffyPosition;
 import net.minecraft.core.BlockPos;
 import net.minecraft.network.chat.Component;
@@ -38,9 +41,9 @@ import java.util.function.Consumer;
  * contents, so typed text, focus and scroll positions survive server updates. Every button calls the
  * {@link MarketController}; nothing here sends packets or decides permissions on its own.</p>
  *
- * <p>Layout: header (market, wallet, theme, refresh, close) above a page rail and the page body. Goods has a
- * catalog of item cards beside a detail pane with the buy box; Sell, Dispatch and Buy Orders follow the same
- * "list on the left, action pane on the right" pattern; Finance and My Orders are single columns.</p>
+ * <p>Layout: header (market, wallet, theme, refresh, close) above a page rail and the page body. Wide windows put
+ * item details beside the catalog. Narrow windows retain three card columns by opening details in an overlay,
+ * and stack list/form pages vertically. Finance and My Orders are single columns.</p>
  */
 public final class MarketView {
     /** Screen-level callbacks the view needs from its host. */
@@ -55,8 +58,9 @@ public final class MarketView {
     }
 
     private static final float PANE_WIDTH = 138;
-    private static final float CARD_W = 58;
+    private static final float CARD_W = 90;
     private static final float CARD_H = 74;
+    private static final float COMPACT_WIDTH = 520;
 
     private final MarketController controller;
     private final MarketViewModel model;
@@ -64,6 +68,13 @@ public final class MarketView {
 
     private final UIElement root;
     private final UIElement window;
+    private UIElement navRail;
+    private UIElement pageContent;
+    private UIElement goodsPage;
+    private final List<SplitPane> splitPanes = new ArrayList<>();
+    private boolean compactLayout;
+    private boolean viewportConfigured;
+    private float cardWidth = CARD_W;
     private final Map<MarketViewModel.Page, UIElement> pages = new EnumMap<>(MarketViewModel.Page.class);
     private final Map<MarketViewModel.Page, Button> navTabs = new EnumMap<>(MarketViewModel.Page.class);
     private final List<Selector<?>> selectors = new ArrayList<>();
@@ -100,6 +111,9 @@ public final class MarketView {
     private Label detailBid;
     private Label detailStock;
     private UIElement detailQtyRow;
+    private UIElement detailOverlay;
+    private Button detailBackButton;
+    private boolean detailOpen;
     private ActionButton buyAction;
     private ActionButton unlistAction;
     private Button sellersButton;
@@ -151,6 +165,7 @@ public final class MarketView {
 
     // overlays
     private UIElement buyOverlay;
+    private UIElement buyDialogFrame;
     private UIElement buyDialogBody;
     private UIElement toast;
     private Label toastText;
@@ -166,7 +181,7 @@ public final class MarketView {
                 .alignItems(AlignItems.CENTER).justifyContent(AlignContent.CENTER));
 
         window = Ui.column("sm-window");
-        window.layout(l -> l.widthPercent(100).heightPercent(100).maxWidth(640).maxHeight(400));
+        window.layout(l -> l.widthPercent(100).heightPercent(100).maxWidth(920).maxHeight(600));
         root.addChild(window);
 
         window.addChild(buildHeader());
@@ -174,6 +189,7 @@ public final class MarketView {
         body.layout(l -> l.height(0).flexGrow(1).flexShrink(1).minWidth(0).minHeight(0).widthPercent(100).alignItems(AlignItems.STRETCH));
         body.addChild(buildNavRail());
         UIElement content = Ui.column();
+        pageContent = content;
         content.layout(l -> l.width(0).flexGrow(1).minWidth(0).minHeight(0).paddingAll(Ui.GAP_M).gapAll(Ui.GAP_M));
         pages.put(MarketViewModel.Page.GOODS, buildGoodsPage());
         pages.put(MarketViewModel.Page.MARKET_INDEX, buildIndexPage());
@@ -190,12 +206,78 @@ public final class MarketView {
         window.addChild(body);
 
         window.addChild(buildToast());
+        window.addChild(buildDetailOverlay());
         window.addChild(buildBuyOverlay());
         refresh();
     }
 
     public UIElement root() {
         return root;
+    }
+
+    /** Adapts the existing tree on screen resize, preserving selections and the player's draft fields. */
+    public void setViewportSize(int width, int height) {
+        boolean compact = width < COMPACT_WIDTH;
+        boolean changed = compact != compactLayout;
+        float padding = compact ? Ui.GAP_XS : Ui.GAP_L;
+        float windowWidth = Math.max(1, Math.min(920, width - padding * 2));
+        float windowHeight = Math.max(1, Math.min(600, height - padding * 2));
+        root.layout(l -> l.paddingAll(padding));
+        window.layout(l -> l.width(windowWidth).height(windowHeight));
+        navRail.layout(l -> l.width(compact ? 44 : 50));
+        pageContent.layout(l -> l.paddingAll(compact ? Ui.GAP_S : Ui.GAP_M));
+
+        if (changed || !viewportConfigured) {
+            compactLayout = compact;
+            if (compact) {
+                detailOverlay.addChild(detailPane);
+                detailOpen = viewportConfigured && model.page() == MarketViewModel.Page.GOODS
+                        && model.selectedListing() != null;
+            } else {
+                if (detailPane.getParent() != goodsPage) goodsPage.addChild(detailPane);
+                detailOpen = false;
+            }
+            detailBackButton.setDisplay(compact);
+            for (SplitPane split : splitPanes) {
+                split.page.layout(l -> l.flexDirection(compact ? FlexDirection.COLUMN : FlexDirection.ROW));
+                if (compact) {
+                    split.list.layout(l -> l.widthPercent(100).height(0).flexGrow(1).flexShrink(1).minWidth(0).minHeight(0));
+                    split.pane.layout(l -> l.widthPercent(100).height(0).flexGrow(1).flexShrink(1).minWidth(0).minHeight(0));
+                } else {
+                    split.list.layout(l -> l.width(0).heightPercent(100).flexGrow(1).flexShrink(1).minWidth(0).minHeight(0));
+                    split.pane.layout(l -> l.width(PANE_WIDTH).heightPercent(100).flexGrow(0).flexShrink(0).minWidth(0).minHeight(0));
+                }
+            }
+        }
+        detailPane.layout(l -> l.width(compact ? Math.max(1, Math.min(280, windowWidth - Ui.GAP_M * 2)) : PANE_WIDTH)
+                .flexGrow(0).flexShrink(0));
+        if (compact) {
+            detailPane.layout(l -> l.height(Math.max(1, Math.min(330, windowHeight - Ui.GAP_M * 2))));
+        } else {
+            detailPane.layout(l -> l.heightPercent(100));
+        }
+        buyDialogFrame.layout(l -> l.width(Math.min(280, Math.max(1, windowWidth - Ui.GAP_M * 2)))
+                .height(Math.max(1, Math.min(330, windowHeight - Ui.GAP_M * 2))));
+        toast.layout(l -> l.width(Math.max(1, Math.min(320, windowWidth - 60 - Ui.GAP_L))));
+        viewportConfigured = true;
+        updateCatalogCardLayout();
+        refreshDetailOverlay();
+    }
+
+    private record SplitPane(UIElement page, UIElement list, UIElement pane) { }
+
+    private void updateCatalogCardLayout() {
+        float width = catalogGrid.getContentWidth();
+        if (width <= 0) return;
+        float desired = compactLayout ? 80 : CARD_W;
+        int columns = Math.max(3, (int) Math.floor((width + Ui.GAP_S) / (desired + Ui.GAP_S)));
+        // A fixed measured width keeps rows aligned, including the last incomplete row.
+        cardWidth = Math.max(1, (float) Math.floor((width - (columns - 1) * Ui.GAP_S) / columns));
+        for (UIElement card : catalogGrid.getChildren()) {
+            if (card.hasClass("sm-card")) {
+                card.layout(l -> l.width(cardWidth).height(compactLayout ? 66 : CARD_H).flexShrink(0));
+            }
+        }
     }
 
     // ================================================================= header & navigation
@@ -235,6 +317,7 @@ public final class MarketView {
 
     private UIElement buildNavRail() {
         UIElement rail = Ui.column("sm-divider-right");
+        navRail = rail;
         rail.layout(l -> l.width(50).paddingAll(Ui.GAP_XS).gapAll(Ui.GAP_XS).flexShrink(0));
         addNavTab(rail, MarketViewModel.Page.GOODS, Items.CHEST, "page.goods");
         addNavTab(rail, MarketViewModel.Page.MARKET_INDEX, Items.CLOCK, "page.market_index");
@@ -268,6 +351,7 @@ public final class MarketView {
 
     private UIElement buildGoodsPage() {
         UIElement page = Ui.row();
+        goodsPage = page;
         page.layout(l -> l.widthPercent(100).minWidth(0).flexGrow(1).minHeight(0).gapAll(Ui.GAP_M).alignItems(AlignItems.STRETCH));
 
         UIElement left = Ui.column();
@@ -297,11 +381,12 @@ public final class MarketView {
                     model.setPriceBand(value);
                     refreshCatalog();
                 }, 56));
-        resultCount = Ui.alignRight(Ui.text("", "sm-muted"));
+        resultCount = Ui.alignRight(Ui.clippedText("", "sm-muted"));
         resultCount.layout(l -> l.flexShrink(0).widthPercent(100));
         catalogScroller = Ui.scroller();
         catalogGrid = Ui.wrapRow(Ui.GAP_S);
         catalogGrid.layout(l -> l.widthPercent(100).minWidth(0));
+        catalogGrid.addEventListener(UIEvents.LAYOUT_CHANGED, event -> updateCatalogCardLayout());
         catalogScroller.addScrollViewChild(catalogGrid);
         catalogArea.addChildren(toolbar, resultCount, catalogScroller);
 
@@ -311,7 +396,8 @@ public final class MarketView {
         UIElement productHead = Ui.row();
         productHead.layout(l -> l.gapAll(Ui.GAP_S).flexShrink(0));
         productSlotHolder = Ui.row();
-        productName = Ui.text("", "sm-title");
+        productName = Ui.clippedText("", "sm-title");
+        productName.layout(l -> l.width(0).flexGrow(1));
         productHead.addChildren(
                 Ui.button(MarketText.market("goods.back_market"), Ui.Tone.SECONDARY, () -> {
                     model.backToCatalog();
@@ -331,6 +417,11 @@ public final class MarketView {
         left.addChildren(catalogArea, productArea);
         detailPane = Ui.column("sm-pane");
         detailPane.layout(l -> l.width(PANE_WIDTH).flexShrink(0).minHeight(0).paddingAll(Ui.GAP_M).gapAll(Ui.GAP_S));
+        detailPane.stopInteractionEventsPropagation();
+        detailBackButton = Ui.button(MarketText.market("goods.back_market"), Ui.Tone.SECONDARY, this::closeDetailOverlay);
+        detailBackButton.layout(l -> l.widthPercent(100));
+        detailBackButton.setDisplay(false);
+        detailPane.addChild(detailBackButton);
         buildDetailPane();
         page.addChildren(left, detailPane);
         return page;
@@ -346,25 +437,31 @@ public final class MarketView {
         head.layout(l -> l.gapAll(Ui.GAP_S));
         detailSlotHolder = Ui.row();
         UIElement names = Ui.column();
-        names.layout(l -> l.flexGrow(1).minWidth(0));
-        detailName = Ui.text("", "sm-title");
-        detailMeta = Ui.text("", "sm-muted");
-        detailSeller = Ui.text("", "sm-muted");
+        names.layout(l -> l.width(0).flexGrow(1).minWidth(0));
+        detailName = Ui.clippedText("", "sm-title");
+        detailMeta = Ui.clippedText("", "sm-muted");
+        detailSeller = Ui.clippedText("", "sm-muted");
         names.addChildren(detailName, detailMeta, detailSeller);
         head.addChildren(detailSlotHolder, names);
 
         UIElement priceRow = Ui.row();
-        priceRow.layout(l -> l.gapAll(Ui.GAP_S));
+        priceRow.layout(l -> l.widthPercent(100).minWidth(0).gapAll(Ui.GAP_S));
         detailPrice = Ui.figure(Component.empty(), "sm-price");
+        detailPrice.textStyle(t -> t.adaptiveWidth(false).adaptiveHeight(false).textWrap(TextWrap.HOVER_ROLL));
+        detailPrice.layout(l -> l.width(0).height(18).flexGrow(1).flexShrink(1).minWidth(0));
+        detailPrice.setOverflowVisible(false);
         priceRow.addChildren(Ui.icon(new ItemStack(Items.EMERALD), 16), detailPrice);
-        detailBid = Ui.text("", "sm-up");
-        detailStock = Ui.text("");
+        detailBid = Ui.clippedText("", "sm-up");
+        detailStock = Ui.clippedText("");
 
         detailQtyRow = Ui.row();
-        detailQtyRow.layout(l -> l.gapAll(Ui.GAP_S));
+        detailQtyRow.layout(l -> l.widthPercent(100).minWidth(0).gapAll(Ui.GAP_S));
         TextField qty = Ui.numberField(model.buyQty(), MarketText.market("qty"), 1_000_000, model::setBuyQty);
         qty.layout(l -> l.width(0).flexGrow(1).minWidth(40));
-        detailQtyRow.addChildren(Ui.text(MarketText.market("qty"), "sm-muted"), qty);
+        Label qtyCaption = Ui.clippedText(MarketText.market("qty"), "sm-muted");
+        qtyCaption.setId("sm-market-quantity-caption");
+        qtyCaption.layout(l -> l.width(60).flexShrink(0));
+        detailQtyRow.addChildren(qtyCaption, qty);
 
         buyAction = action(MarketText.market("buy"), Ui.Tone.PRIMARY, controller::openBuyDialog);
         unlistAction = action(MarketText.market("unlist"), Ui.Tone.DANGER, controller::unlistSelected);
@@ -372,6 +469,7 @@ public final class MarketView {
             MarketOverviewData.ListingEntry listing = model.selectedListing();
             if (listing != null) {
                 model.openCommodity(listing.commodityKey());
+                detailOpen = false;
                 refresh();
             }
         });
@@ -426,6 +524,7 @@ public final class MarketView {
         for (MarketOverviewData.ListingEntry entry : catalog) {
             catalogGrid.addChild(catalogCard(entry, selected != null && selected.commodityKey().equals(entry.commodityKey())));
         }
+        updateCatalogCardLayout();
     }
 
     private UIElement catalogCard(MarketOverviewData.ListingEntry entry, boolean selected) {
@@ -433,7 +532,8 @@ public final class MarketView {
         if (selected) {
             card.addClass("selected");
         }
-        card.layout(l -> l.width(CARD_W).height(CARD_H).paddingAll(Ui.GAP_XS + 1).gapAll(1).alignItems(AlignItems.CENTER));
+        card.layout(l -> l.width(cardWidth).height(compactLayout ? 66 : CARD_H).flexShrink(0)
+                .paddingAll(Ui.GAP_XS + 1).gapAll(1).alignItems(AlignItems.CENTER));
         card.addChild(Ui.slot(MarketText.stack(entry.commodityKey()), 24));
         Label name = Ui.text(entry.itemName(), "rarity-" + MarketViewModel.clampRarity(entry.rarity()));
         name.textStyle(t -> t.adaptiveWidth(false));
@@ -451,10 +551,13 @@ public final class MarketView {
         card.addChild(sellers);
         card.style(s -> s.tooltips(Component.literal(entry.itemName()),
                 MarketText.category(entry.category()), MarketText.rarity(entry.rarity())));
-        // first click selects (detail pane updates), clicking the selected card opens its sellers
+        // Narrow windows open details on every card click; wide windows keep the second-click seller shortcut.
         return Ui.clickable(card, () -> {
             MarketOverviewData.ListingEntry current = model.selectedListing();
-            if (current != null && current.commodityKey().equals(entry.commodityKey())) {
+            if (compactLayout) {
+                model.selectListing(entry.listingId());
+                detailOpen = true;
+            } else if (current != null && current.commodityKey().equals(entry.commodityKey())) {
                 model.openCommodity(entry.commodityKey());
             } else {
                 model.selectListing(entry.listingId());
@@ -504,15 +607,16 @@ public final class MarketView {
         }
         row.layout(l -> l.widthPercent(100).height(22).paddingHorizontal(Ui.GAP_S).gapAll(Ui.GAP_S).marginBottom(Ui.GAP_XS));
         UIElement who = Ui.column();
-        who.layout(l -> l.flexGrow(1).minWidth(0));
-        who.addChildren(Ui.text(entry.sellerName(), "sm-title"),
-                Ui.text(entry.sourceDockName() + (entry.sellerNote().isBlank() ? "" : "  " + entry.sellerNote()), "sm-muted"));
+        who.layout(l -> l.width(0).flexGrow(1).minWidth(0));
+        who.addChildren(Ui.clippedText(entry.sellerName(), "sm-title"),
+                Ui.clippedText(entry.sourceDockName() + (entry.sellerNote().isBlank() ? "" : "  " + entry.sellerNote()), "sm-muted"));
         row.addChildren(who,
-                Ui.text(MarketText.ui("stock_short", MarketText.stock(entry.availableCount())), "sm-muted"),
+                trailingLabel(MarketText.ui("stock_short", MarketText.stock(entry.availableCount())), 44, "sm-muted"),
                 Ui.icon(new ItemStack(Items.EMERALD), 8),
-                Ui.text(MarketText.money(entry.unitPrice()), "sm-price"));
+                trailingLabel(Component.literal(MarketText.money(entry.unitPrice())), 56, "sm-price"));
         return Ui.clickable(row, () -> {
             model.selectListing(entry.listingId());
+            if (compactLayout) detailOpen = true;
             refresh();
         });
     }
@@ -580,15 +684,43 @@ public final class MarketView {
 
     // ================================================================= buy dialog
 
+    private UIElement buildDetailOverlay() {
+        detailOverlay = new UIElement().addClass("sm-overlay");
+        detailOverlay.layout(l -> l.positionType(TaffyPosition.ABSOLUTE).left(0).top(0)
+                .widthPercent(100).heightPercent(100).alignItems(AlignItems.CENTER).justifyContent(AlignContent.CENTER));
+        detailOverlay.style(s -> s.zIndex(40));
+        detailOverlay.setDisplay(false);
+        Ui.clickable(detailOverlay, this::closeDetailOverlay);
+        return detailOverlay;
+    }
+
+    /** Closes a narrow-screen item pane without changing selection or sending a purchase request. */
+    public boolean closeDetailOverlay() {
+        if (!compactLayout || !detailOpen || model.isBuyDialogOpen()) return false;
+        detailOpen = false;
+        refreshDetailOverlay();
+        return true;
+    }
+
+    private void refreshDetailOverlay() {
+        if (model.page() != MarketViewModel.Page.GOODS || model.selectedListing() == null) detailOpen = false;
+        detailOverlay.setDisplay(compactLayout && detailOpen && !model.isBuyDialogOpen());
+    }
+
     private UIElement buildBuyOverlay() {
         buyOverlay = new UIElement().addClass("sm-overlay");
         buyOverlay.layout(l -> l.positionType(TaffyPosition.ABSOLUTE).left(0).top(0).widthPercent(100).heightPercent(100)
                 .alignItems(AlignItems.CENTER).justifyContent(AlignContent.CENTER));
         buyOverlay.style(s -> s.zIndex(50));
-        buyDialogBody = Ui.column("sm-dialog");
-        buyDialogBody.layout(l -> l.width(210).paddingAll(Ui.GAP_L).gapAll(Ui.GAP_S));
-        buyDialogBody.stopInteractionEventsPropagation();
-        buyOverlay.addChild(buyDialogBody);
+        buyDialogFrame = Ui.column("sm-dialog");
+        buyDialogFrame.layout(l -> l.width(280).height(330).paddingAll(Ui.GAP_L).minHeight(0));
+        buyDialogFrame.stopInteractionEventsPropagation();
+        ScrollerView viewport = Ui.scroller();
+        buyDialogBody = Ui.column();
+        buyDialogBody.layout(l -> l.widthPercent(100).minWidth(0).gapAll(Ui.GAP_S));
+        viewport.addScrollViewChild(buyDialogBody);
+        buyDialogFrame.addChild(viewport);
+        buyOverlay.addChild(buyDialogFrame);
         // clicking the dimmed area outside the dialog closes it, as before
         Ui.clickable(buyOverlay, () -> {
             model.closeBuyDialog();
@@ -694,6 +826,7 @@ public final class MarketView {
         sellPane.layout(l -> l.width(PANE_WIDTH).flexShrink(0).minHeight(0).paddingAll(Ui.GAP_M).gapAll(Ui.GAP_S));
         buildSellPane();
         page.addChildren(left, sellPane);
+        splitPanes.add(new SplitPane(page, left, sellPane));
         return page;
     }
 
@@ -706,9 +839,9 @@ public final class MarketView {
         head.layout(l -> l.gapAll(Ui.GAP_S));
         sellSlotHolder = Ui.row();
         UIElement names = Ui.column();
-        names.layout(l -> l.flexGrow(1).minWidth(0));
-        sellName = Ui.text("", "sm-title");
-        sellStock = Ui.text("", "sm-muted");
+        names.layout(l -> l.width(0).flexGrow(1).minWidth(0));
+        sellName = Ui.clippedText("", "sm-title");
+        sellStock = Ui.clippedText("", "sm-muted");
         names.addChildren(sellName, sellStock);
         head.addChildren(sellSlotHolder, names);
         listingQtyField = Ui.numberField(model.listingQty(), MarketText.market("qty"), Integer.MAX_VALUE, value -> {
@@ -747,11 +880,11 @@ public final class MarketView {
             }
             row.layout(l -> l.widthPercent(100).height(22).paddingHorizontal(Ui.GAP_S).gapAll(Ui.GAP_S).marginBottom(Ui.GAP_XS));
             UIElement names = Ui.column();
-            names.layout(l -> l.flexGrow(1).minWidth(0));
-            names.addChildren(Ui.text(entry.itemName(), "rarity-" + MarketViewModel.clampRarity(entry.rarity())),
-                    Ui.text(entry.detail(), "sm-muted"));
+            names.layout(l -> l.width(0).flexGrow(1).minWidth(0));
+            names.addChildren(Ui.clippedText(entry.itemName(), "rarity-" + MarketViewModel.clampRarity(entry.rarity())),
+                    Ui.clippedText(entry.detail(), "sm-muted"));
             row.addChildren(Ui.slot(MarketText.stack(entry.commodityKey()), Ui.SLOT), names,
-                    Ui.text("x" + entry.quantity(), "sm-muted"));
+                    trailingLabel(Component.literal("x" + entry.quantity()), 44, "sm-muted"));
             storageList.addScrollViewChild(Ui.clickable(row, () -> {
                 model.selectStorage(key);
                 refresh();
@@ -837,6 +970,7 @@ public final class MarketView {
         pane.addChildren(Ui.text(MarketText.market("dispatch.select_boat"), "sm-muted"), carrierList,
                 dispatchAction.element(), cancelOrderAction.element());
         page.addChildren(left, pane);
+        splitPanes.add(new SplitPane(page, left, pane));
         return page;
     }
 
@@ -852,10 +986,11 @@ public final class MarketView {
             }
             row.layout(l -> l.widthPercent(100).height(22).paddingHorizontal(Ui.GAP_S).gapAll(Ui.GAP_S).marginBottom(Ui.GAP_XS));
             UIElement names = Ui.column();
-            names.layout(l -> l.flexGrow(1).minWidth(0));
-            names.addChildren(Ui.text(order.label(), "sm-title"),
-                    Ui.text(order.sourceDockName() + " → " + order.targetDockName(), "sm-muted"));
-            row.addChildren(names, Ui.text("x" + order.quantity(), "sm-muted"), Ui.text(MarketText.orderStatus(order.status()), "sm-muted"));
+            names.layout(l -> l.width(0).flexGrow(1).minWidth(0));
+            names.addChildren(Ui.clippedText(order.label(), "sm-title"),
+                    Ui.clippedText(order.sourceDockName() + " → " + order.targetDockName(), "sm-muted"));
+            row.addChildren(names, trailingLabel(Component.literal("x" + order.quantity()), 44, "sm-muted"),
+                    trailingLabel(MarketText.orderStatus(order.status()), 60, "sm-muted"));
             orderList.addScrollViewChild(Ui.clickable(row, () -> {
                 model.selectOrder(order.orderId());
                 refresh();
@@ -893,13 +1028,16 @@ public final class MarketView {
         UIElement wallet = Ui.column("sm-pane");
         wallet.layout(l -> l.paddingAll(Ui.GAP_M).gapAll(Ui.GAP_S));
         UIElement amountRow = Ui.row();
-        amountRow.layout(l -> l.gapAll(Ui.GAP_S));
+        amountRow.layout(l -> l.widthPercent(100).minWidth(0).gapAll(Ui.GAP_S));
         TextField amount = Ui.numberField(model.walletAmount(), MarketText.market("wallet.amount_placeholder"), Integer.MAX_VALUE, value -> {
             model.setWalletAmount(value);
             refreshFinanceButtons();
         });
-        amount.layout(l -> l.width(90));
-        amountRow.addChildren(Ui.text(MarketText.market("wallet.amount"), "sm-muted"), amount);
+        amount.layout(l -> l.width(0).flexGrow(1).minWidth(40));
+        Label amountCaption = Ui.clippedText(MarketText.market("wallet.amount"), "sm-muted");
+        amountCaption.setId("sm-market-wallet-amount-caption");
+        amountCaption.layout(l -> l.width(60).flexShrink(0));
+        amountRow.addChildren(amountCaption, amount);
         UIElement buttons = Ui.wrapRow(Ui.GAP_S);
         walletActions.clear();
         for (MarketWalletActionPacket.Action walletAction : List.of(MarketWalletActionPacket.Action.CASH_TO_WALLET,
@@ -917,11 +1055,14 @@ public final class MarketView {
         page.addChild(wallet);
 
         renameRow = Ui.row();
-        renameRow.layout(l -> l.gapAll(Ui.GAP_S));
+        renameRow.layout(l -> l.widthPercent(100).minWidth(0).gapAll(Ui.GAP_S));
         TextField rename = Ui.field(model.renameFieldValue(), MarketText.market("rename.placeholder"), model::setRenameDraft);
         rename.layout(l -> l.width(0).flexGrow(1).flexShrink(1).minWidth(40));
         renameAction = action(MarketText.market("rename.confirm"), Ui.Tone.SECONDARY, controller::renameMarket).inRow();
-        renameRow.addChildren(Ui.text(MarketText.market("rename.label"), "sm-muted"), rename, renameAction.element());
+        Label renameCaption = Ui.clippedText(MarketText.market("rename.label"), "sm-muted");
+        renameCaption.setId("sm-market-rename-caption");
+        renameCaption.layout(l -> l.width(60).flexShrink(0));
+        renameRow.addChildren(renameCaption, rename, renameAction.element());
         page.addChild(renameRow);
 
         financeEconomy = Ui.column();
@@ -1022,6 +1163,7 @@ public final class MarketView {
         formViewport.layout(l -> l.heightAuto().width(PANE_WIDTH).flexGrow(0).flexShrink(0));
         formViewport.addScrollViewChild(form);
         page.addChildren(left, formViewport);
+        splitPanes.add(new SplitPane(page, left, formViewport));
         return page;
     }
 
@@ -1037,11 +1179,12 @@ public final class MarketView {
             }
             row.layout(l -> l.widthPercent(100).height(22).paddingHorizontal(Ui.GAP_S).gapAll(Ui.GAP_S).marginBottom(Ui.GAP_XS));
             UIElement names = Ui.column();
-            names.layout(l -> l.flexGrow(1).minWidth(0));
-            names.addChildren(Ui.text(MarketText.commodityName(model.data(), entry.commodityKey()), "sm-title"),
-                    Ui.text(MarketText.market("buy_order.price_range", entry.minPriceBp(), entry.maxPriceBp()), "sm-muted"));
+            names.layout(l -> l.width(0).flexGrow(1).minWidth(0));
+            names.addChildren(Ui.clippedText(MarketText.commodityName(model.data(), entry.commodityKey()), "sm-title"),
+                    Ui.clippedText(MarketText.market("buy_order.price_range", entry.minPriceBp(), entry.maxPriceBp()), "sm-muted"));
             row.addChildren(Ui.slot(MarketText.stack(entry.commodityKey()), Ui.SLOT), names,
-                    Ui.text("x" + entry.quantity(), "sm-muted"), Ui.text(MarketText.orderStatus(entry.status()), "sm-muted"));
+                    trailingLabel(Component.literal("x" + entry.quantity()), 44, "sm-muted"),
+                    trailingLabel(MarketText.orderStatus(entry.status()), 60, "sm-muted"));
             buyOrderList.addScrollViewChild(Ui.clickable(row, () -> {
                 model.selectBuyOrder(entry.orderId());
                 refresh();
@@ -1064,7 +1207,7 @@ public final class MarketView {
     private UIElement buildMyOrdersPage() {
         UIElement page = Ui.column();
         page.layout(l -> l.flexGrow(1).minHeight(0).gapAll(Ui.GAP_S));
-        myOrdersHint = Ui.text("", "sm-muted");
+        myOrdersHint = Ui.clippedText("", "sm-muted");
         myOrderList = Ui.scroller();
         page.addChildren(Ui.text(MarketText.market("my_orders.subtitle"), "sm-muted"), myOrdersHint, myOrderList);
         return page;
@@ -1086,18 +1229,21 @@ public final class MarketView {
             card.layout(l -> l.widthPercent(100).paddingAll(Ui.GAP_S).gapAll(Ui.GAP_XS).marginBottom(Ui.GAP_XS));
             UIElement top = Ui.row();
             top.layout(l -> l.gapAll(Ui.GAP_S));
-            top.addChildren(Ui.text(order.itemName() + "  x" + order.quantity(), "sm-title"), Ui.spacer(),
-                    Ui.text(MarketText.orderStatus(order.status()), "sm-muted"));
+            Label orderName = Ui.clippedText(order.itemName() + "  x" + order.quantity(), "sm-title");
+            orderName.layout(l -> l.width(0).flexGrow(1));
+            top.addChildren(orderName, trailingLabel(MarketText.orderStatus(order.status()), 60, "sm-muted"));
             card.addChild(top);
             String eta = order.queuePosition() > 0
                     ? "  " + MarketText.market("my_orders.eta", order.queuePosition(), MarketText.eta(order.queueEtaSeconds())).getString()
                     : "";
-            card.addChild(Ui.text(order.sourceDockName() + " → " + order.targetDockName() + eta, "sm-muted"));
+            card.addChild(Ui.clippedText(order.sourceDockName() + " → " + order.targetDockName() + eta, "sm-muted"));
             UIElement bottom = Ui.row();
             bottom.layout(l -> l.gapAll(Ui.GAP_S));
             bottom.addChildren(Ui.icon(new ItemStack(Items.EMERALD), 8), Ui.text(MarketText.money(order.totalPrice()), "sm-price"));
             if (order.shippingBoatName() != null && !order.shippingBoatName().isBlank()) {
-                bottom.addChild(Ui.text(MarketText.market("my_orders.shipping", order.shippingBoatName()), "sm-muted"));
+                Label shipping = Ui.clippedText(MarketText.market("my_orders.shipping", order.shippingBoatName()), "sm-muted");
+                shipping.layout(l -> l.width(0).flexGrow(1));
+                bottom.addChild(shipping);
             }
             bottom.addChild(Ui.spacer());
             if (order.cancellable()) {
@@ -1121,11 +1267,12 @@ public final class MarketView {
         seriesList.layout(l -> l.heightAuto().width(PANE_WIDTH).flexGrow(0));
         UIElement right = Ui.column();
         right.layout(l -> l.flexGrow(1).minWidth(0).minHeight(0).gapAll(Ui.GAP_S));
-        indexTitle = Ui.text("", "sm-title");
+        indexTitle = Ui.clippedText("", "sm-title");
         indexChart = new PriceChart(false, 24);
         indexChart.layout(l -> l.flexGrow(1).minHeight(60));
-        right.addChildren(indexTitle, indexChart, Ui.text(MarketText.ui("chart_zoom_hint"), "sm-muted"));
+        right.addChildren(indexTitle, indexChart, Ui.clippedText(MarketText.ui("chart_zoom_hint"), "sm-muted"));
         page.addChildren(seriesList, right);
+        splitPanes.add(new SplitPane(page, right, seriesList));
         return page;
     }
 
@@ -1150,7 +1297,11 @@ public final class MarketView {
                 row.addClass("selected");
             }
             row.layout(l -> l.widthPercent(100).height(18).paddingHorizontal(Ui.GAP_S).gapAll(Ui.GAP_S).marginBottom(Ui.GAP_XS));
-            row.addChildren(Ui.text(series.displayName(), "sm-title"), Ui.spacer(), Ui.text(String.valueOf(last), "sm-muted"));
+            Label seriesName = Ui.clippedText(series.displayName(), "sm-title");
+            seriesName.layout(l -> l.width(0).flexGrow(1).minWidth(0));
+            Label seriesPrice = Ui.alignRight(Ui.clippedText(String.valueOf(last), "sm-muted"));
+            seriesPrice.layout(l -> l.width(60).flexShrink(0));
+            row.addChildren(seriesName, seriesPrice);
             seriesList.addScrollViewChild(Ui.clickable(row, () -> {
                 selectedSeriesId = id;
                 refresh();
@@ -1177,7 +1328,7 @@ public final class MarketView {
         toast.layout(l -> l.positionType(TaffyPosition.ABSOLUTE).bottom(Ui.GAP_L).left(60).height(14)
                 .paddingHorizontal(Ui.GAP_M).maxWidth(320));
         toast.style(s -> s.zIndex(60));
-        toastText = Ui.text("", "sm-on-toast");
+        toastText = Ui.clippedText("", "sm-on-toast");
         toast.addChild(toastText);
         toast.setDisplay(false);
         return toast;
@@ -1234,6 +1385,7 @@ public final class MarketView {
             case MY_ORDERS -> buildMyOrdersPage(data.myOrders());
         }
         refreshBuyDialog();
+        refreshDetailOverlay();
     }
 
     /** Called every client tick for time-based UI: toast expiry and confirm buttons returning to normal. */
@@ -1292,8 +1444,13 @@ public final class MarketView {
 
     private UIElement keyValueRow(Component key, Label value) {
         UIElement row = Ui.row();
-        row.layout(l -> l.widthPercent(100).gapAll(Ui.GAP_S));
-        row.addChildren(Ui.text(key, "sm-muted"), Ui.spacer(), value);
+        row.layout(l -> l.widthPercent(100).minWidth(0).gapAll(Ui.GAP_S));
+        Label caption = Ui.clippedText(key, "sm-muted", "sm-kv-caption");
+        caption.layout(l -> l.width(0).flexGrow(1));
+        value.addClass("sm-kv-value");
+        value.layout(l -> l.width(0).flexGrow(1));
+        Ui.alignRight(value);
+        row.addChildren(caption, value);
         return row;
     }
 
@@ -1312,7 +1469,7 @@ public final class MarketView {
         // market on open).
         selector.setCandidates(values);
         selector.setSelected(current, false);
-        selector.setCandidateUIProvider(value -> Ui.text(value == null ? Component.literal("-") : label.apply(value)));
+        selector.setCandidateUIProvider(value -> Ui.clippedText(value == null ? Component.literal("-") : label.apply(value)));
         selector.setOnValueChanged(value -> {
             if (value != null) {
                 onChange.accept(value);
@@ -1350,24 +1507,32 @@ public final class MarketView {
 
     private UIElement figureChip(Component label, String value, boolean money) {
         UIElement chip = Ui.column("sm-chip");
-        chip.layout(l -> l.minWidth(70).paddingAll(Ui.GAP_S).gapAll(Ui.GAP_XS));
-        chip.addChild(Ui.text(label, "sm-muted"));
+        chip.layout(l -> l.width(100).flexBasis(100).flexGrow(1).flexShrink(0).minWidth(100)
+                .paddingAll(Ui.GAP_S).gapAll(Ui.GAP_XS));
+        chip.addChild(Ui.clippedText(label, "sm-muted"));
         UIElement row = Ui.row();
-        row.layout(l -> l.gapAll(Ui.GAP_XS));
+        row.layout(l -> l.widthPercent(100).minWidth(0).gapAll(Ui.GAP_XS));
         if (money) {
             row.addChild(Ui.icon(new ItemStack(Items.EMERALD), 12));
         }
-        row.addChild(Ui.text(value, "sm-price"));
+        Label figure = Ui.clippedText(value, "sm-price");
+        figure.layout(l -> l.width(0).flexGrow(1).minWidth(0));
+        row.addChild(figure);
         chip.addChild(row);
         return chip;
     }
 
     private UIElement keyValue(String key, String value, String valueClass) {
         UIElement row = Ui.row();
-        row.layout(l -> l.widthPercent(100).gapAll(Ui.GAP_S));
-        row.addChildren(Ui.text(key, "sm-muted"), Ui.spacer());
+        row.layout(l -> l.widthPercent(100).minWidth(0).gapAll(Ui.GAP_S));
+        Label caption = Ui.clippedText(key, "sm-muted", "sm-kv-caption");
+        caption.layout(l -> l.width(0).flexGrow(1));
+        row.addChild(caption);
         if (!value.isEmpty()) {
-            row.addChild(valueClass.isEmpty() ? Ui.text(value) : Ui.text(value, valueClass));
+            Label figure = Ui.alignRight(Ui.clippedText(value, "sm-kv-value"));
+            if (!valueClass.isEmpty()) figure.addClass(valueClass);
+            figure.layout(l -> l.width(0).flexGrow(1));
+            row.addChild(figure);
         }
         return row;
     }
@@ -1376,10 +1541,16 @@ public final class MarketView {
         UIElement row = Ui.row("sm-row");
         row.layout(l -> l.widthPercent(100).height(22).paddingHorizontal(Ui.GAP_S).gapAll(Ui.GAP_S).marginBottom(Ui.GAP_XS));
         UIElement names = Ui.column();
-        names.layout(l -> l.flexGrow(1).minWidth(0));
-        names.addChildren(Ui.text(title, "sm-title"), Ui.text(subtitle, "sm-muted"));
-        row.addChildren(names, Ui.text(trailing, "sm-muted"));
+        names.layout(l -> l.width(0).flexGrow(1).minWidth(0));
+        names.addChildren(Ui.clippedText(title, "sm-title"), Ui.clippedText(subtitle, "sm-muted"));
+        row.addChildren(names, trailingLabel(Component.literal(trailing), 80, "sm-muted"));
         return row;
+    }
+
+    private static Label trailingLabel(Component text, float width, String... classes) {
+        Label label = Ui.alignRight(Ui.clippedText(text, classes));
+        label.layout(l -> l.width(width).flexShrink(0));
+        return label;
     }
 
     /** Empty lists say what to do next, with an optional action. */

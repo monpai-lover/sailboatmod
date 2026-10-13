@@ -1,6 +1,7 @@
 package com.monpai.sailboatmod.client.screen.resident;
 
 import com.lowdragmc.lowdraglib2.gui.ui.UIElement;
+import com.lowdragmc.lowdraglib2.gui.ui.data.TextWrap;
 import com.lowdragmc.lowdraglib2.gui.ui.elements.Button;
 import com.monpai.sailboatmod.client.ui.kit.ActionButton;
 import com.monpai.sailboatmod.client.ui.kit.MeterBar;
@@ -35,7 +36,7 @@ public class ResidentDetailScreen extends ThemedScreen {
 
     @Override
     protected float windowWidth() {
-        return 250;
+        return 320;
     }
 
     @Override
@@ -44,9 +45,9 @@ public class ResidentDetailScreen extends ThemedScreen {
         UIElement head = Ui.row();
         head.layout(l -> l.gapAll(Ui.GAP_M).alignItems(AlignItems.CENTER));
         UIElement names = Ui.column();
-        names.layout(l -> l.flexGrow(1).minWidth(0));
-        names.addChildren(Ui.text(resident.name(), "sm-title"),
-                Ui.text(resident.profession().displayName() + " · Lv." + resident.level(), "sm-muted"));
+        names.layout(l -> l.width(0).flexGrow(1).minWidth(0));
+        names.addChildren(Ui.clippedText(resident.name(), "sm-title"),
+                Ui.clippedText(resident.profession().displayName() + " · Lv." + resident.level(), "sm-muted"));
         head.addChildren(Ui.slot(new ItemStack(Items.PLAYER_HEAD), 36), names);
 
         UIElement facts = Ui.column("sm-pane");
@@ -71,14 +72,21 @@ public class ResidentDetailScreen extends ThemedScreen {
         dismissButton = new ActionButton(Component.translatable("screen.sailboatmod.ui.resident.dismiss"), Ui.Tone.DANGER, this::onDismiss);
         UIElement actions = Ui.wrapRow(Ui.GAP_S);
         actions.layout(l -> l.widthPercent(100));
-        actions.addChildren(
-                Ui.button(Component.translatable("screen.sailboatmod.ui.resident.assign_job"), Ui.Tone.PRIMARY, this::onAssignJob),
-                assignHome,
-                Ui.button(Component.translatable("screen.sailboatmod.ui.resident.family_tree"), Ui.Tone.SECONDARY,
-                        () -> Minecraft.getInstance().setScreen(new FamilyTreeScreen(resident, this))),
-                dismissButton.element());
+        Button assignJob = Ui.button(Component.translatable("screen.sailboatmod.ui.resident.assign_job"), Ui.Tone.PRIMARY, this::onAssignJob);
+        Button family = Ui.button(Component.translatable("screen.sailboatmod.ui.resident.family_tree"), Ui.Tone.SECONDARY,
+                () -> Minecraft.getInstance().setScreen(new FamilyTreeScreen(resident, this)));
+        for (Button button : new Button[] {assignJob, assignHome, family, dismissButton.element()}) {
+            button.layout(l -> l.widthAuto().flexBasis(0).flexGrow(1).flexShrink(1).minWidth(104));
+            button.text.layout(l -> l.widthPercent(100).minWidth(0).flexShrink(1));
+            button.textStyle(t -> t.adaptiveWidth(false).textWrap(TextWrap.HOVER_ROLL));
+        }
+        actions.addChildren(assignJob, assignHome, family, dismissButton.element());
+        body.layout(l -> l.widthPercent(100).minWidth(0).gapAll(Ui.GAP_M));
         body.addChildren(head, facts, needs, actions);
-        return body;
+        var viewport = Ui.scroller();
+        viewport.layout(l -> l.height(220).flexGrow(0));
+        viewport.addScrollViewChild(body);
+        return viewport;
     }
 
     private static void fact(UIElement parent, String key, String value) {
@@ -88,11 +96,13 @@ public class ResidentDetailScreen extends ThemedScreen {
     private static UIElement need(String key, float ratio, String value, int color) {
         UIElement row = Ui.row();
         row.layout(l -> l.gapAll(Ui.GAP_S).widthPercent(100));
-        com.lowdragmc.lowdraglib2.gui.ui.elements.Label label = Ui.text(Component.translatable("screen.sailboatmod.ui.resident." + key), "sm-muted");
+        com.lowdragmc.lowdraglib2.gui.ui.elements.Label label = Ui.clippedText(Component.translatable("screen.sailboatmod.ui.resident." + key), "sm-muted");
         label.layout(l -> l.width(70));
         MeterBar bar = new MeterBar().set(ratio, color);
-        bar.layout(l -> l.flexGrow(1));
-        row.addChildren(label, bar, Ui.text(value));
+        bar.layout(l -> l.width(0).flexGrow(1).flexShrink(1).minWidth(0));
+        var amount = Ui.alignRight(Ui.clippedText(value));
+        amount.layout(l -> l.width(50));
+        row.addChildren(label, bar, amount);
         return row;
     }
 

@@ -3,6 +3,7 @@ package com.monpai.sailboatmod.client.screen;
 import com.lowdragmc.lowdraglib2.gui.ui.UIElement;
 import com.lowdragmc.lowdraglib2.gui.ui.elements.Label;
 import com.lowdragmc.lowdraglib2.gui.ui.elements.ScrollerView;
+import com.lowdragmc.lowdraglib2.gui.ui.event.UIEvents;
 import com.lowdragmc.lowdraglib2.gui.ui.rendering.GUIContext;
 import com.monpai.sailboatmod.client.ui.kit.ThemedScreen;
 import com.monpai.sailboatmod.client.ui.kit.Ui;
@@ -12,6 +13,7 @@ import com.monpai.sailboatmod.item.BankConstructorItem;
 import com.monpai.sailboatmod.nation.service.StructureConstructionManager.StructureType;
 import com.monpai.sailboatmod.registry.ModBlocks;
 import dev.vfyjxf.taffy.style.AlignItems;
+import dev.vfyjxf.taffy.style.FlexWrap;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.gui.GuiGraphics;
 import net.minecraft.network.chat.Component;
@@ -35,8 +37,8 @@ public class StructureSelectionScreen extends ThemedScreen {
     private final List<UIElement> rows = new ArrayList<>();
     private ScrollerView list;
     private final UIElement detailSlot = Ui.row();
-    private final Label detailName = Ui.text("", "sm-title");
-    private final Label detailRole = Ui.text("", "sm-muted");
+    private final Label detailName = Ui.clippedText("", "sm-title");
+    private final Label detailRole = Ui.clippedText("", "sm-muted");
     private final Label width = Ui.text("", "sm-price");
     private final Label height = Ui.text("", "sm-price");
     private final Label depth = Ui.text("", "sm-price");
@@ -51,20 +53,22 @@ public class StructureSelectionScreen extends ThemedScreen {
 
     @Override
     protected float windowWidth() {
-        return 392;
+        return 580;
     }
 
     @Override
     protected UIElement buildBody() {
         clampSelection();
         UIElement body = Ui.column();
-        body.addChild(Ui.text(Component.translatable("screen.sailboatmod.structure_selection.subtitle"), "sm-muted"));
+        body.addChild(Ui.paragraph(Component.translatable("screen.sailboatmod.structure_selection.subtitle"), "sm-muted"));
 
         UIElement main = Ui.row();
-        main.layout(l -> l.gapAll(Ui.GAP_M).alignItems(AlignItems.STRETCH).height(168));
+        main.layout(l -> l.widthPercent(100).minWidth(0).gapAll(Ui.GAP_M)
+                .flexWrap(FlexWrap.WRAP).alignItems(AlignItems.STRETCH));
 
         UIElement catalog = Ui.column();
-        catalog.layout(l -> l.width(160).flexShrink(0).gapAll(Ui.GAP_XS));
+        catalog.layout(l -> l.width(160).flexGrow(1).flexShrink(0).minWidth(150)
+                .height(210).gapAll(Ui.GAP_XS));
         list = Ui.scroller();
         for (int i = 0; i < StructureType.ALL.size(); i++) {
             int index = i;
@@ -72,10 +76,12 @@ public class StructureSelectionScreen extends ThemedScreen {
             UIElement row = Ui.row("sm-row");
             row.layout(l -> l.widthPercent(100).height(24).paddingHorizontal(Ui.GAP_S).gapAll(Ui.GAP_S).flexShrink(0));
             UIElement names = Ui.column();
-            names.layout(l -> l.flexGrow(1).minWidth(0));
-            names.addChildren(Ui.text(Component.translatable(type.translationKey())),
-                    Ui.text(type.w() + "×" + type.h() + "×" + type.d(), "sm-muted"));
-            row.addChildren(Ui.slot(iconFor(type), Ui.SLOT), names, Ui.text(sizeLabel(type), "sm-warn"));
+            names.layout(l -> l.width(0).flexGrow(1).minWidth(0));
+            names.addChildren(Ui.clippedText(Component.translatable(type.translationKey())),
+                    Ui.clippedText(type.w() + "×" + type.h() + "×" + type.d(), "sm-muted"));
+            Label size = Ui.clippedText(sizeLabel(type), "sm-warn");
+            size.layout(l -> l.width(55));
+            row.addChildren(Ui.slot(iconFor(type), Ui.SLOT), names, size);
             Ui.clickable(row, () -> select(index));
             rows.add(row);
             list.addScrollViewChild(row);
@@ -83,11 +89,12 @@ public class StructureSelectionScreen extends ThemedScreen {
         catalog.addChildren(Ui.text(Component.translatable("screen.sailboatmod.structure_selection.catalog"), "sm-muted"), list);
 
         UIElement detail = Ui.column("sm-pane");
-        detail.layout(l -> l.flexGrow(1).minWidth(0).paddingAll(Ui.GAP_M).gapAll(Ui.GAP_S));
+        detail.layout(l -> l.width(240).flexGrow(2).flexShrink(0).minWidth(200)
+                .paddingAll(Ui.GAP_M).gapAll(Ui.GAP_S));
         UIElement head = Ui.row();
         head.layout(l -> l.gapAll(Ui.GAP_M));
         UIElement names = Ui.column();
-        names.layout(l -> l.flexGrow(1).minWidth(0));
+        names.layout(l -> l.width(0).flexGrow(1).minWidth(0));
         names.addChildren(detailName, detailRole);
         head.addChildren(detailSlot, names);
 
@@ -95,29 +102,40 @@ public class StructureSelectionScreen extends ThemedScreen {
         metrics.layout(l -> l.gapAll(Ui.GAP_S));
         metrics.addChildren(metric("width", width), metric("height", height), metric("depth", depth));
 
-        UIElement lower = Ui.row();
-        lower.layout(l -> l.gapAll(Ui.GAP_M).alignItems(AlignItems.STRETCH).flexGrow(1).minHeight(0));
-        footprint.layout(l -> l.width(96).flexShrink(0));
-        description.layout(l -> l.flexGrow(1).minWidth(0));
+        UIElement lower = Ui.column();
+        lower.layout(l -> l.widthPercent(100).minWidth(0).gapAll(Ui.GAP_M));
+        footprint.layout(l -> l.widthPercent(100).height(78).flexShrink(0));
+        description.layout(l -> l.widthPercent(100).minWidth(0).flexShrink(0));
         lower.addChildren(footprint, description);
 
-        UIElement placement = Ui.row();
+        UIElement placement = Ui.column();
         placement.layout(l -> l.gapAll(Ui.GAP_S));
         placement.addChildren(Ui.text(Component.translatable("screen.sailboatmod.structure_selection.placement"), "sm-warn"),
-                Ui.text(Component.translatable("screen.sailboatmod.structure_selection.placement_hint"), "sm-muted"));
+                Ui.paragraph(Component.translatable("screen.sailboatmod.structure_selection.placement_hint"), "sm-muted"));
         detail.addChildren(head, metrics, lower, placement);
         main.addChildren(catalog, detail);
 
         UIElement footer = Ui.row();
-        footer.layout(l -> l.gapAll(Ui.GAP_S));
+        footer.layout(l -> l.widthPercent(100).minWidth(0).gapAll(Ui.GAP_S)
+                .flexWrap(FlexWrap.WRAP).flexShrink(0));
         UIElement hints = Ui.column();
-        hints.layout(l -> l.flexGrow(1).minWidth(0));
-        hints.addChildren(Ui.text(Component.translatable("screen.sailboatmod.structure_selection.controls_hint"), "sm-muted"),
-                Ui.text(Component.translatable("screen.sailboatmod.structure_selection.controls_hint_2"), "sm-muted"));
+        hints.layout(l -> l.width(160).flexGrow(1).flexShrink(0).minWidth(100));
+        hints.addChildren(Ui.clippedText(Component.translatable("screen.sailboatmod.structure_selection.controls_hint"), "sm-muted"),
+                Ui.clippedText(Component.translatable("screen.sailboatmod.structure_selection.controls_hint_2"), "sm-muted"));
         footer.addChildren(hints,
                 Ui.button(Component.translatable("gui.cancel"), Ui.Tone.SECONDARY, this::onClose),
                 Ui.button(Component.translatable("gui.done"), Ui.Tone.PRIMARY, this::saveAndClose));
-        body.addChildren(main, footer);
+        ScrollerView mainViewport = Ui.scroller();
+        mainViewport.layout(l -> l.height(270).flexGrow(0));
+        mainViewport.addScrollViewChild(main);
+        mainViewport.viewPort.addEventListener(UIEvents.LAYOUT_CHANGED, event -> {
+            float availableHeight = mainViewport.viewPort.getContentHeight();
+            if (availableHeight > 0) {
+                // The catalog rail must fit completely inside the outer page, including at GUI scale 4.
+                catalog.layout(l -> l.height(Math.min(210, availableHeight)));
+            }
+        });
+        body.addChildren(mainViewport, footer);
         refresh();
         return body;
     }

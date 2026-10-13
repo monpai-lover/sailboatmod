@@ -46,9 +46,9 @@ public class BuildingListScreen extends ThemedScreen {
             UIElement row = Ui.row("sm-row");
             row.layout(l -> l.widthPercent(100).height(24).paddingHorizontal(Ui.GAP_S).gapAll(Ui.GAP_S).flexShrink(0));
             UIElement names = Ui.column();
-            names.layout(l -> l.flexGrow(1).minWidth(0));
-            names.addChildren(Ui.text(building.structureType()),
-                    Ui.text(Component.literal("Lv." + building.buildingLevel() + "/" + building.getMaxLevel() + " · ")
+            names.layout(l -> l.width(0).flexGrow(1).minWidth(0));
+            names.addChildren(Ui.clippedText(building.structureType()),
+                    Ui.clippedText(Component.literal("Lv." + building.buildingLevel() + "/" + building.getMaxLevel() + " · ")
                             .append(Component.translatable(building.isBuilt()
                                     ? "screen.sailboatmod.building.status.built"
                                     : "screen.sailboatmod.building.status.building")), "sm-muted"));

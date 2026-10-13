@@ -77,15 +77,17 @@ public class AutoRouteDockSelectionScreen extends ThemedScreen {
                     .add(WaterMidMode.HYBRID, new ItemStack(Items.COMPASS), Component.translatable("screen.sailboatmod.ui.route_mode.hybrid"));
             modeDescription = Ui.text("", "sm-muted");
             UIElement modeRow = Ui.row();
-            modeRow.layout(l -> l.gapAll(Ui.GAP_S));
+            modeRow.layout(l -> l.widthPercent(100).minWidth(0).gapAll(Ui.GAP_S)
+                    .flexWrap(dev.vfyjxf.taffy.style.FlexWrap.WRAP));
             modeRow.addChildren(Ui.muted(Component.translatable("screen.sailboatmod.ui.route_mode")), modeTabs.element());
             body.addChildren(modeRow, modeDescription);
         }
 
         createButton = Ui.button(autoRouteText("create"), Ui.Tone.PRIMARY, this::createRoute);
         UIElement actions = Ui.row();
-        actions.layout(l -> l.gapAll(Ui.GAP_S));
-        actions.addChildren(Ui.text(autoRouteText("hint"), "sm-muted"), Ui.spacer(),
+        actions.layout(l -> l.widthPercent(100).minWidth(0).gapAll(Ui.GAP_S)
+                .flexWrap(dev.vfyjxf.taffy.style.FlexWrap.WRAP).flexShrink(0));
+        actions.addChildren(Ui.clippedText(autoRouteText("hint"), "sm-muted"), Ui.spacer(),
                 Ui.button(Component.translatable("screen.sailboatmod.route_name.cancel"), Ui.Tone.SECONDARY, this::onClose), createButton);
         body.addChild(actions);
         refresh();
@@ -96,9 +98,9 @@ public class AutoRouteDockSelectionScreen extends ThemedScreen {
         UIElement row = Ui.row("sm-row");
         row.layout(l -> l.widthPercent(100).height(22).paddingHorizontal(Ui.GAP_S).gapAll(Ui.GAP_S).flexShrink(0));
         UIElement names = Ui.column();
-        names.layout(l -> l.flexGrow(1).minWidth(0));
-        names.addChildren(Ui.text(dockName(dock.dockName())),
-                Ui.text(Component.translatable("screen.sailboatmod.ui.owner_nation",
+        names.layout(l -> l.width(0).flexGrow(1).minWidth(0));
+        names.addChildren(Ui.clippedText(dockName(dock.dockName())),
+                Ui.clippedText(Component.translatable("screen.sailboatmod.ui.owner_nation",
                         fallback(dock.ownerName(), "screen.sailboatmod.auto_route.unknown_owner"),
                         fallback(dock.nationName(), "screen.sailboatmod.auto_route.no_nation")), "sm-muted"));
         row.addChildren(Ui.slot(new ItemStack(terminalKind == TransportTerminalKind.POST_STATION ? Items.MINECART : Items.OAK_BOAT), Ui.SLOT),

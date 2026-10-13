@@ -48,7 +48,7 @@ public class DockScreen<T extends DockMenu> extends TransportTerminalScreen<T> {
     private final Map<Page, UIElement> pages = new EnumMap<>(Page.class);
     private final TabBar<Page> tabs;
 
-    private final Label ownerLabel = Ui.text("", "sm-muted");
+    private final Label ownerLabel = Ui.clippedText("", "sm-muted");
     private TextField nameField;
     private ActionButton saveName;
 
@@ -151,7 +151,8 @@ public class DockScreen<T extends DockMenu> extends TransportTerminalScreen<T> {
 
     private UIElement ownerChip() {
         UIElement chip = Ui.row("sm-chip");
-        chip.layout(l -> l.height(Ui.CONTROL_HEIGHT).paddingHorizontal(Ui.GAP_S).maxWidth(110));
+        chip.layout(l -> l.width(110).height(Ui.CONTROL_HEIGHT).paddingHorizontal(Ui.GAP_S).maxWidth(110));
+        ownerLabel.layout(l -> l.width(0).flexGrow(1));
         chip.addChild(ownerLabel);
         return chip;
     }
@@ -167,15 +168,17 @@ public class DockScreen<T extends DockMenu> extends TransportTerminalScreen<T> {
                 refresh();
             }
         });
-        row.addChildren(Ui.text(screenText("name"), "sm-muted"), nameField, saveName.inRow().element());
+        row.addChildren(Ui.clippedText(screenText("name"), "sm-muted"), nameField, saveName.inRow().element());
         return row;
     }
 
     private UIElement buildRoutesPage() {
         UIElement page = Ui.row();
-        page.layout(l -> l.gapAll(Ui.GAP_S).alignItems(AlignItems.STRETCH).height(150));
+        page.layout(l -> l.widthPercent(100).minWidth(0).gapAll(Ui.GAP_S)
+                .flexWrap(FlexWrap.WRAP).alignItems(AlignItems.STRETCH));
         UIElement listColumn = Ui.column();
-        listColumn.layout(l -> l.width(0).flexGrow(1).minWidth(0).minHeight(0).gapAll(Ui.GAP_XS));
+        listColumn.layout(l -> l.width(0).flexBasis(100).flexGrow(2).flexShrink(1).minWidth(100)
+                .height(100).gapAll(Ui.GAP_XS));
         listColumn.addChildren(panelHeading(screenText("routes_title")), routeList);
 
         UIElement side = Ui.column();
@@ -202,22 +205,23 @@ public class DockScreen<T extends DockMenu> extends TransportTerminalScreen<T> {
         side.addChildren(panelHeading(screenText("zone_map")), miniMap,
                 importButton.element(), reverseButton.element(), autoRouteButton.element(), deleteButton.element());
         ScrollerView sideViewport = Ui.scroller();
-        sideViewport.layout(l -> l.heightAuto().width(82).flexGrow(0).flexShrink(0));
+        sideViewport.layout(l -> l.height(100).width(82).minWidth(82).flexGrow(1).flexShrink(1));
         sideViewport.addScrollViewChild(side);
         page.addChildren(listColumn, sideViewport);
-        return page;
+        return scrollPage(page);
     }
 
     private UIElement buildDispatchPage() {
         UIElement page = Ui.column();
         page.layout(l -> l.gapAll(Ui.GAP_S).height(150));
         UIElement lists = Ui.row();
-        lists.layout(l -> l.gapAll(Ui.GAP_S).alignItems(AlignItems.STRETCH).flexGrow(1).minHeight(0));
+        lists.layout(l -> l.widthPercent(100).minWidth(0).gapAll(Ui.GAP_S)
+                .flexWrap(FlexWrap.WRAP).alignItems(AlignItems.STRETCH));
         UIElement boats = Ui.column();
-        boats.layout(l -> l.flexGrow(1).flexBasis(0).minWidth(0).gapAll(Ui.GAP_XS));
+        boats.layout(l -> l.width(100).flexGrow(1).flexShrink(0).minWidth(90).height(100).gapAll(Ui.GAP_XS));
         boats.addChildren(panelHeading(screenText("boats_title")), boatList);
         UIElement routes = Ui.column();
-        routes.layout(l -> l.flexGrow(1).flexBasis(0).minWidth(0).gapAll(Ui.GAP_XS));
+        routes.layout(l -> l.width(100).flexGrow(1).flexShrink(0).minWidth(90).height(100).gapAll(Ui.GAP_XS));
         routes.addChildren(panelHeading(screenText("routes_title")), dispatchRouteList);
         lists.addChildren(boats, routes);
 
@@ -228,7 +232,16 @@ public class DockScreen<T extends DockMenu> extends TransportTerminalScreen<T> {
         actions.layout(l -> l.widthPercent(100).minWidth(0).flexWrap(FlexWrap.WRAP).gapAll(Ui.GAP_S).flexShrink(0));
         actions.addChildren(assignButton.inRow().element(), Ui.spacer(), autoReturnButton.inRow().element(), autoUnloadButton.inRow().element());
         page.addChildren(lists, actions);
-        return page;
+        return scrollPage(page);
+    }
+
+    /** Keep narrow terminal columns readable; stacked lists and actions remain reachable below them. */
+    private static ScrollerView scrollPage(UIElement content) {
+        content.layout(l -> l.heightAuto().widthPercent(100).minWidth(0).flexGrow(0).flexShrink(0));
+        ScrollerView viewport = Ui.scroller();
+        viewport.layout(l -> l.height(150));
+        viewport.addScrollViewChild(content);
+        return viewport;
     }
 
     private UIElement buildStoragePage() {

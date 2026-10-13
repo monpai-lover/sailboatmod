@@ -1,0 +1,109 @@
+{
+  "release": "1.3.13-fix_5-neoforge-1.21.1",
+  "buildProperty": "-PfixIndex=5",
+  "tests": {
+    "tests": 1419,
+    "failures": 0,
+    "errors": 0,
+    "skipped": 0
+  },
+  "suites": 325,
+  "native": [
+    {
+      "directory": "results",
+      "verification": "6597 native checks; 0 failures",
+      "checks": 6597,
+      "captures": 152,
+      "referencedScreenshots": 182,
+      "reportSha256": "997f8996b82767663c8b9b743f1be47afb6a25df805fa18575522fe71f7c9b2f",
+      "startedAt": 1791915594142,
+      "status": "COMPLETED"
+    },
+    {
+      "directory": "results-scale-2",
+      "verification": "2636 native checks; 0 failures",
+      "checks": 2636,
+      "captures": 27,
+      "referencedScreenshots": 27,
+      "reportSha256": "977c404f229133288307ea6c0fb0bf237936435d84e860c6437bb16dabae7b3a",
+      "startedAt": 1791915902847,
+      "status": "COMPLETED"
+    },
+    {
+      "directory": "results-scale-3",
+      "verification": "2648 native checks; 0 failures",
+      "checks": 2648,
+      "captures": 27,
+      "referencedScreenshots": 27,
+      "reportSha256": "6a1fd2eb0bd7d2696846c4d8bc32b77901886f6deb2b975ec8d4c154f331c1eb",
+      "startedAt": 1791915805006,
+      "status": "COMPLETED"
+    },
+    {
+      "directory": "results-scale-4",
+      "verification": "2741 native checks; 0 failures",
+      "checks": 2741,
+      "captures": 27,
+      "referencedScreenshots": 33,
+      "reportSha256": "32439a0ccb14ee7416de80eacb4695392806a2dceda522e1947ce51cb85cc6fd",
+      "startedAt": 1791916047429,
+      "status": "COMPLETED"
+    }
+  ],
+  "totals": {
+    "checks": 14622,
+    "captures": 233,
+    "referencedScreenshots": 269
+  },
+  "production": {
+    "mods/sailboatmod-1.3.13-fix_5-neoforge-1.21.1.jar": {
+      "sha256": "adffdd3151157446823b91efa7e5faefb9acb2fe0ec821cddced7cca1afa4cef",
+      "bytes": 26718150
+    },
+    "mods/geckolib-neoforge-1.21.1-4.9.3.jar": {
+      "sha256": "20a1995e4074f387ff549e2c57ea79dd7d41ee83c6afb9dd6a6e840e592d1c47",
+      "bytes": 634531
+    },
+    "mods/ldlib2-neoforge-1.21.1-2.2.42-all.jar": {
+      "sha256": "e98758b5089d40ca5ae5c8d928b9057feddff10b000bc37c0e3a480e1e19911b",
+      "bytes": 7617480
+    },
+    "server-only-mods/sailboatmod-marketweb-1.3.13-fix_5-neoforge-1.21.1.jar": {
+      "sha256": "4de058245bf35b2c3e9d828e3ccd44800a4e359e513d97c801bda2c694ce0084",
+      "bytes": 475493
+    }
+  },
+  "redEvidence": {
+    "files": [
+      "build/ui-dimensions-auxiliary-red.log",
+      "build/ui-dimensions-focused-red.log",
+      "build/ui-repair-smoke/dimensions-auxiliary-red.json",
+      "build/ui-repair-smoke/dimensions-dock-nested-red.json",
+      "build/ui-repair-smoke/dimensions-road-layout-red.json",
+      "build/ui-repair-smoke/dimensions-structure-nested-red.json",
+      "build/ui-repair-smoke/red-dimensions-screenshots/bank-loans-ledger-missing-labels.png",
+      "build/ui-repair-smoke/red-dimensions-screenshots/ledger-carriage-info-dimensions-scale-4.png",
+      "build/ui-repair-smoke/red-dimensions-screenshots/ledger-family-tree-dimensions-scale-4.png",
+      "build/ui-repair-smoke/red-dimensions-screenshots/ledger-resident-detail-dimensions-scale-4.png",
+      "build/ui-repair-smoke/red-dimensions-screenshots/ledger-road-planner-tools-dimensions-scale-4.png",
+      "build/ui-repair-smoke/red-dimensions-screenshots/ledger-sailboat-info-dimensions-scale-4.png",
+      "build/ui-repair-smoke/red-dimensions-screenshots/structure-selection-inner-height.png",
+      "build/ui-repair-smoke/red-dimensions-screenshots/trading_hall-carriage-info-dimensions-scale-4.png",
+      "build/ui-repair-smoke/red-dimensions-screenshots/trading_hall-family-tree-dimensions-scale-4.png",
+      "build/ui-repair-smoke/red-dimensions-screenshots/trading_hall-resident-detail-dimensions-scale-4.png",
+      "build/ui-repair-smoke/red-dimensions-screenshots/trading_hall-road-planner-tools-dimensions-scale-4.png",
+      "build/ui-repair-smoke/red-dimensions-screenshots/trading_hall-sailboat-info-dimensions-scale-4.png"
+    ],
+    "screenshots": 12,
+    "auxiliaryLimitation": "Visual failure baseline; previous reachability checks missed zero-area/text-overdraw problems. Not every overflow check failed."
+  },
+  "server": {
+    "started": true,
+    "normalStop": true,
+    "saved": true,
+    "sqliteInitialized": true,
+    "log": "build/ui-repair-smoke/dedicated-server/logs/latest.log",
+    "logSha256": "76550f3201c6e880df729fef0d16d93cb2a7c2aca037546348d0de3f50ef641a",
+    "exitCodeEvidence": "Process exit code is recorded separately in the root tool result; not inferred from this log."
+  }
+}

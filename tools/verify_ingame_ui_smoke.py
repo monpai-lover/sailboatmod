@@ -24,6 +24,34 @@ def main():
         for interaction in capture.get("scrollbarInteractions", []):
             for result in interaction.get("checks", []):
                 check(result.get("passed"), f'{capture["name"]}: {result["name"]}')
+        for result in capture.get("dimensionLayoutChecks", []):
+            check(result.get("passed"), f'{capture["name"]}: {result["name"]}: {result.get("text", "")}')
+        for result in capture.get("marketLayoutChecks", []):
+            check(result.get("passed"), f'{capture["name"]}: {result["name"]}: {result.get("text", "")}')
+        if "marketGrid" in capture:
+            grid = capture["marketGrid"]
+            check(grid.get("passed"), f'{capture["name"]}: six commodities do not form three columns')
+            if grid.get("catalogDisplayed") and grid.get("catalogCount", 0) >= 6:
+                check(grid.get("columns", 0) >= 3, f'{capture["name"]}: catalog has fewer than three columns')
+                check(grid.get("cardCount", 0) >= 6, f'{capture["name"]}: catalog cards are missing')
+                for cell in grid.get("cards", []):
+                    check(cell.get("width", 0) > 0 and cell.get("height", 0) > 0,
+                          f'{capture["name"]}: empty catalog cell')
+        if "marketInteractions" in capture:
+            interaction = capture["marketInteractions"]
+            check(interaction.get("passed"), f'{capture["name"]}: market native interaction failed')
+            for result in interaction.get("checks", []):
+                check(result.get("passed"), f'{capture["name"]}: {result["name"]}')
+            for result in interaction.get("marketLayoutChecks", []):
+                check(result.get("passed"), f'{capture["name"]}: {result["name"]}: {result.get("text", "")}')
+        for interaction in capture.get("nestedWheel", []):
+            check(interaction.get("passed"), f'{capture["name"]}: nested wheel propagation failed')
+            for result in interaction.get("checks", []):
+                check(result.get("passed"), f'{capture["name"]}: {result["name"]}')
+        if "largeWindow" in capture:
+            check(capture["largeWindow"].get("passed"), f'{capture["name"]}: large-window resize or dimensions failed')
+        if "passed" in capture.get("auxiliaryFixtureState", {}):
+            check(capture["auxiliaryFixtureState"]["passed"], f'{capture["name"]}: representative fixture data was replaced')
         if "territoryAccessibility" in capture:
             check(capture["territoryAccessibility"].get("passed"),
                   f'{capture["name"]}: territory controls exceed window without scrolling')
@@ -38,11 +66,17 @@ def main():
         check(market.get("regressionChecksPassed"), "market input/selection regression failed")
         for capture in market.get("captures", []):
             scrollbars(capture)
+            if "road-action-building" in capture["name"] or "road-targets-long" in capture["name"]:
+                check(capture.get("settledTraceCount") == 0,
+                      f'{capture["name"]}: layout keeps changing after settling')
             if "left" in capture:
                 check(capture["left"] >= -1 and capture["left"] + capture["windowWidth"] <= capture["screenWidth"] + 1,
                       f'{capture["name"]}: window outside horizontal viewport')
             if "requestedGuiScale" in capture:
                 check(capture["guiScale"] == capture["requestedGuiScale"], f'{capture["name"]}: requested GUI scale was clamped')
+            if "requestedPixelWidth" in capture:
+                check(capture["pixelWidth"] == capture["requestedPixelWidth"] and capture["pixelHeight"] == capture["requestedPixelHeight"],
+                      f'{capture["name"]}: requested pixel dimensions were not applied')
             for element in capture.get("visibleElements", []):
                 if element.get("type") == "TextField":
                     check(element["width"] >= 24, f'{capture["name"]}: unusable input width {element["width"]}')

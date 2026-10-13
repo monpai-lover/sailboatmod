@@ -48,7 +48,7 @@ public class RoadPlannerTargetSelectionScreen extends ThemedScreen {
     @Override
     protected UIElement buildBody() {
         UIElement body = Ui.column();
-        body.addChildren(Ui.text(Component.translatable("screen.sailboatmod.road_planner.target.source", safeTownName(sourceTownName))),
+        body.addChildren(Ui.clippedText(Component.translatable("screen.sailboatmod.road_planner.target.source", safeTownName(sourceTownName))),
                 Ui.paragraph(Component.translatable("screen.sailboatmod.road_planner.target.hint"), "sm-muted"));
         ScrollerView list = Ui.scroller();
         list.layout(l -> l.height(160).flexGrow(0));

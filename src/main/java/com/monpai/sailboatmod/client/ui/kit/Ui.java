@@ -66,7 +66,7 @@ public final class Ui {
 
     /** Vertical scrolling list; add children with {@link ScrollerView#addScrollViewChild}. */
     public static ScrollerView scroller(String... classes) {
-        ScrollerView view = new ScrollerView();
+        ScrollerView view = new NestedScrollerView();
         view.addClasses(classes);
         view.layout(l -> l.height(0).flexGrow(1).flexShrink(1).minWidth(0).minHeight(0));
         // Content must wrap to the viewport rather than expand the screen to its intrinsic width.
@@ -84,13 +84,29 @@ public final class Ui {
         Label label = new Label();
         label.setValue(value);
         label.addClasses(classes);
-        label.textStyle(t -> t.textWrap(TextWrap.HOVER_ROLL).adaptiveHeight(true));
-        label.layout(l -> l.flexShrink(1).minWidth(0));
+        // LDLib2 labels do not measure their width by default. Inline text otherwise occupies zero pixels
+        // and paints over the next control. Bounded columns opt into clippedText below.
+        label.textStyle(t -> t.textWrap(TextWrap.HOVER_ROLL).adaptiveWidth(true).adaptiveHeight(true));
+        label.layout(l -> l.flexShrink(1).minWidth(0).maxWidthPercent(100));
+        label.setOverflowVisible(false);
         return label;
     }
 
     public static Label text(String value, String... classes) {
         return text(Component.literal(value == null ? "" : value), classes);
+    }
+
+    /** A single line constrained to its allocated column; long names stay readable by hovering. */
+    public static Label clippedText(Component value, String... classes) {
+        Label label = text(value, classes);
+        label.textStyle(t -> t.adaptiveWidth(false).adaptiveHeight(false));
+        label.layout(l -> l.widthPercent(100).height(9).flexShrink(0).minWidth(0));
+        label.setOverflowVisible(false);
+        return label;
+    }
+
+    public static Label clippedText(String value, String... classes) {
+        return clippedText(Component.literal(value == null ? "" : value), classes);
     }
 
     public static Label muted(Component value) {
@@ -100,8 +116,10 @@ public final class Ui {
     /** Multi-line paragraph for hints and empty states. */
     public static Label paragraph(Component value, String... classes) {
         Label label = text(value, classes);
-        label.textStyle(t -> t.textWrap(TextWrap.WRAP).adaptiveHeight(true));
-        label.layout(l -> l.widthPercent(100));
+        label.textStyle(t -> t.textWrap(TextWrap.WRAP).adaptiveWidth(false).adaptiveHeight(true));
+        // A paragraph keeps its measured height; surrounding lists shrink and scroll instead. Shrinking
+        // adaptive text also feeds floating-point chrome differences back into LDLib2's height calculation.
+        label.layout(l -> l.widthPercent(100).flexShrink(0));
         return label;
     }
 
@@ -263,10 +281,12 @@ public final class Ui {
     /** "Label ........ value" line used for figures in side panes; returns the value label for updates. */
     public static Label keyValue(UIElement parent, Component key, String... valueClasses) {
         UIElement line = row();
-        line.layout(l -> l.widthPercent(100).gapAll(GAP_S));
-        Label value = alignRight(text("", valueClasses));
-        value.layout(l -> l.flexGrow(1));
-        line.addChildren(muted(key), value);
+        line.layout(l -> l.widthPercent(100).minWidth(0).gapAll(GAP_S));
+        Label caption = clippedText(key, "sm-muted");
+        caption.layout(l -> l.width(0).flexGrow(1).minWidth(0));
+        Label value = alignRight(clippedText("", valueClasses));
+        value.layout(l -> l.width(0).flexGrow(1).minWidth(0));
+        line.addChildren(caption, value);
         parent.addChild(line);
         return value;
     }
@@ -275,8 +295,8 @@ public final class Ui {
     public static UIElement itemRow(ItemStack stack, Component name, Component trailing, String... trailingClasses) {
         UIElement row = row("sm-row");
         row.layout(l -> l.widthPercent(100).height(SLOT + 4).paddingHorizontal(GAP_S).gapAll(GAP_S).flexShrink(0));
-        Label nameLabel = text(name);
-        nameLabel.layout(l -> l.flexGrow(1));
+        Label nameLabel = clippedText(name);
+        nameLabel.layout(l -> l.width(0).flexGrow(1));
         row.addChildren(slot(stack, SLOT), nameLabel, alignRight(text(trailing, trailingClasses)));
         return row;
     }

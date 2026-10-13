@@ -1,6 +1,7 @@
 package com.monpai.sailboatmod.client.screen.resident;
 
 import com.lowdragmc.lowdraglib2.gui.ui.UIElement;
+import com.lowdragmc.lowdraglib2.gui.ui.data.TextWrap;
 import com.lowdragmc.lowdraglib2.gui.ui.elements.ScrollerView;
 import com.monpai.sailboatmod.client.ui.kit.ThemedScreen;
 import com.monpai.sailboatmod.client.ui.kit.Ui;
@@ -27,14 +28,14 @@ public class FamilyTreeScreen extends ThemedScreen {
 
     @Override
     protected float windowWidth() {
-        return 260;
+        return 320;
     }
 
     @Override
     protected UIElement buildBody() {
         FamilyData family = FamilyService.getFamily(resident.residentId());
         UIElement body = Ui.column();
-        body.layout(l -> l.alignItems(AlignItems.STRETCH));
+        body.layout(l -> l.widthPercent(100).minWidth(0).alignItems(AlignItems.STRETCH).gapAll(Ui.GAP_M));
         UIElement parents = Ui.row();
         parents.layout(l -> l.gapAll(Ui.GAP_S));
         parents.addChildren(person(orUnknown(family.getParentA())), Ui.text("&", "sm-muted"), person(orUnknown(family.getParentB())));
@@ -52,23 +53,32 @@ public class FamilyTreeScreen extends ThemedScreen {
             children.addScrollViewChild(Ui.emptyState(Component.translatable("screen.sailboatmod.ui.resident.none")));
         }
         for (String child : kids) {
-            children.addScrollViewChild(Ui.text(child));
+            children.addScrollViewChild(Ui.clippedText(child));
         }
         List<String> siblings = family.getSiblings();
+        var back = Ui.button(Component.translatable("gui.back"), Ui.Tone.SECONDARY, this::onClose);
+        back.layout(l -> l.width(78));
+        back.text.layout(l -> l.widthPercent(100).minWidth(0).flexShrink(1));
+        back.textStyle(t -> t.adaptiveWidth(false).textWrap(TextWrap.HOVER_ROLL));
         body.addChildren(
-                Ui.muted(Component.translatable("screen.sailboatmod.ui.resident.parents")), parents,
-                Ui.muted(Component.translatable("screen.sailboatmod.ui.resident.partner")), self,
-                Ui.muted(Component.translatable("screen.sailboatmod.ui.resident.children")), children,
-                Ui.muted(Component.translatable("screen.sailboatmod.ui.resident.siblings")),
+                Ui.clippedText(Component.translatable("screen.sailboatmod.ui.resident.parents"), "sm-muted"), parents,
+                Ui.clippedText(Component.translatable("screen.sailboatmod.ui.resident.partner"), "sm-muted"), self,
+                Ui.clippedText(Component.translatable("screen.sailboatmod.ui.resident.children"), "sm-muted"), children,
+                Ui.clippedText(Component.translatable("screen.sailboatmod.ui.resident.siblings"), "sm-muted"),
                 Ui.paragraph(siblings.isEmpty() ? Component.translatable("screen.sailboatmod.ui.resident.none") : Component.literal(String.join(", ", siblings))),
-                row(Ui.spacer(), Ui.button(Component.translatable("gui.back"), Ui.Tone.SECONDARY, this::onClose)));
-        return body;
+                row(Ui.spacer(), back));
+        var viewport = Ui.scroller();
+        viewport.layout(l -> l.height(250).flexGrow(0));
+        viewport.addScrollViewChild(body);
+        return viewport;
     }
 
     private static UIElement person(Component name) {
         UIElement card = Ui.row("sm-row");
         card.layout(l -> l.flexGrow(1).flexBasis(0).minWidth(0).height(18).paddingHorizontal(Ui.GAP_S));
-        card.addChild(Ui.text(name));
+        var label = Ui.clippedText(name);
+        label.layout(l -> l.width(0).flexGrow(1).minWidth(0));
+        card.addChild(label);
         return card;
     }
 

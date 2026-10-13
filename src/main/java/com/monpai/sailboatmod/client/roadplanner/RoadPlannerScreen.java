@@ -1535,7 +1535,7 @@ public class RoadPlannerScreen extends Screen implements RoadPlannerTileSyncRece
 
             @Override
             public RoadPlannerTopToolbar toolbar() {
-                return RoadPlannerTopToolbar.toolbar(width, expandedToolbarGroup);
+                return currentToolbar();
             }
 
             @Override
@@ -1573,6 +1573,11 @@ public class RoadPlannerScreen extends Screen implements RoadPlannerTileSyncRece
         };
     }
 
+    private RoadPlannerTopToolbar currentToolbar() {
+        return RoadPlannerScreenLayoutModel.fitToolbar(
+                RoadPlannerTopToolbar.toolbar(width, expandedToolbarGroup), width, height);
+    }
+
     @Override
     public void renderBackground(GuiGraphics graphics, int mouseX, int mouseY, float partialTick) {
         graphics.fill(0, 0, width, height, RoadPlannerMapTheme.BACKGROUND);
@@ -1606,7 +1611,7 @@ public class RoadPlannerScreen extends Screen implements RoadPlannerTileSyncRece
     }
 
     private boolean renderTopToolbar(GuiGraphics graphics, int mouseX, int mouseY) {
-        RoadPlannerTopToolbar toolbar = RoadPlannerTopToolbar.toolbar(width, expandedToolbarGroup);
+        RoadPlannerTopToolbar toolbar = currentToolbar();
         fillPanel(graphics, mapLayout.toolbar());
         for (RoadPlannerTopToolbar.Item item : toolbar.items()) {
             boolean selectedGroup = item.kind() == RoadPlannerTopToolbar.Kind.GROUP && item.group() == expandedToolbarGroup;
@@ -2072,7 +2077,7 @@ public class RoadPlannerScreen extends Screen implements RoadPlannerTileSyncRece
         if (chrome != null && chrome.handleClick(mouseX, mouseY, button)) {
             return true;
         }
-        RoadPlannerTopToolbar topToolbar = RoadPlannerTopToolbar.toolbar(width, expandedToolbarGroup);
+        RoadPlannerTopToolbar topToolbar = currentToolbar();
         RoadPlannerTopToolbar.Item toolbarItem = topToolbar.itemAt(mouseX, mouseY);
         if (toolbarItem != null) {
             if (toolbarItem.kind() == RoadPlannerTopToolbar.Kind.GROUP) {

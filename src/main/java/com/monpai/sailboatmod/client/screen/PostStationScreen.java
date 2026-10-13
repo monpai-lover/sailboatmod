@@ -45,7 +45,7 @@ public class PostStationScreen extends TransportTerminalScreen<PostStationMenu> 
     private Page page = Page.DESTINATIONS;
     private final Map<Page, UIElement> pages = new EnumMap<>(Page.class);
     private final TabBar<Page> tabs;
-    private final Label townLabel = Ui.text("", "sm-muted");
+    private final Label townLabel = Ui.clippedText("", "sm-muted");
 
     private final ScrollerView townList = Ui.scroller();
     private final ScrollerView vehicleList = Ui.scroller();
@@ -101,7 +101,8 @@ public class PostStationScreen extends TransportTerminalScreen<PostStationMenu> 
 
         UIElement body = twoHalves(cargoBay(text("book_slot"), text("storage_slot"), text("slot_hint")), terminal);
         UIElement townChip = Ui.row("sm-chip");
-        townChip.layout(l -> l.height(Ui.CONTROL_HEIGHT).paddingHorizontal(Ui.GAP_S).maxWidth(110));
+        townChip.layout(l -> l.width(110).height(Ui.CONTROL_HEIGHT).paddingHorizontal(Ui.GAP_S).maxWidth(110));
+        townLabel.layout(l -> l.width(0).flexGrow(1));
         townChip.addChild(townLabel);
         UIElement window = window(Component.literal(data.stationName()), body, townChip,
                 Ui.iconButton(new ItemStack(Items.COMPASS), text("refresh"), () -> send(PostStationGuiActionPacket.Action.REFRESH)));
@@ -206,10 +207,11 @@ public class PostStationScreen extends TransportTerminalScreen<PostStationMenu> 
 
     private static UIElement section(ScrollerView list, float height, ActionButton... buttons) {
         UIElement row = Ui.row();
-        row.layout(l -> l.gapAll(Ui.GAP_S).alignItems(AlignItems.STRETCH).height(height).flexShrink(0));
-        list.layout(l -> l.heightAuto().flexGrow(1).minWidth(0));
+        row.layout(l -> l.widthPercent(100).minWidth(0).gapAll(Ui.GAP_S)
+                .flexWrap(FlexWrap.WRAP).alignItems(AlignItems.STRETCH).flexShrink(0));
+        list.layout(l -> l.height(height).width(100).flexGrow(1).flexShrink(0).minWidth(90));
         UIElement side = Ui.column();
-        side.layout(l -> l.width(52).flexShrink(0).gapAll(Ui.GAP_XS));
+        side.layout(l -> l.width(52).flexGrow(1).flexShrink(0).gapAll(Ui.GAP_XS));
         for (ActionButton button : buttons) {
             button.element().layout(l -> l.widthPercent(100).height(14));
             side.addChild(button.element());

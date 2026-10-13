@@ -1,6 +1,7 @@
 package com.monpai.sailboatmod.client.ui.vehicle;
 
 import com.lowdragmc.lowdraglib2.gui.ui.UIElement;
+import com.lowdragmc.lowdraglib2.gui.ui.data.TextWrap;
 import com.lowdragmc.lowdraglib2.gui.ui.elements.Button;
 import com.lowdragmc.lowdraglib2.gui.ui.elements.Label;
 import com.monpai.sailboatmod.client.ui.kit.Ui;
@@ -39,19 +40,21 @@ public final class AutopilotPanel {
         this.selectedRoute = selectedRoute;
 
         element = Ui.column("sm-pane");
-        element.layout(l -> l.paddingAll(Ui.GAP_M).gapAll(Ui.GAP_S));
+        element.layout(l -> l.widthPercent(100).minWidth(0).paddingAll(Ui.GAP_M).gapAll(Ui.GAP_S));
         UIElement head = Ui.row();
         head.layout(l -> l.gapAll(Ui.GAP_S));
-        state = Ui.text("");
-        head.addChildren(Ui.icon(new ItemStack(Items.COMPASS), 12), Ui.text(Component.translatable("screen.sailboatmod.ui.autopilot"), "sm-title"),
-                Ui.spacer(), state);
+        state = Ui.clippedText("");
+        state.layout(l -> l.width(58));
+        Label title = Ui.clippedText(Component.translatable("screen.sailboatmod.ui.autopilot"), "sm-title");
+        title.layout(l -> l.width(0).flexGrow(1).minWidth(0));
+        head.addChildren(Ui.icon(new ItemStack(Items.COMPASS), 12), title, state);
 
         UIElement routeRow = Ui.row();
         routeRow.layout(l -> l.gapAll(Ui.GAP_S));
         prev = Ui.button(Component.literal("<"), Ui.Tone.SECONDARY, () -> send(SailboatEntity.AutopilotControlAction.PREV_ROUTE));
         next = Ui.button(Component.literal(">"), Ui.Tone.SECONDARY, () -> send(SailboatEntity.AutopilotControlAction.NEXT_ROUTE));
-        route = Ui.text("");
-        route.layout(l -> l.flexGrow(1));
+        route = Ui.clippedText("");
+        route.layout(l -> l.width(0).flexGrow(1).minWidth(0));
         routeRow.addChildren(prev, route, next);
 
         UIElement controls = Ui.row();
@@ -61,7 +64,10 @@ public final class AutopilotPanel {
         resume = Ui.button(Component.translatable("screen.sailboatmod.route_resume"), Ui.Tone.SECONDARY, () -> send(SailboatEntity.AutopilotControlAction.RESUME));
         stop = Ui.button(Component.translatable("screen.sailboatmod.route_stop"), Ui.Tone.DANGER, () -> send(SailboatEntity.AutopilotControlAction.STOP));
         for (Button button : new Button[] {start, pause, resume, stop}) {
-            button.layout(l -> l.flexGrow(1).flexBasis(0));
+            button.layout(l -> l.widthAuto().flexGrow(1).flexShrink(1).flexBasis(0).minWidth(42));
+            button.text.layout(l -> l.widthPercent(100).minWidth(0).flexShrink(1));
+            button.textStyle(t -> t.adaptiveWidth(false).textWrap(TextWrap.HOVER_ROLL));
+            button.text.setOverflowVisible(false);
         }
         controls.addChildren(start, pause, resume, stop);
         element.addChildren(head, routeRow, controls);

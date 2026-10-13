@@ -199,15 +199,17 @@ public class TownHomeScreen extends ThemedScreen implements RoadPlannerTileSyncR
 
     @Override
     protected float windowWidth() {
-        return 460;
+        return 600;
     }
 
     @Override
     protected UIElement[] headerExtras() {
         UIElement chip = Ui.row("sm-chip");
-        chip.layout(l -> l.height(Ui.CONTROL_HEIGHT).paddingHorizontal(Ui.GAP_S).gapAll(Ui.GAP_S).maxWidth(250));
-        headerLabel = Ui.text("");
-        economyLabel = Ui.text("", "sm-muted");
+        chip.layout(l -> l.width(170).height(Ui.CONTROL_HEIGHT).paddingHorizontal(Ui.GAP_S).gapAll(Ui.GAP_S).maxWidth(170));
+        headerLabel = Ui.clippedText("");
+        economyLabel = Ui.clippedText("", "sm-muted");
+        headerLabel.layout(l -> l.width(0).flexGrow(1));
+        economyLabel.layout(l -> l.width(0).flexGrow(1));
         chip.addChildren(headerLabel, economyLabel);
         return new UIElement[] {chip,
                 Ui.iconButton(new ItemStack(Items.COMPASS), Component.translatable("screen.sailboatmod.town.action.refresh"), this::requestRefresh)};
@@ -270,6 +272,7 @@ public class TownHomeScreen extends ThemedScreen implements RoadPlannerTileSyncR
                 metric("screen.sailboatmod.town.economy.metric.employment", Items.IRON_PICKAXE, employmentMetric),
                 metric("screen.sailboatmod.town.economy.metric.literacy", Items.BOOK, literacyMetric),
                 metric("screen.sailboatmod.town.overview.claims_card", Items.FILLED_MAP, claimsMetric));
+        metrics.layout(l -> l.flexWrap(FlexWrap.WRAP));
 
         joinNationPanel = Ui.column("sm-dialog");
         joinNationPanel.layout(l -> l.paddingAll(Ui.GAP_M).gapAll(Ui.GAP_S));
@@ -280,11 +283,13 @@ public class TownHomeScreen extends ThemedScreen implements RoadPlannerTileSyncR
                 actionRow(Ui.spacer(), Ui.button(Component.translatable("gui.cancel"), Ui.Tone.SECONDARY, this::closeJoinNationOverlay), joinNationConfirmButton.inRow().element()));
 
         UIElement middle = Ui.row();
-        middle.layout(l -> l.gapAll(Ui.GAP_S).alignItems(AlignItems.STRETCH).widthPercent(100));
+        middle.layout(l -> l.gapAll(Ui.GAP_S).flexWrap(FlexWrap.WRAP)
+                .alignItems(AlignItems.STRETCH).widthPercent(100).minWidth(0));
         overviewLines = Ui.column("sm-pane");
-        overviewLines.layout(l -> l.width(174).flexShrink(0).paddingAll(Ui.GAP_M).gapAll(Ui.GAP_XS));
+        overviewLines.layout(l -> l.width(174).flexGrow(1).flexShrink(0).minWidth(150)
+                .paddingAll(Ui.GAP_M).gapAll(Ui.GAP_XS));
         UIElement charts = Ui.column();
-        charts.layout(l -> l.flexGrow(1).minWidth(0).gapAll(Ui.GAP_S));
+        charts.layout(l -> l.width(150).flexGrow(1).flexShrink(0).minWidth(120).gapAll(Ui.GAP_S));
         cultureChart = Ui.column("sm-pane");
         cultureChart.layout(l -> l.paddingAll(Ui.GAP_M).gapAll(Ui.GAP_XS));
         educationChart = Ui.column("sm-pane");
@@ -325,11 +330,11 @@ public class TownHomeScreen extends ThemedScreen implements RoadPlannerTileSyncR
         left.addChildren(Ui.muted(Component.translatable("screen.sailboatmod.town.members.list_title")), memberList);
         UIElement right = Ui.column("sm-pane");
         right.layout(l -> l.widthPercent(100).minWidth(0).paddingAll(Ui.GAP_M).gapAll(Ui.GAP_S));
-        mayorLabel = Ui.text("");
-        memberTotal = Ui.text("", "sm-muted");
-        memberName = Ui.text("", "sm-title");
-        memberOffice = Ui.text("");
-        memberStatus = Ui.text("", "sm-muted");
+        mayorLabel = Ui.clippedText("");
+        memberTotal = Ui.clippedText("", "sm-muted");
+        memberName = Ui.clippedText("", "sm-title");
+        memberOffice = Ui.clippedText("");
+        memberStatus = Ui.clippedText("", "sm-muted");
         appointMayorButton = new ActionButton(Component.translatable("screen.sailboatmod.town.action.appoint_mayor"), Ui.Tone.PRIMARY, this::appointSelectedMayor);
         right.addChildren(Ui.muted(Component.translatable("screen.sailboatmod.town.members.detail_title")), mayorLabel, memberTotal, Ui.divider(),
                 memberName, memberOffice, memberStatus, appointMayorButton.element(), Ui.spacer(),
@@ -388,8 +393,8 @@ public class TownHomeScreen extends ThemedScreen implements RoadPlannerTileSyncR
             permissionButtons.put(action, button);
             grid.addChild(button.element());
         }
-        permissionChunk = Ui.text("");
-        permissionOwner = Ui.text("", "sm-muted");
+        permissionChunk = Ui.clippedText("");
+        permissionOwner = Ui.clippedText("", "sm-muted");
         claimsPermView.addChildren(Ui.muted(Component.translatable("screen.sailboatmod.nation.claims.perms_title")), grid,
                 Ui.divider(), permissionChunk, permissionOwner);
         page.addChildren(claimsTabs.element(), claimsMapView, claimsPermView);
@@ -405,9 +410,9 @@ public class TownHomeScreen extends ThemedScreen implements RoadPlannerTileSyncR
         flagPreview.layout(l -> l.width(130).height(70).flexShrink(0).paddingAll(Ui.GAP_XS));
         UIElement meta = Ui.column();
         meta.layout(l -> l.width(0).flexGrow(1).minWidth(100).gapAll(Ui.GAP_XS));
-        flagLine1 = Ui.text("");
-        flagLine2 = Ui.text("");
-        flagLine3 = Ui.text("", "sm-muted");
+        flagLine1 = Ui.clippedText("");
+        flagLine2 = Ui.clippedText("");
+        flagLine3 = Ui.clippedText("", "sm-muted");
         toggleMirrorButton = new ActionButton(Component.empty(), Ui.Tone.SECONDARY, this::submitMirrorToggle);
         meta.addChildren(flagLine1, flagLine2, flagLine3, toggleMirrorButton.element());
         top.addChildren(flagPreview, meta);
@@ -437,25 +442,29 @@ public class TownHomeScreen extends ThemedScreen implements RoadPlannerTileSyncR
                 metric("screen.sailboatmod.town.economy.metric.employment", Items.IRON_PICKAXE, ecoEmployment),
                 metric("screen.sailboatmod.town.economy.metric.literacy", Items.BOOK, ecoLiteracy),
                 metric("screen.sailboatmod.town.economy.metric.net", Items.EMERALD, ecoNet));
+        metrics.layout(l -> l.flexWrap(FlexWrap.WRAP));
         UIElement status = Ui.column("sm-pane");
         status.layout(l -> l.paddingAll(Ui.GAP_M).gapAll(Ui.GAP_XS));
         status.addChild(Ui.text(Component.translatable("screen.sailboatmod.town.economy.status_title"), "sm-title"));
         for (String key : new String[] {"cashflow", "coverage", "workforce", "education"}) {
             MeterBar bar = new MeterBar();
-            Label value = Ui.alignRight(Ui.text("", "sm-muted"));
-            Label label = Ui.text(Component.translatable("screen.sailboatmod.town.economy.bar." + key), "sm-muted");
-            label.layout(l -> l.width(80));
-            bar.layout(l -> l.flexGrow(1));
-            value.layout(l -> l.width(110));
+            Label value = Ui.alignRight(Ui.clippedText("", "sm-muted"));
+            Label label = Ui.clippedText(Component.translatable("screen.sailboatmod.town.economy.bar." + key), "sm-muted");
+            label.layout(l -> l.width(0).flexGrow(1));
+            bar.layout(l -> l.widthPercent(100));
+            value.layout(l -> l.width(0).flexGrow(1));
             ecoBars.put(key, bar);
             ecoBarValues.put(key, value);
-            status.addChild(row(label, bar, value));
+            UIElement measure = Ui.column();
+            measure.layout(l -> l.widthPercent(100).minWidth(0).gapAll(Ui.GAP_XS));
+            measure.addChildren(row(label, value), bar);
+            status.addChild(measure);
         }
         stockpilePanel = previewPanel();
         demandPanel = previewPanel();
         procurementPanel = previewPanel();
         financePanel = previewPanel();
-        economyBody.addChildren(metrics, status, row(stockpilePanel, demandPanel), row(procurementPanel, financePanel),
+        economyBody.addChildren(metrics, status, actionRow(stockpilePanel, demandPanel), actionRow(procurementPanel, financePanel),
                 Ui.paragraph(Component.translatable("screen.sailboatmod.town.economy.summary_hint"), "sm-muted"));
         page.addChildren(economyEmpty, economyBody);
         return page;
@@ -463,28 +472,35 @@ public class TownHomeScreen extends ThemedScreen implements RoadPlannerTileSyncR
 
     private static UIElement previewPanel() {
         UIElement panel = Ui.column("sm-pane");
-        panel.layout(l -> l.flexGrow(1).flexBasis(0).minWidth(0).paddingAll(Ui.GAP_M).gapAll(Ui.GAP_XS));
+        panel.layout(l -> l.flexGrow(1).flexBasis(130).flexShrink(0).minWidth(130)
+                .paddingAll(Ui.GAP_M).gapAll(Ui.GAP_XS));
         return panel;
     }
 
     private static void fillPreview(UIElement panel, Component title, List<String> lines) {
         panel.clearAllChildren();
-        panel.addChild(Ui.text(title, "sm-title"));
+        panel.addChild(Ui.clippedText(title, "sm-title"));
         int shown = 0;
         for (String line : lines) {
             if (shown++ >= 5) {
                 break;
             }
-            panel.addChild(Ui.text(line));
+            panel.addChild(Ui.clippedText(line));
         }
     }
 
     private static UIElement metric(String key, net.minecraft.world.item.Item icon, Label value) {
         UIElement card = Ui.column("sm-chip");
-        card.layout(l -> l.flexGrow(1).flexBasis(0).minWidth(0).height(30).paddingAll(Ui.GAP_XS).gapAll(Ui.GAP_XS));
+        card.layout(l -> l.flexGrow(1).flexBasis(90).flexShrink(0).minWidth(90)
+                .height(30).paddingAll(Ui.GAP_XS).gapAll(Ui.GAP_XS));
         UIElement head = Ui.row();
         head.layout(l -> l.gapAll(Ui.GAP_XS));
-        head.addChildren(Ui.icon(new ItemStack(icon), 10), Ui.text(Component.translatable(key), "sm-muted"));
+        Label caption = Ui.clippedText(Component.translatable(key), "sm-muted");
+        caption.layout(l -> l.width(0).flexGrow(1));
+        head.addChildren(Ui.icon(new ItemStack(icon), 10), caption);
+        value.textStyle(s -> s.adaptiveWidth(false).adaptiveHeight(false));
+        value.layout(l -> l.widthPercent(100).height(9).flexShrink(0));
+        value.setOverflowVisible(false);
         card.addChildren(head, value);
         return card;
     }
@@ -552,7 +568,7 @@ public class TownHomeScreen extends ThemedScreen implements RoadPlannerTileSyncR
                 int index = i;
                 UIElement row = Ui.row("sm-row");
                 row.layout(l -> l.widthPercent(100).height(JOIN_NATION_ROW_H).paddingHorizontal(Ui.GAP_S).flexShrink(0));
-                row.addChild(Ui.text(targets.get(i).nationName()));
+                row.addChild(Ui.clippedText(targets.get(i).nationName()));
                 Ui.setClass(row, "selected", i == selectedJoinNationIndex);
                 Ui.clickable(row, () -> {
                     selectedJoinNationIndex = index;
@@ -565,7 +581,11 @@ public class TownHomeScreen extends ThemedScreen implements RoadPlannerTileSyncR
 
     private void fillDistribution(UIElement panel, Component title, List<Map.Entry<String, Integer>> entries, String focus, int color) {
         panel.clearAllChildren();
-        panel.addChild(row(Ui.text(title, "sm-title"), Ui.spacer(), Ui.text(focus, "sm-muted")));
+        Label heading = Ui.clippedText(title, "sm-title");
+        Label detail = Ui.clippedText(focus, "sm-muted");
+        heading.layout(l -> l.width(0).flexGrow(1));
+        detail.layout(l -> l.width(0).flexGrow(1));
+        panel.addChild(row(heading, detail));
         if (entries.isEmpty()) {
             panel.addChild(Ui.text(Component.translatable("screen.sailboatmod.town.overview.chart_none"), "sm-muted"));
             return;
@@ -579,11 +599,14 @@ public class TownHomeScreen extends ThemedScreen implements RoadPlannerTileSyncR
             if (shown++ >= 3) {
                 break;
             }
-            Label name = Ui.text(overviewCategoryName(entry.getKey()));
-            name.layout(l -> l.width(70));
+            Label name = Ui.clippedText(overviewCategoryName(entry.getKey()));
+            name.layout(l -> l.width(0).flexGrow(1));
             MeterBar bar = new MeterBar().set(total <= 0 ? 0f : Math.max(0, entry.getValue()) / (float) total, color);
-            bar.layout(l -> l.flexGrow(1));
-            panel.addChild(row(name, bar, Ui.text(Integer.toString(entry.getValue()), "sm-muted")));
+            bar.layout(l -> l.widthPercent(100));
+            UIElement measure = Ui.column();
+            measure.layout(l -> l.widthPercent(100).minWidth(0).gapAll(Ui.GAP_XS));
+            measure.addChildren(row(name, Ui.text(Integer.toString(entry.getValue()), "sm-muted")), bar);
+            panel.addChild(measure);
         }
     }
 
@@ -600,10 +623,12 @@ public class TownHomeScreen extends ThemedScreen implements RoadPlannerTileSyncR
             for (NationOverviewMember member : data.members()) {
                 UIElement row = Ui.row("sm-row");
                 row.layout(l -> l.widthPercent(100).height(14).paddingHorizontal(Ui.GAP_S).gapAll(Ui.GAP_S).flexShrink(0));
-                Label name = Ui.text(member.playerName(), member.online() ? "" : "sm-muted");
-                name.layout(l -> l.flexGrow(1));
+                Label name = Ui.clippedText(member.playerName(), member.online() ? "" : "sm-muted");
+                name.layout(l -> l.width(0).flexGrow(1));
                 String office = member.officeName().isBlank() ? member.officeId() : member.officeName();
-                row.addChildren(name, Ui.text(office, "sm-warn"));
+                Label officeLabel = Ui.clippedText(office, "sm-warn");
+                officeLabel.layout(l -> l.widthPercent(35).maxWidth(70));
+                row.addChildren(name, officeLabel);
                 Ui.setClass(row, "selected", member.playerUuid().equals(selectedMemberUuid));
                 Ui.clickable(row, () -> {
                     selectedMemberUuid = member.playerUuid();

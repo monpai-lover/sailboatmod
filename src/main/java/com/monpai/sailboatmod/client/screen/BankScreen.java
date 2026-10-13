@@ -1,6 +1,7 @@
 package com.monpai.sailboatmod.client.screen;
 
 import com.lowdragmc.lowdraglib2.gui.ui.UIElement;
+import com.lowdragmc.lowdraglib2.gui.ui.data.TextWrap;
 import com.lowdragmc.lowdraglib2.gui.ui.elements.Label;
 import com.lowdragmc.lowdraglib2.gui.ui.elements.ScrollerView;
 import com.lowdragmc.lowdraglib2.gui.ui.elements.TextField;
@@ -63,9 +64,9 @@ public class BankScreen extends ThemedContainerScreen<BankMenu> {
     // storage
     private final ScrollerView itemList = Ui.scroller();
     private final UIElement selectionSlot = Ui.row();
-    private final Label selectionName = Ui.text("", "sm-title");
-    private final Label selectionCount = Ui.text("", "sm-muted");
-    private final Label selectionDepositor = Ui.text("", "sm-muted");
+    private final Label selectionName = Ui.clippedText("", "sm-title");
+    private final Label selectionCount = Ui.clippedText("", "sm-muted");
+    private final Label selectionDepositor = Ui.clippedText("", "sm-muted");
     private ActionButton withdrawItemButton;
     private UIElement inventory;
     private int selectedSlot = -1;
@@ -126,9 +127,14 @@ public class BankScreen extends ThemedContainerScreen<BankMenu> {
         UIElement page = Ui.column("sm-pane");
         page.layout(l -> l.paddingAll(Ui.GAP_L).gapAll(Ui.GAP_M));
         UIElement balance = Ui.row();
-        balance.layout(l -> l.gapAll(Ui.GAP_S));
+        balance.layout(l -> l.widthPercent(100).minWidth(0).gapAll(Ui.GAP_S).flexShrink(0));
+        Label currencyCaption = Ui.clippedText(Component.translatable("screen.sailboatmod.bank.currency_label"), "sm-muted");
+        currencyCaption.layout(l -> l.width(0).flexGrow(1));
         balance.addChildren(Ui.slot(new ItemStack(Items.GOLD_BLOCK), Ui.SLOT),
-                Ui.muted(Component.translatable("screen.sailboatmod.bank.currency_label")), Ui.spacer(), treasuryBalance);
+                currencyCaption);
+        treasuryBalance.textStyle(t -> t.adaptiveWidth(false).adaptiveHeight(false).textWrap(TextWrap.HOVER_ROLL));
+        treasuryBalance.layout(l -> l.widthPercent(100).height(18).flexShrink(0).minWidth(0));
+        treasuryBalance.setOverflowVisible(false);
 
         amountField = Ui.numberField("", Component.translatable("screen.sailboatmod.bank.amount"), MAX_AMOUNT, value -> refreshValidation());
         amountField.layout(l -> l.flexGrow(1).flexBasis(0).flexShrink(1).minWidth(40));
@@ -147,7 +153,7 @@ public class BankScreen extends ThemedContainerScreen<BankMenu> {
             currencyButtons.put(action, button);
             actions.addChild(button.element());
         }
-        page.addChildren(balance, Ui.divider(), Ui.muted(Component.translatable("screen.sailboatmod.bank.amount_label")), actions,
+        page.addChildren(balance, treasuryBalance, Ui.divider(), Ui.muted(Component.translatable("screen.sailboatmod.bank.amount_label")), actions,
                 Ui.paragraph(Component.translatable("screen.sailboatmod.bank.treasury_help"), "sm-muted"));
         return page;
     }
@@ -160,7 +166,7 @@ public class BankScreen extends ThemedContainerScreen<BankMenu> {
         top.layout(l -> l.gapAll(Ui.GAP_M).alignItems(AlignItems.STRETCH).flexGrow(1).flexBasis(0).minHeight(40));
         UIElement listColumn = Ui.column();
         listColumn.layout(l -> l.flexGrow(1).minWidth(0).gapAll(Ui.GAP_XS));
-        Label storageHeading = Ui.muted(Component.translatable("screen.sailboatmod.bank.items_title"));
+        Label storageHeading = Ui.clippedText(Component.translatable("screen.sailboatmod.bank.items_title"), "sm-muted");
         // A fixed single line avoids LDLib2's adaptive-height rounding loop at fractional centred positions.
         storageHeading.textStyle(s -> s.adaptiveHeight(false));
         storageHeading.layout(l -> l.height(9).flexShrink(0));
@@ -171,11 +177,13 @@ public class BankScreen extends ThemedContainerScreen<BankMenu> {
         UIElement head = Ui.row();
         head.layout(l -> l.gapAll(Ui.GAP_S));
         UIElement names = Ui.column();
-        names.layout(l -> l.flexGrow(1).minWidth(0));
+        names.layout(l -> l.width(0).flexGrow(1).minWidth(0));
         names.addChildren(selectionName, selectionCount);
         head.addChildren(selectionSlot, names);
         withdrawItemButton = new ActionButton(Component.translatable("screen.sailboatmod.bank.withdraw_item"), Ui.Tone.PRIMARY, this::sendWithdrawItem);
         withdrawItemButton.element().layout(l -> l.widthPercent(100));
+        withdrawItemButton.element().text.layout(l -> l.widthPercent(100).minWidth(0).flexShrink(1));
+        withdrawItemButton.element().textStyle(t -> t.adaptiveWidth(false).textWrap(TextWrap.HOVER_ROLL));
         side.addChildren(head, selectionDepositor, Ui.spacer(), withdrawItemButton.element());
         ScrollerView sideViewport = Ui.scroller();
         sideViewport.layout(l -> l.heightAuto().width(118).flexGrow(0).flexShrink(0));

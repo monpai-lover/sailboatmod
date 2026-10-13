@@ -35,7 +35,7 @@ public abstract class TransportTerminalScreen<M extends DockMenu> extends Themed
     /** Widths of the two halves of the window. */
     protected static final int CARGO_BAY_WIDTH = 174;
     protected static final int PANEL_GAP = 6;
-    protected static final int TERMINAL_WIDTH = 236;
+    protected static final int TERMINAL_WIDTH = 320;
 
     protected final PendingRequests pending = new PendingRequests();
     protected final ConfirmGate confirm = new ConfirmGate();
@@ -53,8 +53,8 @@ public abstract class TransportTerminalScreen<M extends DockMenu> extends Themed
         bay.layout(l -> l.width(CARGO_BAY_WIDTH).flexShrink(0).paddingAll(Ui.GAP_M).gapAll(Ui.GAP_S));
         UIElement slots = Ui.row();
         slots.layout(l -> l.gapAll(Ui.GAP_L));
-        bookSlotLabel = Ui.text(bookLabel, "sm-muted");
-        depositSlotLabel = Ui.text(depositLabel, "sm-muted");
+        bookSlotLabel = Ui.clippedText(bookLabel, "sm-muted");
+        depositSlotLabel = Ui.clippedText(depositLabel, "sm-muted");
         slots.addChildren(labelledSlot(ROUTE_BOOK_SLOT, bookSlotLabel), labelledSlot(DEPOSIT_SLOT, depositSlotLabel));
         bay.addChildren(slots, Ui.paragraph(hint, "sm-muted"), Ui.divider(), playerInventory(PLAYER_INVENTORY_START));
         return bay;
@@ -62,7 +62,8 @@ public abstract class TransportTerminalScreen<M extends DockMenu> extends Themed
 
     private UIElement labelledSlot(int index, Label label) {
         UIElement column = Ui.row();
-        column.layout(l -> l.gapAll(Ui.GAP_S).flexGrow(1).minWidth(0));
+        column.layout(l -> l.width(0).gapAll(Ui.GAP_S).flexGrow(1).minWidth(0));
+        label.layout(l -> l.width(0).flexGrow(1).minWidth(0));
         column.addChildren(slotGrid(menu.slots.subList(index, index + 1), 1), label);
         return column;
     }
@@ -115,9 +116,9 @@ public abstract class TransportTerminalScreen<M extends DockMenu> extends Themed
     protected static UIElement textRow(String main, String sub) {
         UIElement row = Ui.column("sm-row");
         row.layout(l -> l.widthPercent(100).paddingHorizontal(Ui.GAP_S).paddingVertical(Ui.GAP_XS).flexShrink(0));
-        row.addChild(Ui.text(main == null ? "" : main));
+        row.addChild(Ui.clippedText(main == null ? "" : main));
         if (sub != null && !sub.isBlank()) {
-            row.addChild(Ui.text(sub, "sm-muted"));
+            row.addChild(Ui.clippedText(sub, "sm-muted"));
         }
         return row;
     }
@@ -126,8 +127,8 @@ public abstract class TransportTerminalScreen<M extends DockMenu> extends Themed
     protected static UIElement textRow(String main, String trailing, String trailingClass) {
         UIElement row = Ui.row("sm-row");
         row.layout(l -> l.widthPercent(100).height(14).paddingHorizontal(Ui.GAP_S).gapAll(Ui.GAP_S).flexShrink(0));
-        com.lowdragmc.lowdraglib2.gui.ui.elements.Label name = Ui.text(main == null ? "" : main);
-        name.layout(l -> l.flexGrow(1));
+        com.lowdragmc.lowdraglib2.gui.ui.elements.Label name = Ui.clippedText(main == null ? "" : main);
+        name.layout(l -> l.width(0).flexGrow(1));
         row.addChildren(name, Ui.alignRight(Ui.text(trailing == null ? "" : trailing, trailingClass)));
         return row;
     }

@@ -52,10 +52,10 @@ public abstract class PickListScreen<T> extends ThemedScreen {
             UIElement element = Ui.row("sm-row");
             element.layout(l -> l.widthPercent(100).height(24).paddingHorizontal(Ui.GAP_S).gapAll(Ui.GAP_S).flexShrink(0));
             UIElement names = Ui.column();
-            names.layout(l -> l.flexGrow(1).minWidth(0));
-            names.addChild(Ui.text(row.title()));
+            names.layout(l -> l.width(0).flexGrow(1).minWidth(0));
+            names.addChild(Ui.clippedText(row.title()));
             if (row.detail() != null) {
-                names.addChild(Ui.text(row.detail(), "sm-muted"));
+                names.addChild(Ui.clippedText(row.detail(), "sm-muted"));
             }
             element.addChildren(Ui.slot(row.icon(), Ui.SLOT), names);
             if (row.trailing() != null) {

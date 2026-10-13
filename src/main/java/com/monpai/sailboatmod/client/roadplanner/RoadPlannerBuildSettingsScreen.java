@@ -4,6 +4,7 @@ import com.lowdragmc.lowdraglib2.gui.ui.UIElement;
 import com.lowdragmc.lowdraglib2.gui.ui.elements.Button;
 import com.monpai.sailboatmod.client.ui.kit.ThemedScreen;
 import com.monpai.sailboatmod.client.ui.kit.Ui;
+import dev.vfyjxf.taffy.style.FlexWrap;
 import net.minecraft.network.chat.Component;
 import net.minecraft.client.gui.screens.Screen;
 import net.minecraft.world.item.ItemStack;
@@ -46,7 +47,7 @@ public class RoadPlannerBuildSettingsScreen extends ThemedScreen {
 
     @Override
     protected float windowWidth() {
-        return 250;
+        return 340;
     }
 
     @Override
@@ -70,9 +71,11 @@ public class RoadPlannerBuildSettingsScreen extends ThemedScreen {
         for (int i = 0; i < MATERIALS.length; i++) {
             int index = i;
             UIElement card = Ui.row("sm-row");
-            card.layout(l -> l.width(74).height(22).paddingHorizontal(Ui.GAP_XS).gapAll(Ui.GAP_XS));
-            card.addChildren(Ui.slot(new ItemStack(MATERIAL_ITEMS[i]), Ui.SLOT),
-                    Ui.text(Component.translatable("screen.sailboatmod.ui.road.material." + MATERIALS[i])));
+            card.layout(l -> l.width(92).height(22).paddingHorizontal(Ui.GAP_XS).gapAll(Ui.GAP_XS).flexShrink(0));
+            UIElement nameColumn = Ui.column();
+            nameColumn.layout(l -> l.width(0).flexGrow(1).minWidth(0));
+            nameColumn.addChild(Ui.clippedText(Component.translatable("screen.sailboatmod.ui.road.material." + MATERIALS[i])));
+            card.addChildren(Ui.slot(new ItemStack(MATERIAL_ITEMS[i]), Ui.SLOT), nameColumn);
             Ui.clickable(card, () -> {
                 selectedMaterialIndex = index;
                 refresh();
@@ -86,7 +89,8 @@ public class RoadPlannerBuildSettingsScreen extends ThemedScreen {
             refresh();
         });
         UIElement actions = Ui.row();
-        actions.layout(l -> l.gapAll(Ui.GAP_S));
+        actions.layout(l -> l.widthPercent(100).minWidth(0).gapAll(Ui.GAP_S)
+                .flexWrap(FlexWrap.WRAP).flexShrink(0));
         actions.addChildren(lightsButton, Ui.spacer(),
                 Ui.button(Component.translatable("gui.back"), Ui.Tone.SECONDARY, this::onClose),
                 Ui.button(Component.translatable("screen.sailboatmod.ui.road.start_preview"), Ui.Tone.PRIMARY, this::confirm));

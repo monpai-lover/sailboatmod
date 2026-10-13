@@ -1,6 +1,7 @@
 package com.monpai.sailboatmod.client.screen;
 
 import com.lowdragmc.lowdraglib2.gui.ui.UIElement;
+import com.lowdragmc.lowdraglib2.gui.ui.data.TextWrap;
 import com.lowdragmc.lowdraglib2.gui.ui.elements.Button;
 import com.lowdragmc.lowdraglib2.gui.ui.elements.Label;
 import com.lowdragmc.lowdraglib2.gui.ui.elements.TextField;
@@ -35,9 +36,9 @@ public class SailboatInfoScreen extends ThemedScreen {
     private final SailboatEntity sailboat;
     private TextField nameInput;
     private TextField rentalPriceInput;
-    private final Label owner = Ui.text("", "sm-muted");
-    private final Label storage = Ui.text("", "sm-muted");
-    private final Label rentNow = Ui.text("", "sm-muted");
+    private final Label owner = Ui.clippedText("", "sm-muted");
+    private final Label storage = Ui.clippedText("", "sm-muted");
+    private final Label rentNow = Ui.clippedText("", "sm-muted");
     private Button sailButton;
     private Button handlingButton;
     private Button unloadButton;
@@ -51,7 +52,7 @@ public class SailboatInfoScreen extends ThemedScreen {
 
     @Override
     protected float windowWidth() {
-        return 260;
+        return 360;
     }
 
     @Override
@@ -63,7 +64,7 @@ public class SailboatInfoScreen extends ThemedScreen {
         identity.layout(l -> l.paddingAll(Ui.GAP_M).gapAll(Ui.GAP_S));
         nameInput = Ui.field(sailboat.hasCustomName() ? sailboat.getCustomName().getString() : "",
                 Component.translatable("screen.sailboatmod.name"), value -> { });
-        nameInput.layout(l -> l.flexGrow(1).minWidth(0));
+        nameInput.layout(l -> l.width(0).flexGrow(1).flexShrink(1).minWidth(60));
         rentalPriceInput = Ui.signedField(formatRentalPriceInput(), Component.translatable("screen.sailboatmod.rent_input"),
                 SailboatEntity.MIN_RENTAL_PRICE, SailboatEntity.MAX_RENTAL_PRICE, value -> { });
         rentalPriceInput.layout(l -> l.width(60));
@@ -71,20 +72,23 @@ public class SailboatInfoScreen extends ThemedScreen {
         UIElement fields = Ui.row();
         fields.layout(l -> l.gapAll(Ui.GAP_S));
         fields.addChildren(nameInput, Ui.icon(new ItemStack(Items.EMERALD), 12), rentalPriceInput);
-        UIElement identityActions = Ui.row();
-        identityActions.layout(l -> l.gapAll(Ui.GAP_S));
-        identityActions.addChildren(rentNow, Ui.spacer(),
-                Ui.button(Component.translatable("screen.sailboatmod.open_storage"), Ui.Tone.SECONDARY,
-                        () -> ModNetwork.CHANNEL.sendToServer(new OpenSailboatStoragePacket())),
-                Ui.button(Component.translatable("screen.sailboatmod.save"), Ui.Tone.PRIMARY, this::save));
-        UIElement facts = Ui.row();
-        facts.layout(l -> l.gapAll(Ui.GAP_M));
+        UIElement identityActions = Ui.wrapRow(Ui.GAP_S);
+        identityActions.layout(l -> l.widthPercent(100).minWidth(0));
+        Button openStorage = Ui.button(Component.translatable("screen.sailboatmod.open_storage"), Ui.Tone.SECONDARY,
+                () -> ModNetwork.CHANNEL.sendToServer(new OpenSailboatStoragePacket()));
+        Button save = Ui.button(Component.translatable("screen.sailboatmod.save"), Ui.Tone.PRIMARY, this::save);
+        for (Button button : new Button[] {openStorage, save}) {
+            fitButton(button, 104);
+        }
+        identityActions.addChildren(rentNow, openStorage, save);
+        UIElement facts = Ui.column();
+        facts.layout(l -> l.widthPercent(100).minWidth(0).gapAll(Ui.GAP_S));
         facts.addChildren(owner, storage);
         identity.addChildren(fields, identityActions, facts);
 
         // sailing
-        UIElement sailing = Ui.row();
-        sailing.layout(l -> l.gapAll(Ui.GAP_S));
+        UIElement sailing = Ui.wrapRow(Ui.GAP_S);
+        sailing.layout(l -> l.widthPercent(100).minWidth(0));
         if (sailboat.showsSailControl()) {
             sailButton = Ui.button(Component.empty(), Ui.Tone.SECONDARY, () -> ModNetwork.CHANNEL.sendToServer(new ToggleSailPacket()));
             sailButton.layout(l -> l.flexGrow(1).flexBasis(0));
@@ -103,6 +107,9 @@ public class SailboatInfoScreen extends ThemedScreen {
         });
         unloadButton.layout(l -> l.flexGrow(1).flexBasis(0));
         sailing.addChildren(handlingButton, unloadButton);
+        for (Button button : new Button[] {sailButton, handlingButton, unloadButton}) {
+            if (button != null) fitButton(button, 104);
+        }
 
         autopilot = new AutopilotPanel(sailboat, sailboat::getRouteCount, sailboat::getSelectedRouteIndex);
 
@@ -114,13 +121,26 @@ public class SailboatInfoScreen extends ThemedScreen {
             Button button = Ui.button(Component.empty(), Ui.Tone.SECONDARY,
                     () -> ModNetwork.CHANNEL.sendToServer(new SelectSailboatSeatPacket(sailboat.getId(), seatId)));
             button.layout(l -> l.width(78));
+            button.text.layout(l -> l.widthPercent(100).minWidth(0).flexShrink(1));
+            button.textStyle(t -> t.adaptiveWidth(false).textWrap(TextWrap.HOVER_ROLL));
             seatButtons[seat] = button;
             seats.addChild(button);
         }
 
-        body.addChildren(identity, sailing, autopilot.element(), Ui.text(Component.translatable("screen.sailboatmod.ui.seats"), "sm-muted"), seats);
+        body.layout(l -> l.widthPercent(100).minWidth(0).gapAll(Ui.GAP_M));
+        body.addChildren(identity, sailing, autopilot.element(), Ui.clippedText(Component.translatable("screen.sailboatmod.ui.seats"), "sm-muted"), seats);
         refresh();
-        return body;
+        var viewport = Ui.scroller();
+        viewport.layout(l -> l.height(260).flexGrow(0));
+        viewport.addScrollViewChild(body);
+        return viewport;
+    }
+
+    private static void fitButton(Button button, float minWidth) {
+        button.layout(l -> l.widthAuto().flexBasis(0).flexGrow(1).flexShrink(1).minWidth(minWidth));
+        button.text.layout(l -> l.widthPercent(100).minWidth(0).flexShrink(1));
+        button.textStyle(t -> t.adaptiveWidth(false).textWrap(TextWrap.HOVER_ROLL));
+        button.text.setOverflowVisible(false);
     }
 
     private void save() {

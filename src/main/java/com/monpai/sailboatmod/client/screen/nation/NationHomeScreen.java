@@ -240,15 +240,17 @@ public class NationHomeScreen extends ThemedScreen implements RoadPlannerTileSyn
 
     @Override
     protected float windowWidth() {
-        return 480;
+        return 620;
     }
 
     @Override
     protected UIElement[] headerExtras() {
         UIElement chip = Ui.row("sm-chip");
-        chip.layout(l -> l.height(Ui.CONTROL_HEIGHT).paddingHorizontal(Ui.GAP_S).gapAll(Ui.GAP_S).maxWidth(260));
-        headerLabel = Ui.text("");
-        economyLabel = Ui.text("", "sm-muted");
+        chip.layout(l -> l.width(170).height(Ui.CONTROL_HEIGHT).paddingHorizontal(Ui.GAP_S).gapAll(Ui.GAP_S).maxWidth(170));
+        headerLabel = Ui.clippedText("");
+        economyLabel = Ui.clippedText("", "sm-muted");
+        headerLabel.layout(l -> l.width(0).flexGrow(1));
+        economyLabel.layout(l -> l.width(0).flexGrow(1));
         chip.addChildren(headerLabel, economyLabel);
         return new UIElement[] {chip,
                 Ui.iconButton(new ItemStack(Items.COMPASS), Component.translatable("screen.sailboatmod.nation.action.refresh"), this::requestRefresh)};
@@ -345,12 +347,12 @@ public class NationHomeScreen extends ThemedScreen implements RoadPlannerTileSyn
         towns.layout(l -> l.paddingAll(Ui.GAP_M).gapAll(Ui.GAP_XS));
         previousTownButton = Ui.button(Component.literal("<"), Ui.Tone.SECONDARY, this::previousTownSelection);
         nextTownButton = Ui.button(Component.literal(">"), Ui.Tone.SECONDARY, this::nextTownSelection);
-        townSelected = Ui.text("", "sm-title");
-        townSelected.layout(l -> l.flexGrow(1));
+        townSelected = Ui.clippedText("", "sm-title");
+        townSelected.layout(l -> l.width(0).flexGrow(1).minWidth(40));
         openCapitalTownButton = new ActionButton(Component.translatable("screen.sailboatmod.nation.action.open_town"), Ui.Tone.SECONDARY, this::openCapitalTown);
-        townMayor = Ui.text("", "sm-muted");
-        townClaims = Ui.text("", "sm-muted");
-        townColony = Ui.text("", "sm-muted");
+        townMayor = Ui.clippedText("", "sm-muted");
+        townClaims = Ui.clippedText("", "sm-muted");
+        townColony = Ui.clippedText("", "sm-muted");
         towns.addChildren(actionRow(previousTownButton, townSelected, nextTownButton, openCapitalTownButton.inRow().element()), townMayor, townClaims, townColony);
 
         removeCoreButton = new ActionButton(Component.translatable("screen.sailboatmod.nation.action.remove_core"), Ui.Tone.DANGER, () -> {
@@ -372,16 +374,16 @@ public class NationHomeScreen extends ThemedScreen implements RoadPlannerTileSyn
         page.layout(l -> l.gapAll(Ui.GAP_M).alignItems(AlignItems.STRETCH).flexGrow(1).minHeight(0));
         UIElement left = Ui.column();
         left.layout(l -> l.widthPercent(45).maxWidth(190).minHeight(0).flexShrink(0).gapAll(Ui.GAP_XS));
-        memberCountLabel = Ui.text("", "sm-muted");
+        memberCountLabel = Ui.clippedText("", "sm-muted");
         memberList = Ui.scroller();
         left.addChildren(memberCountLabel, memberList);
 
         UIElement right = Ui.column("sm-pane");
         right.layout(l -> l.widthPercent(100).minWidth(0).paddingAll(Ui.GAP_M).gapAll(Ui.GAP_S));
-        memberName = Ui.text("", "sm-title");
-        memberRole = Ui.text("");
-        memberStatus = Ui.text("");
-        memberUuid = Ui.text("", "sm-muted");
+        memberName = Ui.clippedText("", "sm-title");
+        memberRole = Ui.clippedText("");
+        memberStatus = Ui.clippedText("");
+        memberUuid = Ui.clippedText("", "sm-muted");
         officerTitleInput = Ui.field("", Component.translatable("screen.sailboatmod.nation.members.title_input"), value -> refreshButtons());
         officerTitleInput.layout(l -> l.flexGrow(1).flexBasis(0).flexShrink(1).minWidth(40));
         saveOfficerTitleButton = new ActionButton(Component.translatable("screen.sailboatmod.nation.action.save_title"), Ui.Tone.SECONDARY, this::submitOfficerTitleUpdate);
@@ -452,8 +454,8 @@ public class NationHomeScreen extends ThemedScreen implements RoadPlannerTileSyn
             permissionButtons.put(action, button);
             grid.addChild(button.element());
         }
-        permissionChunk = Ui.text("");
-        permissionOwner = Ui.text("", "sm-muted");
+        permissionChunk = Ui.clippedText("");
+        permissionOwner = Ui.clippedText("", "sm-muted");
         claimsPermView.addChildren(Ui.muted(Component.translatable("screen.sailboatmod.nation.claims.perms_title")), grid,
                 Ui.divider(), permissionChunk, permissionOwner);
         page.addChildren(claimsTabs.element(), claimsMapView, claimsPermView);
@@ -502,8 +504,8 @@ public class NationHomeScreen extends ThemedScreen implements RoadPlannerTileSyn
         diplomacyEmpty = Ui.emptyState(Component.translatable("screen.sailboatmod.nation.diplomacy.select_hint"));
         diplomacyDetail = Ui.column("sm-pane");
         diplomacyDetail.layout(l -> l.paddingAll(Ui.GAP_M).gapAll(Ui.GAP_S));
-        dipSelected = Ui.text("", "sm-title");
-        dipStatus = Ui.text("", "sm-muted");
+        dipSelected = Ui.clippedText("", "sm-title");
+        dipStatus = Ui.clippedText("", "sm-muted");
         dipAllyButton = dipButton("screen.sailboatmod.nation.action.ally", Ui.Tone.PRIMARY, NationGuiActionPacket.Action.DIPLOMACY_ALLY);
         dipTradeButton = dipButton("screen.sailboatmod.nation.action.trade", Ui.Tone.SECONDARY, NationGuiActionPacket.Action.DIPLOMACY_TRADE);
         dipEnemyButton = dipButton("screen.sailboatmod.nation.diplomacy.enemy", Ui.Tone.SECONDARY, NationGuiActionPacket.Action.DIPLOMACY_ENEMY);
@@ -547,7 +549,7 @@ public class NationHomeScreen extends ThemedScreen implements RoadPlannerTileSyn
         UIElement page = Ui.column();
         page.layout(l -> l.gapAll(Ui.GAP_S));
         UIElement metrics = Ui.row();
-        metrics.layout(l -> l.gapAll(Ui.GAP_S));
+        metrics.layout(l -> l.gapAll(Ui.GAP_S).flexWrap(FlexWrap.WRAP));
         metricBalance = Ui.text("", "sm-price");
         metricTowns = Ui.text("", "sm-price");
         metricTrades = Ui.text("", "sm-price");
@@ -561,8 +563,8 @@ public class NationHomeScreen extends ThemedScreen implements RoadPlannerTileSyn
         policy.layout(l -> l.paddingAll(Ui.GAP_M).gapAll(Ui.GAP_S));
         salesTaxBar = new MeterBar();
         tariffBar = new MeterBar();
-        salesTaxValue = Ui.alignRight(Ui.text(""));
-        tariffValue = Ui.alignRight(Ui.text(""));
+        salesTaxValue = Ui.alignRight(Ui.clippedText(""));
+        tariffValue = Ui.alignRight(Ui.clippedText(""));
         treasuryCommandsButton = Ui.button(Component.translatable("screen.sailboatmod.nation.treasury.commands"), Ui.Tone.SECONDARY, () -> {
             showTreasuryCommands = !showTreasuryCommands;
             refresh();
@@ -583,26 +585,32 @@ public class NationHomeScreen extends ThemedScreen implements RoadPlannerTileSyn
 
     private static UIElement metric(String key, net.minecraft.world.item.Item icon, Label value) {
         UIElement card = Ui.column("sm-chip");
-        card.layout(l -> l.flexGrow(1).flexBasis(0).minWidth(0).height(30).paddingAll(Ui.GAP_XS).gapAll(Ui.GAP_XS));
+        card.layout(l -> l.flexGrow(1).flexBasis(90).flexShrink(0).minWidth(90)
+                .height(30).paddingAll(Ui.GAP_XS).gapAll(Ui.GAP_XS));
         UIElement head = Ui.row();
         head.layout(l -> l.gapAll(Ui.GAP_XS));
-        head.addChildren(Ui.icon(new ItemStack(icon), 10), Ui.text(Component.translatable(key), "sm-muted"));
+        Label caption = Ui.clippedText(Component.translatable(key), "sm-muted");
+        caption.layout(l -> l.width(0).flexGrow(1));
+        head.addChildren(Ui.icon(new ItemStack(icon), 10), caption);
+        value.textStyle(s -> s.adaptiveWidth(false).adaptiveHeight(false));
+        value.layout(l -> l.widthPercent(100).height(9).flexShrink(0));
+        value.setOverflowVisible(false);
         card.addChildren(head, value);
         return card;
     }
 
     private UIElement policyRow(String labelKey, MeterBar bar, Label value, Runnable down, Runnable up) {
-        UIElement line = Ui.row();
-        line.layout(l -> l.gapAll(Ui.GAP_S));
-        Label label = Ui.text(Component.translatable(labelKey), "sm-muted");
-        label.layout(l -> l.width(90));
-        bar.layout(l -> l.flexGrow(1));
+        UIElement line = Ui.column();
+        line.layout(l -> l.widthPercent(100).minWidth(0).gapAll(Ui.GAP_XS));
+        Label label = Ui.clippedText(Component.translatable(labelKey), "sm-muted");
+        label.layout(l -> l.width(0).flexGrow(1).minWidth(60));
+        bar.layout(l -> l.widthPercent(100));
         value.layout(l -> l.width(40));
         Button minus = Ui.button(Component.literal("-"), Ui.Tone.SECONDARY, down);
         Button plus = Ui.button(Component.literal("+"), Ui.Tone.SECONDARY, up);
         taxButtons.add(minus);
         taxButtons.add(plus);
-        line.addChildren(label, bar, value, minus, plus);
+        line.addChildren(actionRow(label, value, minus, plus), bar);
         return line;
     }
 
@@ -615,9 +623,9 @@ public class NationHomeScreen extends ThemedScreen implements RoadPlannerTileSyn
         flagPreview.layout(l -> l.width(130).height(70).flexShrink(0).paddingAll(Ui.GAP_XS));
         UIElement meta = Ui.column();
         meta.layout(l -> l.width(0).flexGrow(1).minWidth(100).gapAll(Ui.GAP_XS));
-        flagLine1 = Ui.text("");
-        flagLine2 = Ui.text("");
-        flagLine3 = Ui.text("", "sm-muted");
+        flagLine1 = Ui.clippedText("");
+        flagLine2 = Ui.clippedText("");
+        flagLine3 = Ui.clippedText("", "sm-muted");
         toggleMirrorButton = new ActionButton(Component.empty(), Ui.Tone.SECONDARY, this::submitMirrorToggle);
         meta.addChildren(flagLine1, flagLine2, flagLine3, toggleMirrorButton.element());
         top.addChildren(flagPreview, meta);
@@ -743,9 +751,11 @@ public class NationHomeScreen extends ThemedScreen implements RoadPlannerTileSyn
                 UIElement dot = new UIElement();
                 dot.layout(l -> l.width(4).height(4).flexShrink(0));
                 dot.style(s -> s.background(new ColorRectTexture(member.online() ? 0xFF56DDB4 : 0xFF71808F)));
-                Label name = Ui.text(member.playerName());
-                name.layout(l -> l.flexGrow(1));
-                row.addChildren(dot, name, Ui.text(member.officeName(), "sm-warn"));
+                Label name = Ui.clippedText(member.playerName());
+                name.layout(l -> l.width(0).flexGrow(1));
+                Label office = Ui.clippedText(member.officeName(), "sm-warn");
+                office.layout(l -> l.widthPercent(35).maxWidth(70));
+                row.addChildren(dot, name, office);
                 Ui.setClass(row, "selected", member.playerUuid().equals(selectedMemberUuid));
                 Ui.clickable(row, () -> {
                     selectedMemberUuid = member.playerUuid();
@@ -830,9 +840,11 @@ public class NationHomeScreen extends ThemedScreen implements RoadPlannerTileSyn
                 flag.set(entry.flagId().isBlank() ? null
                                 : NationFlagTextureCache.resolve(entry.flagId(), entry.primaryColorRgb(), entry.secondaryColorRgb(), entry.flagMirrored()),
                         16, 16, entry.primaryColorRgb());
-                Label name = Ui.text(entry.nationName());
-                name.layout(l -> l.flexGrow(1));
-                row.addChildren(flag, name, Ui.text(statusName(entry.diplomacyStatusId()), statusClass(entry.diplomacyStatusId())));
+                Label name = Ui.clippedText(entry.nationName());
+                name.layout(l -> l.width(0).flexGrow(1));
+                Label relation = Ui.clippedText(statusName(entry.diplomacyStatusId()), statusClass(entry.diplomacyStatusId()));
+                relation.layout(l -> l.widthPercent(35).maxWidth(70));
+                row.addChildren(flag, name, relation);
                 Ui.setClass(row, "selected", entry.nationId().equals(selectedDiplomacyNationId));
                 Ui.clickable(row, () -> {
                     selectedDiplomacyNationId = entry.nationId();
@@ -850,9 +862,9 @@ public class NationHomeScreen extends ThemedScreen implements RoadPlannerTileSyn
             dipStatus.setValue(Component.translatable("screen.sailboatmod.nation.diplomacy.status", statusName(selected.diplomacyStatusId())));
         }
         dipRequests.clearAllChildren();
-        dipRequests.addChild(Ui.text(Component.translatable("screen.sailboatmod.nation.war.requests_title"), "sm-title"));
+        dipRequests.addChild(Ui.clippedText(Component.translatable("screen.sailboatmod.nation.war.requests_title"), "sm-title"));
         for (Component line : buildIncomingRequestLines()) {
-            dipRequests.addChild(Ui.text(line));
+            dipRequests.addChild(Ui.clippedText(line));
         }
     }
 

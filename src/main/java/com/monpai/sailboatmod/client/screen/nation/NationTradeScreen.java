@@ -47,7 +47,7 @@ public class NationTradeScreen extends ThemedScreen {
 
     private Side ours;
     private Side theirs;
-    private final Label status = Ui.text("", "sm-muted");
+    private final Label status = Ui.clippedText("", "sm-muted");
     private ActionButton proposeButton;
     private ActionButton acceptButton;
     private ActionButton rejectButton;
@@ -59,8 +59,8 @@ public class NationTradeScreen extends ThemedScreen {
         final boolean offer;
         final UIElement swatch = new UIElement();
         int shownColor = -1;
-        final Label name = Ui.text("", "sm-title");
-        final Label balance = Ui.text("", "sm-muted");
+        final Label name = Ui.clippedText("", "sm-title");
+        final Label balance = Ui.clippedText("", "sm-muted");
         final UIElement tradeGrid = Ui.wrapRow(Ui.GAP_XS);
         final TextField currency;
         final Label treasuryTitle = Ui.text("", "sm-muted");
@@ -71,17 +71,19 @@ public class NationTradeScreen extends ThemedScreen {
         Side(boolean offer) {
             this.offer = offer;
             element = Ui.column("sm-pane");
-            element.layout(l -> l.flexGrow(1).flexBasis(0).minWidth(0).paddingAll(Ui.GAP_M).gapAll(Ui.GAP_S));
+            element.layout(l -> l.width(200).flexGrow(1).flexShrink(0).minWidth(160)
+                    .paddingAll(Ui.GAP_M).gapAll(Ui.GAP_S));
             swatch.layout(l -> l.width(10).height(10).flexShrink(0));
+            name.layout(l -> l.width(0).flexGrow(1));
             UIElement head = Ui.row();
             head.layout(l -> l.gapAll(Ui.GAP_S));
             head.addChildren(swatch, name);
-            tradeGrid.layout(l -> l.width(5 * (Ui.SLOT + Ui.GAP_XS)));
+            tradeGrid.layout(l -> l.widthPercent(100).minWidth(0).flexShrink(0));
             currency = Ui.field("", Component.translatable("screen.sailboatmod.trade.currency"), value -> { });
             currency.setCharValidator(TradeWindowStatePolicy::isCurrencyCharacterAllowed);
             currency.setTextValidator(text -> text.length() <= 15 && text.equals(TradeWindowStatePolicy.filterCurrencyText(text)));
             currency.layout(l -> l.widthPercent(100));
-            treasury.layout(l -> l.height(3 * (Ui.SLOT + 1) + 2).flexGrow(0));
+            treasury.layout(l -> l.height(3 * (Ui.SLOT + 1) + 2).flexGrow(0).flexShrink(0));
             treasuryGrid.layout(l -> l.widthPercent(100));
             treasury.addScrollViewChild(treasuryGrid);
             element.addChildren(head, balance,
@@ -119,7 +121,7 @@ public class NationTradeScreen extends ThemedScreen {
 
     @Override
     protected float windowWidth() {
-        return 380;
+        return 520;
     }
 
     @Override
@@ -128,7 +130,8 @@ public class NationTradeScreen extends ThemedScreen {
         ours = new Side(true);
         theirs = new Side(false);
         UIElement sides = Ui.row();
-        sides.layout(l -> l.gapAll(Ui.GAP_M).alignItems(AlignItems.STRETCH));
+        sides.layout(l -> l.widthPercent(100).minWidth(0).gapAll(Ui.GAP_M)
+                .flexWrap(FlexWrap.WRAP).alignItems(AlignItems.STRETCH));
         sides.addChildren(ours.element, theirs.element);
 
         proposeButton = new ActionButton(Component.translatable("screen.sailboatmod.trade.propose"), Ui.Tone.PRIMARY,
@@ -154,12 +157,17 @@ public class NationTradeScreen extends ThemedScreen {
         for (ActionButton button : List.of(proposeButton, acceptButton, rejectButton, counterButton, cancelButton)) {
             button.inRow();
         }
-        UIElement footer = Ui.row();
-        footer.layout(l -> l.widthPercent(100).minWidth(0).flexWrap(FlexWrap.WRAP).gapAll(Ui.GAP_S));
-        status.layout(l -> l.flexGrow(1).flexBasis(0).minWidth(0));
-        footer.addChildren(status, rejectButton.element(), counterButton.element(), cancelButton.element(),
+        UIElement footer = Ui.column();
+        footer.layout(l -> l.widthPercent(100).minWidth(0).gapAll(Ui.GAP_S).flexShrink(0));
+        UIElement actions = Ui.wrapRow(Ui.GAP_S);
+        actions.layout(l -> l.widthPercent(100).minWidth(0));
+        actions.addChildren(rejectButton.element(), counterButton.element(), cancelButton.element(),
                 acceptButton.element(), proposeButton.element());
-        body.addChildren(sides, footer);
+        footer.addChildren(status, actions);
+        ScrollerView sidesViewport = Ui.scroller();
+        sidesViewport.layout(l -> l.height(240).flexGrow(0));
+        sidesViewport.addScrollViewChild(sides);
+        body.addChildren(sidesViewport, footer);
         loadCurrencyInputsFromData();
         refresh();
         return body;

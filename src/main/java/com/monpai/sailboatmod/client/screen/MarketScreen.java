@@ -87,6 +87,7 @@ public class MarketScreen extends Screen implements MenuAccess<MarketMenu>, Mark
         }
         themeSubscription.mount();
         // Re-initialising on resize keeps the same element tree, so selections, typed text and scroll survive.
+        view.setViewportSize(width, height);
         modularUI.setScreenAndInit(this);
         addRenderableWidget(modularUI.getWidget());
         setFocused(modularUI.getWidget());
@@ -173,6 +174,9 @@ public class MarketScreen extends Screen implements MenuAccess<MarketMenu>, Mark
                 return true;
             }
             if (view.closeOpenSelector()) {
+                return true;
+            }
+            if (view.closeDetailOverlay()) {
                 return true;
             }
             if (model.escape() == MarketViewModel.EscapeResult.HANDLED) {
