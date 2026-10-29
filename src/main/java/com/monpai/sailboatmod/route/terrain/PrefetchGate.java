@@ -29,4 +29,9 @@ public interface PrefetchGate {
 
     /** 请求 a→b 直线两侧各 sideBlocks 格走廊内的所有区域;返回各区域的 future(去重)。 */
     List<CompletableFuture<Void>> requestCorridor(BlockPos a, BlockPos b, int sideBlocks);
+
+    /** Lazily visits one nearby tile at a time. Creating/advancing the iterator never enqueues a distant corridor. */
+    default Iterable<CompletableFuture<Void>> corridor(BlockPos a, BlockPos b, int sideBlocks) {
+        return () -> new LazyPrefetchCorridor(this, a, b, sideBlocks);
+    }
 }

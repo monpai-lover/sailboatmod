@@ -24,7 +24,7 @@ public class RoadMapServerColumnSampler implements RoadMapColumnSampler {
         try {
             int chunkX = Math.floorDiv(worldX, 16);
             int chunkZ = Math.floorDiv(worldZ, 16);
-            if (level.getChunkSource().getChunk(chunkX, chunkZ, false) == null) {
+            if (level.getChunkSource().getChunkNow(chunkX, chunkZ) == null) {
                 return unavailableSample(worldX, worldZ);
             }
             int surfaceY = level.getHeight(Heightmap.Types.MOTION_BLOCKING_NO_LEAVES, worldX, worldZ) - 1;
@@ -35,9 +35,11 @@ public class RoadMapServerColumnSampler implements RoadMapColumnSampler {
             BlockState state = level.getBlockState(pos);
             boolean water = MapBlockColors.isWaterSurface(state);
             int waterDepth = water ? waterDepth(level, pos) : 0;
-            int reliefBaseY = Math.max(
-                    level.getHeight(Heightmap.Types.MOTION_BLOCKING_NO_LEAVES, worldX, worldZ + 1),
-                    level.getHeight(Heightmap.Types.MOTION_BLOCKING_NO_LEAVES, worldX - 1, worldZ));
+            int northZ = worldZ - 1;
+            int reliefBaseY = surfaceY;
+            if (level.getChunkSource().getChunkNow(chunkX, Math.floorDiv(northZ, 16)) != null) {
+                reliefBaseY = level.getHeight(Heightmap.Types.MOTION_BLOCKING_NO_LEAVES, worldX, northZ) - 1;
+            }
             MapColor mapColor = state.getMapColor(level, pos);
             int fallback = mapColor == null ? UNKNOWN_ARGB : mapColor.calculateRGBColor(MapColor.Brightness.NORMAL);
             int argb = water ? MapBlockColors.waterArgb() : MapBlockColors.colorFor(state, fallback);
@@ -67,7 +69,7 @@ public class RoadMapServerColumnSampler implements RoadMapColumnSampler {
     private static int waterDepth(ServerLevel level, BlockPos pos) {
         int depth = 0;
         BlockPos.MutableBlockPos mutable = pos.mutable();
-        while (MapBlockColors.isWaterSurface(level.getBlockState(mutable)) && mutable.getY() > level.getMinBuildHeight()) {
+        while (MapBlockColors.isWaterSurface(level.getBlockState(mutable)) && mutable.getY() >= level.getMinBuildHeight()) {
             depth++;
             mutable.move(Direction.DOWN);
         }

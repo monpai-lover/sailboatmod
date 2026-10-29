@@ -23,6 +23,13 @@ public final class RoadPlannerBridgeGeometryPlanner {
             return new Plan(List.of(), List.of(), SEA_LEVEL + safeConfig.getDeckHeight(), RoadPlannerBridgeProfile.PIER_BRIDGE);
         }
         RoadTerrainSampler safeSampler = terrainSampler == null ? RoadTerrainSampler.flat(points.get(0).terrainY()) : terrainSampler;
+        RoadTerrainSampler.BridgeWindow window = safeSampler.bridgeWindow(points);
+        if (window != null && window.length() > 128) {
+            RoadSpan original = window.sourceType() == null ? span
+                    : new RoadSpan(RoadSpanType.BRIDGE, 0, window.length(), window.sourceType());
+            return planWindow(points, original, safeSampler, safeConfig, window.offset(), window.length(),
+                    window.entryY(), window.exitY(), window.waterY());
+        }
         int waterY = bridgeWaterReferenceY(points, safeSampler);
         int entryY = Math.max(points.get(0).targetY(), waterY);
         int exitY = Math.max(points.get(points.size() - 1).targetY(), waterY);
@@ -33,6 +40,37 @@ public final class RoadPlannerBridgeGeometryPlanner {
         List<PlannedPoint> plannedPoints = rampedDeck(points, entryY, exitY, deckY);
         List<Pier> piers = profile.usesPiers() ? piers(points, plannedPoints, deckY, safeSampler, safeConfig) : List.of();
         return new Plan(plannedPoints, piers, deckY, profile);
+    }
+
+    /** Emits only a local slice while retaining the complete bridge's ramp and pier coordinate system. */
+    public static Plan planWindow(List<RoadCenterlinePoint> points, RoadSpan span, RoadTerrainSampler sampler,
+                                  BridgeConfig config, int offset, int globalLength, int entryY, int exitY, int waterY) {
+        BridgeConfig safe = safeConfig(config);
+        RoadPlannerBridgeProfile profile = resolveProfile(RoadPlannerBridgeProfile.classify(globalLength), waterY, entryY, exitY);
+        int deckY = deckYForProfile(profile, waterY, entryY, exitY, globalLength, span, safe);
+        int total = globalLength + 1;
+        int ascHeight = Math.max(0, deckY - entryY), descHeight = Math.max(0, deckY - exitY);
+        int deckStart = Math.min(globalLength, rampLength(ascHeight, globalLength));
+        int deckEnd = Math.max(deckStart, total - rampLength(descHeight, globalLength));
+        if (deckStart >= deckEnd && (ascHeight > 0 || descHeight > 0)) {
+            deckStart = Math.max(0, Math.min(total - 1, total / 2));
+            deckEnd = deckStart + 1;
+        }
+        List<PlannedPoint> local = new ArrayList<>();
+        List<Pier> piers = new ArrayList<>();
+        for (int index = 0; index < points.size(); index++) {
+            int global = offset + index;
+            int y;
+            BuildPhase phase;
+            if (global < deckStart) { y = rampY(entryY, deckY, global, Math.max(1, deckStart)); phase = BuildPhase.RAMP; }
+            else if (global >= deckEnd) { y = rampY(exitY, deckY, total - 1 - global, Math.max(1, total - deckEnd)); phase = BuildPhase.RAMP; }
+            else { y = deckY; phase = BuildPhase.DECK; }
+            local.add(new PlannedPoint(points.get(index).withTargetY(y), phase));
+            if (profile.usesPiers() && phase == BuildPhase.DECK && Math.floorMod(global, Math.max(5, safe.getPierInterval())) == 0) {
+                addPier(piers, points.get(index), deckY, sampler);
+            }
+        }
+        return new Plan(local, piers, deckY, profile);
     }
 
     private static BridgeConfig safeConfig(BridgeConfig config) {

@@ -14,7 +14,21 @@ import org.jetbrains.annotations.Nullable;
 import java.util.List;
 import java.util.UUID;
 
-public interface TransportEntity {
+public interface TransportEntity extends com.monpai.sailboatmod.transport.LogisticsCarrier {
+    @Override
+    default Kind transportKind() { return this instanceof CarriageEntity ? Kind.LAND : Kind.WATER; }
+
+    @Override
+    default String dimensionId() { return asEntity().level().dimension().location().toString(); }
+
+    @Override
+    default net.minecraft.world.phys.AABB transportBounds() { return asEntity().getBoundingBox(); }
+
+    @Override
+    default com.monpai.sailboatmod.transport.CargoLoadReceipt loadCargoForDispatch(List<ItemStack> cargo) {
+        return com.monpai.sailboatmod.transport.CargoLoadReceipt.loadEmptyCarrier(this, cargo);
+    }
+
     default Entity asEntity() {
         return (Entity) this;
     }

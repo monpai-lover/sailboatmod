@@ -2,12 +2,12 @@ package com.monpai.sailboatmod.client.roadplanner;
 
 import com.mojang.blaze3d.platform.NativeImage;
 import com.monpai.sailboatmod.roadplanner.map.MapBlockColors;
+import com.monpai.sailboatmod.roadplanner.map.RoadMapRenderStyle;
 import net.minecraft.client.multiplayer.ClientLevel;
 import net.minecraft.core.BlockPos;
 import net.minecraft.world.level.ChunkPos;
 import net.minecraft.world.level.block.state.BlockState;
 import net.minecraft.world.level.levelgen.Heightmap;
-import net.minecraft.world.level.material.Fluids;
 import net.minecraft.world.level.material.MapColor;
 
 public class RoadPlannerChunkImage implements AutoCloseable {
@@ -55,30 +55,29 @@ public class RoadPlannerChunkImage implements AutoCloseable {
         if (state.isAir()) {
             return 0x00000000;
         }
-        if (state.getFluidState().is(Fluids.WATER)) {
-            BlockState topState = topWaterBlock(level, pos);
-            MapColor mapColor = topState.getMapColor(level, pos);
-            if (mapColor == null) {
-                mapColor = MapColor.WATER;
-            }
-            return waterArgbForMapColor(mapColor, waterDepth(level, pos));
+        if (MapBlockColors.isWaterSurface(state)) {
+            return waterArgbForDepth(waterDepth(level, pos));
         }
         MapColor mapColor = state.getMapColor(level, pos);
         if (mapColor == null) {
             return 0x00000000;
         }
-        int heightHere = level.getHeight(Heightmap.Types.MOTION_BLOCKING_NO_LEAVES, pos.getX(), pos.getZ());
-        int heightSouth = level.getHeight(Heightmap.Types.MOTION_BLOCKING_NO_LEAVES, pos.getX(), pos.getZ() + 1);
-        int heightWest = level.getHeight(Heightmap.Types.MOTION_BLOCKING_NO_LEAVES, pos.getX() - 1, pos.getZ());
-        int relief = heightHere - Math.max(heightSouth, heightWest);
-        return terrainArgbForMapColor(mapColor, relief);
+        int northZ = pos.getZ() - 1;
+        int northHeight = pos.getY();
+        if (level.getChunkSource().getChunk(Math.floorDiv(pos.getX(), 16), Math.floorDiv(northZ, 16), false) != null) {
+            northHeight = level.getHeight(Heightmap.Types.MOTION_BLOCKING_NO_LEAVES, pos.getX(), northZ) - 1;
+        }
+        int fallback = mapColor.calculateRGBColor(MapColor.Brightness.NORMAL);
+        return RoadMapRenderStyle.styleTerrainByDelta(MapBlockColors.colorFor(state, fallback), pos.getY() - northHeight);
     }
 
     static int terrainArgbForMapColor(MapColor mapColor, int relief) {
         if (mapColor == null) {
             return 0x00000000;
         }
-        return RoadPlannerMapPalette.softenTerrain(0xFF000000 | mapColor.calculateRGBColor(terrainBrightness(relief)));
+        int base = mapColor == MapColor.GRASS ? MapBlockColors.lookup("minecraft:grass_block")
+                : 0xFF000000 | mapColor.calculateRGBColor(MapColor.Brightness.NORMAL);
+        return RoadMapRenderStyle.styleTerrainByDelta(base, relief);
     }
 
     static int waterArgbForDepth(int depth) {
@@ -86,35 +85,13 @@ public class RoadPlannerChunkImage implements AutoCloseable {
     }
 
     static int waterArgbForMapColor(MapColor mapColor, int depth) {
-        if (mapColor == null) {
-            mapColor = MapColor.WATER;
-        }
-        return RoadPlannerMapPalette.softenWater(0xFF000000 | mapColor.calculateRGBColor(waterBrightness(depth)));
-    }
-
-    private static MapColor.Brightness terrainBrightness(int relief) {
-        return relief > 2 ? MapColor.Brightness.HIGH
-                : relief > 0 ? MapColor.Brightness.NORMAL
-                : relief > -2 ? MapColor.Brightness.LOW : MapColor.Brightness.LOWEST;
-    }
-
-    private static MapColor.Brightness waterBrightness(int depth) {
-        return depth > 6 ? MapColor.Brightness.LOWEST
-                : depth > 3 ? MapColor.Brightness.LOW : MapColor.Brightness.NORMAL;
-    }
-
-    private BlockState topWaterBlock(ClientLevel level, BlockPos pos) {
-        BlockPos.MutableBlockPos mutable = pos.mutable();
-        while (level.getBlockState(mutable).getFluidState().is(Fluids.WATER) && mutable.getY() < level.getMaxBuildHeight()) {
-            mutable.move(net.minecraft.core.Direction.UP);
-        }
-        return level.getBlockState(mutable.below());
+        return RoadMapRenderStyle.styleWater(depth);
     }
 
     private int waterDepth(ClientLevel level, BlockPos pos) {
         int depth = 0;
         BlockPos.MutableBlockPos mutable = pos.mutable();
-        while (level.getBlockState(mutable).getFluidState().is(Fluids.WATER) && mutable.getY() > level.getMinBuildHeight()) {
+        while (MapBlockColors.isWaterSurface(level.getBlockState(mutable)) && mutable.getY() >= level.getMinBuildHeight()) {
             depth++;
             mutable.move(net.minecraft.core.Direction.DOWN);
         }

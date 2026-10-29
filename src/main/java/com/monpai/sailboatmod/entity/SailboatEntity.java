@@ -14,6 +14,7 @@ import com.monpai.sailboatmod.item.RouteBookItem;
 import com.monpai.sailboatmod.integration.bluemap.BlueMapIntegration;
 import com.monpai.sailboatmod.registry.ModItems;
 import com.monpai.sailboatmod.route.PathSmoother;
+import com.monpai.sailboatmod.route.AutopilotRouteWindow;
 import com.monpai.sailboatmod.route.RouteDefinition;
 import com.monpai.sailboatmod.route.RouteNbtUtil;
 import com.monpai.sailboatmod.route.water.DockBerthResolver;
@@ -265,7 +266,6 @@ public class SailboatEntity extends Boat implements GeoEntity, MenuProvider, Tra
     private static final int AUTOPILOT_TARGET_CHUNK_RADIUS = 1;
     private static final int AUTOPILOT_DEST_DOCK_CHUNK_RADIUS = 2;
     // 自动航线生成时抽稀到 256;上限留出余量给 Tellus 前瞻插入的绕行点(无封包/存档长度限制)。
-    private static final int MAX_AUTOPILOT_WAYPOINTS = 512;
     public static final int DEFAULT_RENTAL_PRICE = 100;
     public static final int DISABLED_RENTAL_PRICE = -1;
     public static final int MIN_RENTAL_PRICE = DISABLED_RENTAL_PRICE;
@@ -1347,7 +1347,6 @@ public class SailboatEntity extends Boat implements GeoEntity, MenuProvider, Tra
         tag.putInt("EngineGear", getEngineGear().id);
         tag.putBoolean("AutopilotActive", isAutopilotActive());
         tag.putBoolean("AutopilotPaused", isAutopilotPaused());
-        tag.putInt("AutopilotTargetIndex", autopilotTargetIndex);
         tag.putString("AutopilotRouteName", autopilotRouteName);
         tag.putString("PendingShipperName", pendingShipperName);
         tag.putString("AutopilotShipmentShipperName", autopilotShipmentShipperName);
@@ -1379,15 +1378,7 @@ public class SailboatEntity extends Boat implements GeoEntity, MenuProvider, Tra
             tag.putLong("RouteDockPos", routeDockPos.asLong());
         }
 
-        ListTag routeTag = new ListTag();
-        for (Vec3 waypoint : autopilotRoute) {
-            CompoundTag waypointTag = new CompoundTag();
-            waypointTag.putDouble("X", waypoint.x);
-            waypointTag.putDouble("Y", waypoint.y);
-            waypointTag.putDouble("Z", waypoint.z);
-            routeTag.add(waypointTag);
-        }
-        tag.put("AutopilotRoute", routeTag);
+        AutopilotRouteWindow.save(tag, autopilotRoute, autopilotTargetIndex);
     }
 
     @Override
@@ -1416,17 +1407,9 @@ public class SailboatEntity extends Boat implements GeoEntity, MenuProvider, Tra
         selectedRouteIndex = routeCatalog.isEmpty() ? 0 : Mth.clamp(tag.getInt("SelectedRouteIndex"), 0, routeCatalog.size() - 1);
         routeDockPos = tag.contains("RouteDockPos") ? BlockPos.of(tag.getLong("RouteDockPos")) : null;
         autopilotRoute.clear();
-        ListTag routeTag = tag.getList("AutopilotRoute", net.minecraft.nbt.Tag.TAG_COMPOUND);
-        for (Tag entry : routeTag) {
-            if (entry instanceof CompoundTag waypointTag) {
-                autopilotRoute.add(new Vec3(
-                        waypointTag.getDouble("X"),
-                        waypointTag.getDouble("Y"),
-                        waypointTag.getDouble("Z")
-                ));
-            }
-        }
-        autopilotTargetIndex = Mth.clamp(tag.getInt("AutopilotTargetIndex"), 0, Math.max(autopilotRoute.size() - 1, 0));
+        AutopilotRouteWindow.State restoredRoute = AutopilotRouteWindow.load(tag);
+        autopilotRoute.addAll(restoredRoute.route());
+        autopilotTargetIndex = restoredRoute.targetIndex();
         autopilotRouteName = tag.getString("AutopilotRouteName");
         pendingShipperName = tag.getString("PendingShipperName");
         autopilotShipmentShipperName = tag.getString("AutopilotShipmentShipperName");
@@ -1862,10 +1845,7 @@ public class SailboatEntity extends Boat implements GeoEntity, MenuProvider, Tra
             return false;
         }
         autopilotRoute.clear();
-        int count = Math.min(route.waypoints().size(), MAX_AUTOPILOT_WAYPOINTS);
-        for (int i = 0; i < count; i++) {
-            autopilotRoute.add(route.waypoints().get(i));
-        }
+        autopilotRoute.addAll(AutopilotRouteWindow.complete(route.waypoints()));
         if (autopilotRoute.size() < 2) {
             stopAutopilot();
             return false;
@@ -4206,12 +4186,12 @@ public class SailboatEntity extends Boat implements GeoEntity, MenuProvider, Tra
 
         @Override
         public List<Vec3> route() {
-            return autopilotRoute;
+            return AutopilotRouteWindow.around(autopilotRoute, autopilotTargetIndex).points();
         }
 
         @Override
         public int targetIndex() {
-            return autopilotTargetIndex;
+            return AutopilotRouteWindow.around(autopilotRoute, autopilotTargetIndex).targetIndex();
         }
 
         @Override
@@ -4242,9 +4222,11 @@ public class SailboatEntity extends Boat implements GeoEntity, MenuProvider, Tra
 
         @Override
         public void applySplice(com.monpai.sailboatmod.route.water.lookahead.RouteSplicer.Spliced spliced) {
+            AutopilotRouteWindow.State patched = AutopilotRouteWindow.apply(autopilotRoute,
+                    AutopilotRouteWindow.around(autopilotRoute, autopilotTargetIndex), spliced);
             autopilotRoute.clear();
-            autopilotRoute.addAll(spliced.route());
-            autopilotTargetIndex = spliced.targetIndex();
+            autopilotRoute.addAll(patched.route());
+            autopilotTargetIndex = patched.targetIndex();
             autopilotNoProgressTicks = 0;
             autopilotLastTargetDistance = Double.NaN;
         }

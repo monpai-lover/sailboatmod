@@ -9,6 +9,8 @@ import net.minecraft.client.gui.GuiGraphics;
 import net.minecraft.world.level.ChunkPos;
 
 import java.util.Collection;
+import java.util.ArrayList;
+import java.util.List;
 import java.util.function.Function;
 
 /**
@@ -27,32 +29,40 @@ public final class ClaimMapPainter {
     }
 
     public static void drawClaims(GuiGraphics g, ClaimWorldMapView view, ClaimMapViewport viewport,
-                                  ClaimLookup lookup, Function<NationOverviewClaim, String> ownerKey) {
-        ClaimWorldMapView.ChunkBounds bounds = view.visibleChunkBounds(viewport);
-        for (int chunkZ = bounds.minChunkZ(); chunkZ <= bounds.maxChunkZ(); chunkZ++) {
-            for (int chunkX = bounds.minChunkX(); chunkX <= bounds.maxChunkX(); chunkX++) {
-                NationOverviewClaim claim = lookup.find(chunkX, chunkZ);
-                if (claim == null) {
-                    continue;
-                }
-                ClaimWorldMapView.ScreenRect rect = view.chunkScreenRect(chunkX, chunkZ, viewport);
-                int x1 = Math.max(viewport.x(), rect.x());
-                int x2 = Math.min(viewport.right(), rect.right());
-                int y1 = Math.max(viewport.y(), rect.y());
-                int y2 = Math.min(viewport.bottom(), rect.bottom());
-                if (x1 >= x2 || y1 >= y2) {
-                    continue;
-                }
-                g.fill(x1, y1, x2, y2, 0x66000000 | (claim.primaryColorRgb() & 0x00FFFFFF));
-                int borderColor = 0xFF000000 | claim.secondaryColorRgb();
-                String owner = ownerKey.apply(claim);
-                if (!sameOwner(lookup, ownerKey, owner, chunkX, chunkZ - 1)) g.fill(x1, y1, x2, y1 + 1, borderColor);
-                if (!sameOwner(lookup, ownerKey, owner, chunkX, chunkZ + 1)) g.fill(x1, y2 - 1, x2, y2, borderColor);
-                if (!sameOwner(lookup, ownerKey, owner, chunkX - 1, chunkZ)) g.fill(x1, y1, x1 + 1, y2, borderColor);
-                if (!sameOwner(lookup, ownerKey, owner, chunkX + 1, chunkZ)) g.fill(x2 - 1, y1, x2, y2, borderColor);
-            }
+                                  Collection<NationOverviewClaim> known, ClaimLookup lookup,
+                                  Function<NationOverviewClaim, String> ownerKey) {
+        for (FillRect fill : planClaims(known, view.visibleChunkBounds(viewport), viewport,
+                claim -> view.chunkScreenRect(claim.chunkX(), claim.chunkZ(), viewport), lookup, ownerKey)) {
+            g.fill(fill.x1, fill.y1, fill.x2, fill.y2, fill.color);
         }
     }
+
+    /** Work depends on known claims, never the number of unknown world chunks visible at far zoom. */
+    public static List<FillRect> planClaims(Collection<NationOverviewClaim> known,
+                                            ClaimWorldMapView.ChunkBounds bounds, ClaimMapViewport viewport,
+                                            Function<NationOverviewClaim, ClaimWorldMapView.ScreenRect> project,
+                                            ClaimLookup lookup, Function<NationOverviewClaim, String> ownerKey) {
+        List<FillRect> fills = new ArrayList<>();
+        for (NationOverviewClaim claim : known) {
+            if (claim == null || claim.chunkX() < bounds.minChunkX() || claim.chunkX() > bounds.maxChunkX()
+                    || claim.chunkZ() < bounds.minChunkZ() || claim.chunkZ() > bounds.maxChunkZ()) continue;
+            var rect = project.apply(claim);
+            int x1 = Math.max(viewport.x(), rect.x()), x2 = Math.min(viewport.right(), rect.right());
+            int y1 = Math.max(viewport.y(), rect.y()), y2 = Math.min(viewport.bottom(), rect.bottom());
+            if (x1 >= x2 || y1 >= y2) continue;
+            fills.add(new FillRect(x1, y1, x2, y2, 0x66000000 | claim.primaryColorRgb()));
+            int border = 0xFF000000 | claim.secondaryColorRgb();
+            String owner = ownerKey.apply(claim);
+            int x = claim.chunkX(), z = claim.chunkZ();
+            if (!sameOwner(lookup, ownerKey, owner, x, z - 1)) fills.add(new FillRect(x1, y1, x2, y1 + 1, border));
+            if (!sameOwner(lookup, ownerKey, owner, x, z + 1)) fills.add(new FillRect(x1, y2 - 1, x2, y2, border));
+            if (!sameOwner(lookup, ownerKey, owner, x - 1, z)) fills.add(new FillRect(x1, y1, x1 + 1, y2, border));
+            if (!sameOwner(lookup, ownerKey, owner, x + 1, z)) fills.add(new FillRect(x2 - 1, y1, x2, y2, border));
+        }
+        return List.copyOf(fills);
+    }
+
+    public record FillRect(int x1, int y1, int x2, int y2, int color) { }
 
     private static boolean sameOwner(ClaimLookup lookup, Function<NationOverviewClaim, String> ownerKey, String owner, int x, int z) {
         NationOverviewClaim claim = lookup.find(x, z);
@@ -84,11 +94,23 @@ public final class ClaimMapPainter {
             drawMarker(g, view, viewport, corner1X, corner1Z, 0xAAFF8844);
             return;
         }
-        for (int z = Math.min(corner1Z, corner2Z); z <= Math.max(corner1Z, corner2Z); z++) {
-            for (int x = Math.min(corner1X, corner2X); x <= Math.max(corner1X, corner2X); x++) {
-                drawMarker(g, view, viewport, x, z, 0xAAFF8844);
-            }
+        var first = view.chunkScreenRect(Math.min(corner1X, corner2X), Math.min(corner1Z, corner2Z), viewport);
+        var last = view.chunkScreenRect(Math.max(corner1X, corner2X), Math.max(corner1Z, corner2Z), viewport);
+        for (FillRect fill : areaBorder(first, last, viewport, 0xAAFF8844)) {
+            g.fill(fill.x1, fill.y1, fill.x2, fill.y2, fill.color);
         }
+    }
+
+    /** One projected rectangle, clipped once, independently of the number of selected world chunks. */
+    public static List<FillRect> areaBorder(ClaimWorldMapView.ScreenRect first, ClaimWorldMapView.ScreenRect last,
+                                          ClaimMapViewport viewport, int color) {
+        int x1 = Math.max(viewport.x(), Math.min(first.x(), last.x()));
+        int y1 = Math.max(viewport.y(), Math.min(first.y(), last.y()));
+        int x2 = Math.min(viewport.right(), Math.max(first.right(), last.right()));
+        int y2 = Math.min(viewport.bottom(), Math.max(first.bottom(), last.bottom()));
+        if (x1 >= x2 || y1 >= y2) return List.of();
+        return List.of(new FillRect(x1, y1, x2, y1 + 1, color), new FillRect(x1, y2 - 1, x2, y2, color),
+                new FillRect(x1, y1, x1 + 1, y2, color), new FillRect(x2 - 1, y1, x2, y2, color));
     }
 
     /** Two thin bars along the bottom: visible chunks (gold) and prefetch ring (blue). */

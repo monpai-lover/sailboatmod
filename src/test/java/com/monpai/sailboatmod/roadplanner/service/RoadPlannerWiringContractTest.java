@@ -27,8 +27,14 @@ class RoadPlannerWiringContractTest {
         String request = read("src/main/java/com/monpai/sailboatmod/network/packet/roadplanner/RoadPlannerPreviewRequestPacket.java");
         String confirm = read("src/main/java/com/monpai/sailboatmod/network/packet/roadplanner/RoadPlannerConfirmBuildPacket.java");
         String menu = read("src/main/java/com/monpai/sailboatmod/network/packet/roadplanner/RoadPlannerMenuActionPacket.java");
-        int submit = request.indexOf("RoadPlannerPreviewJobService.global().submit(");
+        int submit = request.indexOf("jobs.submitStreaming(");
+        assertTrue(submit > 0, "the real request starts a streamed preview");
         assertTrue(request.lastIndexOf(".cancelPreview(", submit) > 0, "the old preview is dropped before loading the new one");
+        int complete = request.indexOf("}, () -> {", submit);
+        int attach = request.indexOf(".attachStagedPlan(", submit);
+        int ready = request.indexOf("accumulator.snapshot(true)", submit);
+        assertTrue(complete > submit && attach > complete && ready > attach,
+                "only the completion callback attaches the full staged plan and marks it ready");
         assertTrue(confirm.contains("RoadPlannerPreviewJobService.global().pendingFor("), "no confirming while a preview loads");
         assertTrue(menu.contains("RoadPlannerPreviewJobService.global().cancel("), "returning to the planner stops a loading preview");
     }

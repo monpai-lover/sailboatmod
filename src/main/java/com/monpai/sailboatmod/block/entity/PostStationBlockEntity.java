@@ -4,7 +4,9 @@ import com.monpai.sailboatmod.dock.PostStationRegistry;
 import com.monpai.sailboatmod.dock.DockScreenData;
 import com.monpai.sailboatmod.dock.PostStationScreenData;
 import com.monpai.sailboatmod.entity.CarriageEntity;
-import com.monpai.sailboatmod.entity.TransportEntity;
+import com.monpai.sailboatmod.transport.LogisticsCarrier;
+import com.monpai.sailboatmod.transport.CargoLoadReceipt;
+import com.monpai.sailboatmod.transport.TransportRegistry;
 import com.monpai.sailboatmod.menu.PostStationMenu;
 import com.monpai.sailboatmod.nation.RoadTravelHelper;
 import com.monpai.sailboatmod.route.LandTransportNetworkService;
@@ -78,8 +80,8 @@ public class PostStationBlockEntity extends DockBlockEntity {
     }
 
     @Override
-    protected boolean supportsTransportEntity(TransportEntity entity) {
-        return entity instanceof CarriageEntity;
+    protected boolean supportsLogisticsCarrier(LogisticsCarrier entity) {
+        return entity.transportKind() == LogisticsCarrier.Kind.LAND;
     }
 
     @Override
@@ -168,10 +170,10 @@ public class PostStationBlockEntity extends DockBlockEntity {
                         town.routeName()
                 ))
                 .toList();
-        List<TransportEntity> vehicles = getAssignableSailboats(player);
+        List<LogisticsCarrier> vehicles = getAssignableSailboats(player);
         selectedVehicleIndex = clampSelectedIndexForTest(selectedVehicleIndex, vehicles.size());
         List<PostStationScreenData.VehicleEntry> vehicleEntries = new ArrayList<>();
-        for (TransportEntity vehicle : vehicles) {
+        for (LogisticsCarrier vehicle : vehicles) {
             boolean eligible = isVehicleAvailableForPostStationDispatch(vehicle, player);
             vehicleEntries.add(new PostStationScreenData.VehicleEntry(
                     vehicle.getTransportId(),
@@ -239,7 +241,7 @@ public class PostStationBlockEntity extends DockBlockEntity {
     }
 
     @Override
-    public List<TransportEntity> getAvailableSailboatsForDispatch(Player player) {
+    public List<LogisticsCarrier> getAvailableSailboatsForDispatch(Player player) {
         return getAssignableSailboats(player).stream()
                 .filter(vehicle -> isVehicleAvailableForPostStationDispatch(vehicle, player))
                 .toList();
@@ -273,7 +275,7 @@ public class PostStationBlockEntity extends DockBlockEntity {
             }
             return false;
         }
-        List<TransportEntity> vehicles = getAssignableSailboats(player);
+        List<LogisticsCarrier> vehicles = getAssignableSailboats(player);
         if (vehicles.isEmpty()) {
             if (player != null) {
                 player.displayClientMessage(Component.translatable(noAssignableTransportTranslationKey()), true);
@@ -286,13 +288,13 @@ public class PostStationBlockEntity extends DockBlockEntity {
                     worldPosition,
                     player == null ? "-" : player.getName().getString(),
                     selectedVehicleEntityId,
-                    vehicles.stream().map(TransportEntity::getTransportId).toList());
+                    vehicles.stream().map(LogisticsCarrier::getTransportId).toList());
             if (player != null) {
                 player.displayClientMessage(Component.translatable(transportNotReadyTranslationKey()), true);
             }
             return false;
         }
-        TransportEntity vehicle = vehicles.get(selectedVehicleIndex);
+        LogisticsCarrier vehicle = vehicles.get(selectedVehicleIndex);
         if (!isVehicleAvailableForPostStationDispatch(vehicle, player)) {
             if (player != null) {
                 player.displayClientMessage(Component.translatable(transportNotReadyTranslationKey()), true);
@@ -330,9 +332,9 @@ public class PostStationBlockEntity extends DockBlockEntity {
         return started;
     }
 
-    private boolean isVehicleAvailableForPostStationDispatch(TransportEntity vehicle, Player player) {
+    private boolean isVehicleAvailableForPostStationDispatch(LogisticsCarrier vehicle, Player player) {
         boolean alive = vehicle != null && vehicle.isTransportAlive();
-        boolean inZone = vehicle != null && isInsideDockZone(vehicle.transportPosition());
+        boolean inZone = vehicle != null && isCarrierInsideDockZone(vehicle);
         boolean autopilotActive = vehicle != null && vehicle.isAutopilotActive();
         boolean hasCargo = vehicle != null && vehicle.hasCargo();
         boolean manualControl = vehicle instanceof CarriageEntity carriage && carriage.hasActiveManualControlPassenger();
@@ -348,7 +350,7 @@ public class PostStationBlockEntity extends DockBlockEntity {
     }
 
     public boolean recallSelectedVehicle(Player player) {
-        List<TransportEntity> vehicles = getAssignableSailboats(player);
+        List<LogisticsCarrier> vehicles = getAssignableSailboats(player);
         if (vehicles.isEmpty()) {
             if (player != null) {
                 player.displayClientMessage(Component.translatable("screen.sailboatmod.post_station.no_recall_vehicle"), true);
@@ -356,7 +358,7 @@ public class PostStationBlockEntity extends DockBlockEntity {
             return false;
         }
         selectedVehicleIndex = clampSelectedIndexForTest(selectedVehicleIndex, vehicles.size());
-        TransportEntity vehicle = vehicles.get(selectedVehicleIndex);
+        LogisticsCarrier vehicle = vehicles.get(selectedVehicleIndex);
         if (!(vehicle instanceof CarriageEntity carriage) || !carriage.canBeRecalledTo(this, player)) {
             if (player != null) {
                 player.displayClientMessage(Component.translatable("screen.sailboatmod.post_station.no_recall_vehicle"), true);
@@ -373,13 +375,13 @@ public class PostStationBlockEntity extends DockBlockEntity {
         return Mth.clamp(selected, 0, size - 1);
     }
 
-    private static int selectedVehicleIndexForEntityId(List<TransportEntity> vehicles, int entityId, int fallbackIndex) {
+    private static int selectedVehicleIndexForEntityId(List<LogisticsCarrier> vehicles, int entityId, int fallbackIndex) {
         if (vehicles == null || vehicles.isEmpty()) {
             return 0;
         }
-        if (entityId >= 0) {
+        if (entityId != -1) {
             for (int i = 0; i < vehicles.size(); i++) {
-                TransportEntity vehicle = vehicles.get(i);
+                LogisticsCarrier vehicle = vehicles.get(i);
                 if (vehicle != null && vehicle.getTransportId() == entityId) {
                     return i;
                 }
@@ -393,7 +395,7 @@ public class PostStationBlockEntity extends DockBlockEntity {
         if (vehicleEntityIds == null || vehicleEntityIds.isEmpty()) {
             return 0;
         }
-        if (entityId >= 0) {
+        if (entityId != -1) {
             for (int i = 0; i < vehicleEntityIds.size(); i++) {
                 Integer candidate = vehicleEntityIds.get(i);
                 if (candidate != null && candidate == entityId) {

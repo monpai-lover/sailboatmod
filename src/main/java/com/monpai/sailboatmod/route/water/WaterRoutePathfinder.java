@@ -45,6 +45,10 @@ public final class WaterRoutePathfinder {
     private final BlockPos goal;
     private final WaterRoutePolicy policy;
     private final int step;
+    private final int edgeSampleSpacing;
+    private final boolean waitForUnknown;
+    private boolean seeded;
+    private boolean pendingTerrain;
     private final double MAX_LEGAL_HOP;
 
     private final Search forward;
@@ -56,11 +60,23 @@ public final class WaterRoutePathfinder {
     private int expandedNodes;
 
     public WaterRoutePathfinder(WaterRouteWorld world, BlockPos start, BlockPos goal, WaterRoutePolicy policy) {
+        this(world, start, goal, policy, 2, false);
+    }
+
+    /** Coarse guidance may sample longer edges sparsely; detailed planners retain the two-block default. */
+    WaterRoutePathfinder(WaterRouteWorld world, BlockPos start, BlockPos goal, WaterRoutePolicy policy, int edgeSampleSpacing) {
+        this(world, start, goal, policy, edgeSampleSpacing, true);
+    }
+
+    private WaterRoutePathfinder(WaterRouteWorld world, BlockPos start, BlockPos goal, WaterRoutePolicy policy,
+                                  int edgeSampleSpacing, boolean waitForUnknown) {
         this.world = world;
         this.start = start;
         this.goal = goal;
         this.policy = policy == null ? WaterRoutePolicy.defaults() : policy;
         this.step = Math.max(1, this.policy.stepSize());
+        this.edgeSampleSpacing = Math.max(1, Math.min(this.step, edgeSampleSpacing));
+        this.waitForUnknown = waitForUnknown;
         this.MAX_LEGAL_HOP = this.step * LEGAL_HOP_FACTOR;
         this.forward = new Search();
         this.backward = new Search();
@@ -81,6 +97,10 @@ public final class WaterRoutePathfinder {
         WaterColumn goalColumn = world.sample(snappedGoal.getX(), snappedGoal.getZ(), policy);
         boolean startOk = startColumn != null && startColumn.passable();
         boolean goalOk = goalColumn != null && goalColumn.passable();
+        if (waitForUnknown && (startColumn == null || goalColumn == null)) {
+            status = Status.WAITING;
+            return;
+        }
         long straight = Math.round(Math.sqrt(start.distSqr(goal)));
         LOGGER.info("[WaterPath] 开始 start={} goal={} (网格对齐 s={} g={}) 直线={}格 起点可航={} 终点可航={}",
                 start, goal, snappedStart, snappedGoal, straight, startOk, goalOk);
@@ -105,6 +125,7 @@ public final class WaterRoutePathfinder {
         forward.best.put(key(s), startNode);
         backward.open.add(goalNode);
         backward.best.put(key(g), goalNode);
+        seeded = true;
     }
 
     /** 把坐标 snap 到 step 网格(向下取整到 step 倍数),保证前后向格点同网格、可相遇。 */
@@ -116,11 +137,17 @@ public final class WaterRoutePathfinder {
 
     /** chunkBudget 参数保留以兼容调用方,但噪声采样零区块加载,已忽略。 */
     public Status step(int maxNodeExpansions, int chunkBudget) {
+        if (status == Status.WAITING) {
+            status = Status.RUNNING;
+            pendingTerrain = false;
+            if (!seeded) seed();
+        }
         if (status != Status.RUNNING) {
             return status;
         }
         int budget = Math.max(1, maxNodeExpansions);
         for (int i = 0; i < budget; i++) {
+            WaterRouteCancellation.check();
             if (expandedNodes >= policy.maxExpandedNodes()) {
                 fail(WaterRouteFailureReason.NODE_BUDGET_EXCEEDED);
                 return status;
@@ -136,6 +163,7 @@ public final class WaterRoutePathfinder {
             if (expandStep(expandForward)) {
                 return status; // 相遇 → complete 已设状态
             }
+            if (status == Status.WAITING) return status;
             if (expandedNodes - lastLoggedAt >= LOG_EVERY_NODES) {
                 lastLoggedAt = expandedNodes;
                 BlockPos fFront = forward.open.isEmpty() ? null : forward.open.peek().pos;
@@ -190,6 +218,10 @@ public final class WaterRoutePathfinder {
                 continue;
             }
             WaterColumn column = world.sample(nx, nz, policy);
+            if (column == null && waitForUnknown) {
+                pauseAt(self, current, curKey);
+                return false;
+            }
             if (column == null || !column.passable() || column.surfacePos() == null) {
                 continue;
             }
@@ -198,9 +230,11 @@ public final class WaterRoutePathfinder {
                 continue;
             }
             if (!segmentPassable(current.pos, npos)) {
+                if (pendingTerrain) { pauseAt(self, current, curKey); return false; }
                 continue;
             }
             if (dx[i] != 0 && dz[i] != 0 && !diagonalCorridorPassable(current.pos, nx, nz)) {
+                if (pendingTerrain) { pauseAt(self, current, curKey); return false; }
                 continue;
             }
             double edge = (dx[i] != 0 && dz[i] != 0) ? step * 1.4142135623730951D : step;
@@ -221,6 +255,14 @@ public final class WaterRoutePathfinder {
             self.open.add(next);
         }
         return false;
+    }
+
+    private void pauseAt(Search self, Node current, long currentKey) {
+        self.closed.remove(currentKey);
+        self.open.add(current);
+        expandedNodes--; // Waiting for an unknown edge is not a completed expansion or a repeated budget charge.
+        pendingTerrain = true;
+        status = Status.WAITING;
     }
 
     /**
@@ -294,13 +336,14 @@ public final class WaterRoutePathfinder {
         int dx = to.getX() - from.getX();
         int dz = to.getZ() - from.getZ();
         double distance = Math.sqrt((double) dx * dx + (double) dz * dz);
-        int spacing = Math.max(1, Math.min(2, step));
+        int spacing = edgeSampleSpacing;
         int samples = Math.max(1, (int) Math.ceil(distance / spacing));
         for (int s = 1; s < samples; s++) {
             double t = s / (double) samples;
             int x = (int) Math.round(from.getX() + dx * t);
             int z = (int) Math.round(from.getZ() + dz * t);
             WaterColumn column = world.sample(x, z, policy);
+            if (column == null && waitForUnknown) pendingTerrain = true;
             if (column == null || !column.passable()) {
                 return false;
             }
@@ -311,6 +354,7 @@ public final class WaterRoutePathfinder {
     private boolean diagonalCorridorPassable(BlockPos current, int nx, int nz) {
         WaterColumn left = world.sample(nx, current.getZ(), policy);
         WaterColumn right = world.sample(current.getX(), nz, policy);
+        if (waitForUnknown && (left == null || right == null)) pendingTerrain = true;
         return left != null && left.passable() && right != null && right.passable();
     }
 
@@ -428,7 +472,8 @@ public final class WaterRoutePathfinder {
     public enum Status {
         RUNNING,
         SUCCESS,
-        FAILED
+        FAILED,
+        WAITING
     }
 
     /** 一侧搜索状态(前向或后向)。 */

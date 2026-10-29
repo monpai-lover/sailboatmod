@@ -39,7 +39,7 @@ All content uses NeoForge's `DeferredRegister` pattern. Seven registries initial
 - `ModSounds` — sound events
 
 ### Network (`network/`)
-`ModNetwork` registers 106 directional custom payloads through `PayloadChannel` (protocol version "12"). Every packet class follows the same static-method pattern: `encode`, `decode`, `handle`. Packet names are self-descriptive (e.g., `ToggleSailPacket`, `CreateMarketListingPacket`).
+`ModNetwork` registers 110 directional custom payloads through `PayloadChannel` (protocol version "13"). Every packet class follows the same static-method pattern: `encode`, `decode`, `handle`. Packet names are self-descriptive (e.g., `ToggleSailPacket`, `CreateMarketListingPacket`).
 
 ### Entity (`entity/SailboatEntity.java`)
 Extends `Boat`, implements GeckoLib's `GeoEntity`. Features: 5-seat passengers, 27-slot inventory, sail/engine/autopilot mechanics, rental pricing, route waypoint following. Physics uses knot-based speed with drag coefficients. Autopilot has stall detection and dock parking logic with chunk loading.

@@ -74,6 +74,7 @@ public record RoadPlannerMapPreloadRequestPacket(UUID sessionId,
         ENTER_PLANNER_PRELOAD,
         ROUTE_PRELOAD,
         FORCE_RENDER,
-        BUILT_ROAD_REFRESH
+        BUILT_ROAD_REFRESH,
+        VIEWPORT
     }
 }

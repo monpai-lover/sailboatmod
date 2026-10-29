@@ -35,7 +35,11 @@ public class ControlAutopilotPacket {
             if (sender == null) {
                 return;
             }
-            if (sender.level().getEntity(packet.sailboatId) instanceof TransportEntity transport) {
+            com.monpai.sailboatmod.transport.LogisticsCarrier transport =
+                    com.monpai.sailboatmod.transport.TransportRegistry.resolveRuntimeId(sender.serverLevel(), packet.sailboatId);
+            if (transport != null && (transport instanceof TransportEntity
+                    || ((transport.isOwnedBy(sender) || sender.hasPermissions(2))
+                    && transport.distanceToTransportSqr(sender) <= 4096.0D))) {
                 transport.controlAutopilot(sender, packet.action);
             }
         });

@@ -33,8 +33,8 @@ class RoadPlannerTileManagerLodIsolationTest {
 
         assertNotSame(lod1, lod4);
         assertEquals(2, manager.loadedTileCount());
-        assertTrue(rootDir.toPath().resolve("world_a").resolve("minecraft_overworld").resolve("lod_1").resolve("0_0.png").toFile().exists());
-        assertTrue(rootDir.toPath().resolve("world_a").resolve("minecraft_overworld").resolve("lod_4").resolve("0_0.png").toFile().exists());
+        assertTrue(rootDir.toPath().resolve("world_a").resolve("minecraft_overworld").resolve("actual_v2").resolve("lod_1").resolve("0_0.png").toFile().exists());
+        assertTrue(rootDir.toPath().resolve("world_a").resolve("minecraft_overworld").resolve("actual_v2").resolve("lod_4").resolve("0_0.png").toFile().exists());
     }
 
     @Test
@@ -60,8 +60,8 @@ class RoadPlannerTileManagerLodIsolationTest {
 
         assertEquals(1, applied);
         assertEquals(1, manager.loadedTileCount());
-        assertTrue(rootDir.toPath().resolve("world_a").resolve("minecraft_overworld").resolve("lod_1").resolve("2_-3.png").toFile().exists());
-        assertFalse(rootDir.toPath().resolve("world_a").resolve("minecraft_overworld").resolve("lod_4").resolve("2_-3.png").toFile().exists());
+        assertTrue(rootDir.toPath().resolve("world_a").resolve("minecraft_overworld").resolve("actual_v2").resolve("lod_1").resolve("2_-3.png").toFile().exists());
+        assertFalse(rootDir.toPath().resolve("world_a").resolve("minecraft_overworld").resolve("actual_v2").resolve("lod_4").resolve("2_-3.png").toFile().exists());
     }
 
     @Test
@@ -108,7 +108,7 @@ class RoadPlannerTileManagerLodIsolationTest {
                 forcePixels,
                 coverageMask));
 
-        var file = rootDir.toPath().resolve("world_a").resolve("minecraft_overworld").resolve("lod_1").resolve("2_-3.png").toFile();
+        var file = rootDir.toPath().resolve("world_a").resolve("minecraft_overworld").resolve("actual_v2").resolve("lod_1").resolve("2_-3.png").toFile();
         try (var image = com.mojang.blaze3d.platform.NativeImage.read(java.nio.file.Files.readAllBytes(file.toPath()))) {
             assertEquals(nativeColor(0xFF0000CC), image.getPixelRGBA(0, 0));
             assertEquals(nativeColor(0xFF00AA00), image.getPixelRGBA(32, 32));
@@ -194,7 +194,7 @@ class RoadPlannerTileManagerLodIsolationTest {
                 RoadPlannerTile.TILE_PIXEL_SIZE,
                 refreshedPixels));
 
-        var file = rootDir.toPath().resolve("world_a").resolve("minecraft_overworld").resolve("lod_4").resolve("2_-3.png").toFile();
+        var file = rootDir.toPath().resolve("world_a").resolve("minecraft_overworld").resolve("actual_v2").resolve("lod_4").resolve("2_-3.png").toFile();
         try (var image = com.mojang.blaze3d.platform.NativeImage.read(java.nio.file.Files.readAllBytes(file.toPath()))) {
             assertEquals(nativeColor(0xFF556677), image.getPixelRGBA(0, 0));
             assertEquals(nativeColor(0xFF556677), image.getPixelRGBA(128, 128));
@@ -231,7 +231,7 @@ class RoadPlannerTileManagerLodIsolationTest {
 
         assertEquals(0, applied);
         assertEquals(0, manager.loadedTileCount());
-        assertFalse(rootDir.toPath().resolve("world_a").resolve("minecraft_overworld").resolve("lod_4").resolve("2_-3.png").toFile().exists());
+        assertFalse(rootDir.toPath().resolve("world_a").resolve("minecraft_overworld").resolve("actual_v2").resolve("lod_4").resolve("2_-3.png").toFile().exists());
     }
 
     private static int nativeColor(int argb) {

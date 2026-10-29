@@ -116,14 +116,23 @@ class RoutePatchTest {
     }
 
     @Test
-    void rejectsWhenResultExceedsCap() {
+    void fullCatalogSizeIsIndependentFromTheBoundedLocalPatchBudget() {
         List<Vec3> many = new ArrayList<>();
         for (int i = 0; i < RoutePatch.MAX_WAYPOINTS - 1; i++) {
             many.add(p(i));
         }
 
-        assertTrue(PATCH.applyTo(route("Auto-A-B", many, List.of())).isEmpty(),
-                "a stored route longer than the autopilot cap would be truncated on the next trip");
+        assertTrue(PATCH.applyTo(route("Auto-A-B", many, List.of())).isPresent(),
+                "the complete route is retained; only the local replacement needs a fixed budget");
+    }
+
+    @Test
+    void rejectsAnUnboundedSingleReplacement() {
+        List<Vec3> oversized = new ArrayList<>();
+        oversized.add(p(2));
+        for (int i = 0; i < RoutePatch.MAX_WAYPOINTS; i++) oversized.add(X);
+        oversized.add(p(3));
+        assertTrue(new RoutePatch(List.of(p(2), p(3)), oversized).applyTo(route("Auto-A-B", points(), List.of())).isEmpty());
     }
 
     static Vec3 p(int i) {

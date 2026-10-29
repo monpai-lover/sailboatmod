@@ -16,8 +16,61 @@ import java.util.concurrent.atomic.AtomicReference;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
+import static org.junit.jupiter.api.Assertions.fail;
 
 class WaterRouteTaskServiceTest {
+    @Test
+    void clearingARunningRequestInterruptsItsCurrentNativeDataWait() throws InterruptedException {
+        AtomicReference<Thread> worker = new AtomicReference<>();
+        CountDownLatch started = new CountDownLatch(1);
+        CountDownLatch interrupted = new CountDownLatch(1);
+        WaterRouteTaskExecutor.setExecutorForTesting(work -> {
+            Thread thread = new Thread(work, "test-water-cancellation");
+            thread.setDaemon(true);
+            worker.set(thread);
+            thread.start();
+        });
+        WaterRouteTask task = new WaterRouteTask("minecraft:overworld", BlockPos.ZERO, new BlockPos(32_768, 63, 0),
+                BlockPos.ZERO, new BlockPos(32_768, 63, 0), "test", WaterRoutePolicy.defaults(), () -> {
+                    started.countDown();
+                    try { Thread.sleep(60_000); }
+                    catch (InterruptedException cancelled) { interrupted.countDown(); Thread.currentThread().interrupt(); }
+                    return WaterRouteResult.failure(WaterRouteFailureReason.NO_WATER_PATH);
+                }, result -> fail("cancelled requests cannot publish a late result"));
+        WaterRouteTaskService service = new WaterRouteTaskService();
+        try {
+            service.submit(task);
+            service.tick();
+            assertTrue(started.await(1, TimeUnit.SECONDS));
+            service.clear();
+            assertTrue(interrupted.await(1, TimeUnit.SECONDS), "cancellation must interrupt an active terrain-data future wait");
+        } finally {
+            Thread thread = worker.get();
+            if (thread != null) { thread.interrupt(); thread.join(1000); }
+        }
+    }
+
+    @Test
+    void clearingTasksPreventsQueuedWorkFromStartingOrPublishing() {
+        java.util.ArrayDeque<Runnable> queued = new java.util.ArrayDeque<>();
+        WaterRouteTaskExecutor.setExecutorForTesting(queued::addLast);
+        AtomicInteger searches = new AtomicInteger();
+        AtomicInteger completions = new AtomicInteger();
+        WaterRouteTask task = new WaterRouteTask("minecraft:overworld", BlockPos.ZERO, new BlockPos(32_768, 63, 0),
+                BlockPos.ZERO, new BlockPos(32_768, 63, 0), "test", WaterRoutePolicy.defaults(),
+                () -> { searches.incrementAndGet(); return WaterRouteResult.success(List.of(BlockPos.ZERO, new BlockPos(32_768, 63, 0))); },
+                result -> completions.incrementAndGet());
+        WaterRouteTaskService service = new WaterRouteTaskService();
+        service.submit(task);
+        service.tick();
+        assertEquals(1, queued.size());
+        service.clear();
+        queued.removeFirst().run();
+        service.tick();
+        assertEquals(0, searches.get(), "cancelled queued requests must not start terrain downloads");
+        assertEquals(0, completions.get(), "a cancelled request cannot publish a late route");
+    }
+
     // 异步化后寻路在 WaterRouteTaskExecutor 后台跑。测试注入同步执行器(Runnable::run)保持确定性:
     // 首次 advance 提交→同步跑完→asyncResult 立即 set,下一 tick 的 advance poll 到结果 complete。
     @BeforeEach

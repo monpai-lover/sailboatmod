@@ -20,6 +20,7 @@ import net.neoforged.neoforge.event.tick.ServerTickEvent;
 import net.neoforged.neoforge.event.entity.EntityJoinLevelEvent;
 import net.neoforged.neoforge.event.server.ServerStartedEvent;
 import net.neoforged.neoforge.event.server.ServerStoppedEvent;
+import net.neoforged.neoforge.event.server.ServerStoppingEvent;
 import net.neoforged.bus.api.SubscribeEvent;
 import net.neoforged.fml.common.EventBusSubscriber;
 import net.neoforged.neoforge.server.ServerLifecycleHooks;
@@ -50,6 +51,8 @@ public final class ServerEvents {
         ClaimPreviewTerrainService.onServerStarted(event.getServer());
         ClaimMapTaskService.onServerStarted(event.getServer());
         SharedMapServerState.onServerStarted(event.getServer());
+        com.monpai.sailboatmod.roadplanner.service.SharedMapTerrainService.start(event.getServer());
+        com.monpai.sailboatmod.transport.control.RegisteredTransportSavedData.restoreKnown(event.getServer());
         RoadPlanningTaskService.onServerStarted(event.getServer());
         RoadPlannerMapPreloadService.onServerStarted(event.getServer());
         runStartupTaskSafely("road graph reconcile", () -> reconcileRoadGraphs(event.getServer()));
@@ -85,11 +88,13 @@ public final class ServerEvents {
                 com.monpai.sailboatmod.nation.service.StructureConstructionManager.tick(level);
                 com.monpai.sailboatmod.nation.service.ClaimPreviewTerrainService.tick(level);
                 com.monpai.sailboatmod.roadplanner.service.RoadPlannerPreviewJobService.global().tick(
-                        level.dimension(), id -> server.getPlayerList().getPlayer(id) != null);
+                        level.dimension(), id -> server.getPlayerList().getPlayer(id) != null
+                                && server.getPlayerList().getPlayer(id).serverLevel() == level);
                 RoadPlannerBuildControlService.global().tick(level);
                 RoadEditTaskService.global().tick(level);
                 RoadPlannerMapPreloadService.global().tick(level);
                 WaterRouteTaskService.global().tick(level);
+                com.monpai.sailboatmod.roadplanner.service.SharedMapTerrainService.global().tick(level);
             });
             com.monpai.sailboatmod.compat.create.CreateRailLogistics.tick(server);
             com.monpai.sailboatmod.network.packet.RequestClaimMapViewportPacket.onServerTick(server);
@@ -149,6 +154,11 @@ public final class ServerEvents {
     }
 
     @SubscribeEvent
+    public static void onServerStopping(ServerStoppingEvent event) {
+        com.monpai.sailboatmod.transport.control.RegisteredTransportSavedData.markServerStopping(event.getServer());
+    }
+
+    @SubscribeEvent
     public static void onServerStopped(ServerStoppedEvent event) {
         com.monpai.sailboatmod.nation.service.StructureConstructionManager.clearRuntimeState();
         ClaimPreviewTerrainService.onServerStopping(event.getServer());
@@ -156,12 +166,14 @@ public final class ServerEvents {
         ClaimMapTaskService.onServerStopping();
         RoadPlanningTaskService.onServerStopping();
         SharedMapServerState.onServerStopped();
+        com.monpai.sailboatmod.roadplanner.service.SharedMapTerrainService.stop();
+        com.monpai.sailboatmod.transport.TransportRegistry.clear(event.getServer());
         RoadPlannerMapPreloadService.onServerStopped();
         RoadEditTaskService.global().clear();
         com.monpai.sailboatmod.roadplanner.service.RoadPlannerPreviewJobService.global().clear();
         com.monpai.sailboatmod.roadplanner.service.RoadPlannerChunkTickets.clearAll();
         com.monpai.sailboatmod.compat.create.CreateRailLogistics.clear();
-        RoadPlannerBuildControlService.global().clearPreviews();
+        RoadPlannerBuildControlService.global().stopServer();
         WaterRouteTaskService.global().clear();
         com.monpai.sailboatmod.route.water.WaterRouteTaskExecutor.shutdown(); // 停掉水路寻路+自救共享的后台线程池
         com.monpai.sailboatmod.roadplanner.graph.RoadGraphRepository.clearCache();

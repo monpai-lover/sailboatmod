@@ -84,6 +84,16 @@ class PostStationScreenDataTest {
     }
 
     @Test
+    void dispatchResolvesNegativePhysicalCarrierIdInsteadOfUsingFallbackIndex() {
+        assertEquals(1, PostStationBlockEntity.selectedVehicleIndexForEntityIdForTest(List.of(7, -42), -42, 0));
+    }
+
+    @Test
+    void dispatchRejectsRemovedNegativePhysicalCarrierId() {
+        assertEquals(-1, PostStationBlockEntity.selectedVehicleIndexForEntityIdForTest(List.of(7, -43), -42, 0));
+    }
+
+    @Test
     void postStationMarketDispatchAlsoAllowsPassengerOccupiedVehicles() {
         assertTrue(PostStationBlockEntity.isVehicleEligibleForPostStationMarketDispatchForTest(
                 true, true, false, false, true, true));

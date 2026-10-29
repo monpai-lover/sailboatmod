@@ -50,10 +50,25 @@ public final class NbtChunkWaterReader {
         if (level == null || !OVERWORLD.equals(level.dimension().location().toString())) {
             return Optional.empty();
         }
+        WaterRouteCancellation.check();
+        try {
+            // Most distant Tellus chunks have no NBT. Do not schedule a server save for every absent chunk.
+            // A present probe is never decoded or copied here: the established safe reader still owns that path.
+            if (OfflineChunkNbtReader.beginProbe(level, new ChunkPos(cx, cz))
+                    .get(Math.max(1L, timeoutMs), java.util.concurrent.TimeUnit.MILLISECONDS).isEmpty()) return Optional.empty();
+        } catch (InterruptedException interrupted) {
+            Thread.currentThread().interrupt();
+            WaterRouteCancellation.check();
+            return Optional.empty();
+        } catch (java.util.concurrent.ExecutionException | java.util.concurrent.TimeoutException unavailable) {
+            return Optional.empty();
+        }
+        WaterRouteCancellation.check();
         int minY = level.getMinBuildHeight();
         int maxY = level.getMaxBuildHeight();
         Optional<CompoundTag> tag = OfflineChunkNbtReader.readSafeFromWorkerThread(
                 level, new ChunkPos(cx, cz), timeoutMs, true);
+        WaterRouteCancellation.check();
         return tag.flatMap(value -> decode(value, minY, maxY));
     }
 

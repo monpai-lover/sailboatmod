@@ -109,7 +109,7 @@ import net.neoforged.bus.api.IEventBus;
 import java.util.Optional;
 
 public final class ModNetwork {
-    private static final String PROTOCOL_VERSION = "12"; // 11→12: component-aware market stock overview and listing request; reject mixed jars.
+    private static final String PROTOCOL_VERSION = "13"; // Shared terrain streaming and registered physical transport controllers.
     public static final PayloadChannel CHANNEL = new PayloadChannel(PROTOCOL_VERSION);
 
     private static int packetId = 0;
@@ -968,6 +968,30 @@ public final class ModNetwork {
                 InteractCarriagePacket::handle,
                 Optional.of(NetworkDirection.PLAY_TO_SERVER)
         );
+        CHANNEL.registerMessage(packetId++,
+                com.monpai.sailboatmod.network.packet.roadplanner.SharedMapTerrainRequestPacket.class,
+                com.monpai.sailboatmod.network.packet.roadplanner.SharedMapTerrainRequestPacket::encode,
+                com.monpai.sailboatmod.network.packet.roadplanner.SharedMapTerrainRequestPacket::decode,
+                com.monpai.sailboatmod.network.packet.roadplanner.SharedMapTerrainRequestPacket::handle,
+                Optional.of(NetworkDirection.PLAY_TO_SERVER));
+        CHANNEL.registerMessage(packetId++,
+                com.monpai.sailboatmod.network.packet.roadplanner.SharedMapTerrainPatchPacket.class,
+                com.monpai.sailboatmod.network.packet.roadplanner.SharedMapTerrainPatchPacket::encode,
+                com.monpai.sailboatmod.network.packet.roadplanner.SharedMapTerrainPatchPacket::decode,
+                com.monpai.sailboatmod.network.packet.roadplanner.SharedMapTerrainPatchPacket::handle,
+                Optional.of(NetworkDirection.PLAY_TO_CLIENT));
+        CHANNEL.registerMessage(packetId++,
+                com.monpai.sailboatmod.network.packet.OpenRegisteredVehicleControllerPacket.class,
+                com.monpai.sailboatmod.network.packet.OpenRegisteredVehicleControllerPacket::encode,
+                com.monpai.sailboatmod.network.packet.OpenRegisteredVehicleControllerPacket::decode,
+                com.monpai.sailboatmod.network.packet.OpenRegisteredVehicleControllerPacket::handle,
+                Optional.of(NetworkDirection.PLAY_TO_CLIENT));
+        CHANNEL.registerMessage(packetId++,
+                com.monpai.sailboatmod.network.packet.RegisteredVehicleControllerActionPacket.class,
+                com.monpai.sailboatmod.network.packet.RegisteredVehicleControllerActionPacket::encode,
+                com.monpai.sailboatmod.network.packet.RegisteredVehicleControllerActionPacket::decode,
+                com.monpai.sailboatmod.network.packet.RegisteredVehicleControllerActionPacket::handle,
+                Optional.of(NetworkDirection.PLAY_TO_SERVER));
     }
 
     private ModNetwork() {

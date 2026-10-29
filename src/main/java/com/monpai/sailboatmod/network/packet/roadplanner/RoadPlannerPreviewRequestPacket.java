@@ -8,10 +8,13 @@ import com.monpai.sailboatmod.network.packet.SyncRoadPlannerPreviewPacket;
 import com.monpai.sailboatmod.roadplanner.model.RoadPlannerMergeScope;
 import com.monpai.sailboatmod.roadplanner.model.RoadPlannerMergeSelection;
 import com.monpai.sailboatmod.roadplanner.model.RoadPlannerSharedRoadSpan;
-import com.monpai.sailboatmod.roadplanner.service.RoadChunkWarmup;
 import com.monpai.sailboatmod.roadplanner.service.RoadPlannerBuildControlService;
-import com.monpai.sailboatmod.roadplanner.service.RoadPlannerChunkTickets;
 import com.monpai.sailboatmod.roadplanner.service.RoadPlannerPreviewJobService;
+import com.monpai.sailboatmod.roadplanner.service.RoadPlannerStagedPlan;
+import com.monpai.sailboatmod.roadplanner.service.RoadPlannerStagedPreviewJob;
+import com.monpai.sailboatmod.roadplanner.service.RoadPlannerStageCompiler;
+import com.monpai.sailboatmod.roadplanner.service.RoadPlannerPreviewAccumulator;
+import com.monpai.sailboatmod.roadplanner.structure.RoadPlanningTerrainSnapshot;
 import com.monpai.sailboatmod.roadplanner.structure.RoadCenterlinePoint;
 import com.monpai.sailboatmod.roadplanner.structure.RoadNodeExpansionResult;
 import com.monpai.sailboatmod.roadplanner.structure.RoadNodeStructureExpander;
@@ -42,9 +45,9 @@ public record RoadPlannerPreviewRequestPacket(String startTownName,
                                               RoadPlannerMergeSelection mergeSelection,
                                               List<BlockPos> logicalNodes,
                                               List<RoadPlannerSharedRoadSpan> sharedSpans) {
-    /** About 30,000 blocks of straight road; the chunks are all held loaded while the preview is computed. */
+    /** Bound for the legacy corridor-inspection helper; real previews use lazy staged sampling. */
     public static final int MAX_PREVIEW_CHUNKS = 6000;
-    /** Bounds interpolation work as well as distinct chunks: travelling over the same road again still costs work. */
+    /** Bounds only legacy diagnostic enumeration, independently of the accepted streamed route length. */
     private static final int MAX_PREVIEW_PATH_SAMPLES = 32_000;
 
     public RoadPlannerPreviewRequestPacket {
@@ -170,47 +173,38 @@ public record RoadPlannerPreviewRequestPacket(String startTownName,
                 return;
             }
             RoadPlannerPreviewRequestPacket safePacket = packet.withServerValidatedMerge(player);
-            PreviewBounds bounds = safePacket.previewBounds();
-            if (bounds.tooLong()) {
-                String detail = bounds.overWorkBudget()
-                        ? "道路过长或节点过多：累计路程上限约 " + MAX_PREVIEW_PATH_SAMPLES + " 格，重复路段也计入。"
-                        : "道路过长：沿线需要加载超过 " + MAX_PREVIEW_CHUNKS + " 个区块（约 3 万格直线）。";
-                player.sendSystemMessage(net.minecraft.network.chat.Component.literal(
-                        detail + "请分段规划。"));
+            if (safePacket.nodes.size() < 2 || safePacket.tooLongForPreview()) {
+                player.sendSystemMessage(net.minecraft.network.chat.Component.literal("道路节点数量或坐标超出可用范围。"));
                 return;
             }
             ServerLevel level = player.serverLevel();
-            // The old preview goes now, so it cannot be confirmed while the new one loads.
+            RoadPlannerStagedPlan plan = new RoadPlannerStagedPlan(safePacket.nodes, safePacket.segmentTypes);
+            RoadPlannerStageCompiler compiler = new RoadPlannerStageCompiler(plan, safePacket.settings);
+            RoadPlannerPreviewAccumulator accumulator = new RoadPlannerPreviewAccumulator(plan,
+                    safePacket.startTownName, safePacket.destinationTownName, player.blockPosition());
             RoadPlannerBuildControlService.global().cancelPreview(player.getUUID(), new UUID(0L, 0L));
-            // The chunks load over several ticks; the preview is computed once they are all there.
-            RoadPlannerPreviewJobService.global().submit(
-                    player.getUUID(),
-                    level.dimension(),
-                    new RoadChunkWarmup(bounds.chunks(), new RoadPlannerChunkTickets(level),
-                            RoadPlannerChunkTickets.REQUESTS_PER_TICK, RoadPlannerChunkTickets.MAX_IN_FLIGHT),
-                    () -> safePacket.completePreview(player, level),
+            RoadPlannerPreviewJobService jobs = RoadPlannerPreviewJobService.global();
+            RoadPlannerStagedPreviewJob work = RoadPlannerStagedPreviewJob.prepared(plan, stage -> {
+                if (player.isRemoved() || player.serverLevel() != level) throw new IllegalStateException("玩家已离开当前维度。");
+                RoadPlanningTerrainSnapshot owned = RoadPlanningTerrainSnapshot.capture(level, stage);
+                return () -> safePacket.packetForExpansion(compiler.expand(stage, owned, true), false);
+            }, jobs.terrainWorker());
+            jobs.submitStreaming(player.getUUID(), level.dimension(), work, update -> {
+                accumulator.add(plan.stage(work.completedStages() - 1), update);
+                ModNetwork.CHANNEL.send(player, accumulator.snapshot(false));
+            }, () -> {
+                if (player.isRemoved() || player.serverLevel() != level) return;
+                UUID previewId = RoadPlannerBuildControlService.global().startPreview(player.getUUID(),
+                        safePacket.startTownName, safePacket.destinationTownName, safePacket.nodes, safePacket.segmentTypes,
+                        safePacket.settings, safePacket.mergeSelection, safePacket.logicalNodes, safePacket.sharedSpans);
+                RoadPlannerBuildControlService.global().bindPreviewDimension(previewId, level.dimension());
+                RoadPlannerBuildControlService.global().attachStagedPlan(previewId, plan, compiler);
+                ModNetwork.CHANNEL.send(player, accumulator.snapshot(true));
+            },
                     message -> player.displayClientMessage(net.minecraft.network.chat.Component.literal(message), true));
+            ModNetwork.CHANNEL.send(player, accumulator.snapshot(false));
         });
         context.setPacketHandled(true);
-    }
-
-    private void completePreview(ServerPlayer player, ServerLevel level) {
-        if (player.isRemoved() || player.serverLevel() != level) {
-            return; // left, died or changed dimension while loading: the steps would be built in the wrong place
-        }
-        PreviewComputation computed = computePreview(RoadTerrainSampler.fromLevel(level));
-        UUID previewId = RoadPlannerBuildControlService.global().startPreview(
-                player.getUUID(),
-                startTownName,
-                destinationTownName,
-                nodes,
-                segmentTypes,
-                settings,
-                mergeSelection,
-                logicalNodes,
-                sharedSpans);
-        RoadPlannerBuildControlService.global().attachCompiledSteps(previewId, computed.buildSteps());
-        ModNetwork.CHANNEL.send(player, computed.packet());
     }
 
     RoadPlannerPreviewRequestPacket withServerValidatedMerge(ServerPlayer player) {
@@ -326,10 +320,8 @@ public record RoadPlannerPreviewRequestPacket(String startTownName,
     }
 
     /**
-     * Chunks the preview samples: every chunk along the node lines plus its neighbours.
-     * Unloaded chunks report the world bottom as their height, which would bury the road, so all of them
-     * must be loaded first (see {@link RoadChunkWarmup}). Rejected requests return an empty corridor or at most
-     * one chunk beyond the cap, rather than allocating the complete corridor just to refuse it.
+     * Bounded legacy corridor inspection retained for existing callers/tests. The real request handler never
+     * uses this set to load chunks; distant routes return an empty or capped diagnostic set and are staged.
      */
     Set<Long> pathChunks() {
         return previewBounds().chunks();
@@ -350,9 +342,10 @@ public record RoadPlannerPreviewRequestPacket(String startTownName,
         return new PreviewBounds(chunks, false);
     }
 
-    /** Roads exceeding either the loaded-chunk budget or the cumulative interpolation budget must be split. */
+    /** Packet complexity is bounded independently of route distance; actual expansion is staged. */
     boolean tooLongForPreview() {
-        return previewBounds().tooLong();
+        if (nodes.size() > com.monpai.sailboatmod.roadplanner.service.RoadPlannerStagedPlan.MAX_NODES) return true;
+        return nodes.stream().anyMatch(node -> !RoadPlannerStagedPlan.withinPackedBounds(node));
     }
 
     private boolean exceedsWorkBudget() {
@@ -434,12 +427,16 @@ public record RoadPlannerPreviewRequestPacket(String startTownName,
                 terrainSampler,
                 RoadStructureMode.PREVIEW
         );
+        return new PreviewComputation(packetForExpansion(expansion, true), expansion.buildSteps());
+    }
+
+    private SyncRoadPlannerPreviewPacket packetForExpansion(RoadNodeExpansionResult expansion, boolean awaitingConfirmation) {
         List<SyncRoadPlannerPreviewPacket.GhostBlock> ghostBlocks = ghostBlocksFromBuildSteps(expansion);
         SampledPreviewPath previewPath = previewPathNodes(expansion);
         List<BlockPos> previewPathNodes = previewPath.nodes();
         BlockPos startHighlight = previewPathNodes.isEmpty() ? nodes.get(0) : previewPathNodes.get(0);
         BlockPos endHighlight = previewPathNodes.isEmpty() ? nodes.get(nodes.size() - 1) : previewPathNodes.get(previewPathNodes.size() - 1);
-        return new PreviewComputation(new SyncRoadPlannerPreviewPacket(
+        return new SyncRoadPlannerPreviewPacket(
                 startTownName,
                 destinationTownName,
                 ghostBlocks,
@@ -448,11 +445,11 @@ public record RoadPlannerPreviewRequestPacket(String startTownName,
                 startHighlight,
                 endHighlight,
                 endHighlight,
-                true,
+                awaitingConfirmation,
                 List.of(),
                 "",
                 bridgeRangesFromSpans(expansion, previewPath)
-        ), expansion.buildSteps());
+        );
     }
 
     private List<SyncRoadPlannerPreviewPacket.GhostBlock> ghostBlocksFromBuildSteps(RoadNodeExpansionResult expansion) {

@@ -1,0 +1,27 @@
+package com.monpai.sailboatmod.transport.control;
+
+public enum ControllerAction {
+    REFRESH,
+    REGISTER,
+    UNREGISTER,
+    RENAME,
+    ADD_CARGO,
+    REMOVE_CARGO,
+    SET_THROTTLE_TARGET,
+    SET_STEERING_TARGET,
+    CLEAR_NATIVE_TARGETS,
+    SET_PORT,
+    CONFIRM_PORTS,
+    TOGGLE_INVERTED,
+    SET_SPEED,
+    TOGGLE_REVERSE,
+    BIND_NEAREST_TERMINAL,
+    IMPORT_ROUTES,
+    SELECT_ROUTE,
+    START,
+    PAUSE,
+    RESUME,
+    STOP,
+    TOGGLE_AUTO_RETURN,
+    TOGGLE_AUTO_UNLOAD
+}

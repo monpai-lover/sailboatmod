@@ -55,4 +55,20 @@ class RoadMapRoutePreloadPlannerTest {
         assertEquals(RoadMapRoutePreloadPlan.CoverageMode.RECTANGLE, plan.coverageMode());
         assertEquals(16, plan.chunks().size());
     }
+
+    @Test
+    void oversizedExplicitSelectionIsRejectedFromItsAreaEstimateBeforeAnyWorldEnumeration() {
+        RoadMapRoutePreloadPlanner planner = new RoadMapRoutePreloadPlanner(64, 4, 3, 8);
+        RoadMapRoutePreloadPlan plan = planner.planSelection(BlockPos.ZERO, new BlockPos(4096, 64, 4096));
+        assertTrue(plan.chunks().isEmpty(), "the actual 200000-block GUI case must not allocate its huge rectangle before rejecting it");
+        assertEquals(257 * 257, plan.rectangleChunkCount());
+    }
+
+    @Test
+    void legacyNonGeneratingPathFallbackAlsoRetainsOnlyBoundedLocalWork() {
+        RoadMapRoutePreloadPlanner planner = new RoadMapRoutePreloadPlanner(64, 4, 3, 8);
+        RoadMapRoutePreloadPlan plan = planner.plan(List.of(BlockPos.ZERO, new BlockPos(4096, 64, 4096)));
+        assertEquals(RoadMapRoutePreloadPlan.CoverageMode.PATH_ONLY, plan.coverageMode());
+        assertTrue(plan.chunks().size() <= 64, "route fallback must not build the full path list either");
+    }
 }

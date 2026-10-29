@@ -21,6 +21,9 @@ public final class WaterRouteTask {
     private final CompletionHandler completionHandler;
     private final String key;
     private boolean completed;
+    private volatile boolean cancelled;
+    private final Object executionLock = new Object();
+    private Thread runningThread;
     // 异步状态机(修崩服):寻路在后台线程跑,主线程 tick 只 poll。
     // asyncStarted:后台搜索已提交;asyncResult:后台跑完写入(volatile,主线程读)——必为非 null 才算完成。
     private volatile boolean asyncStarted;
@@ -94,6 +97,10 @@ public final class WaterRouteTask {
         if (completed) {
             return true;
         }
+        if (cancelled) {
+            complete(WaterRouteResult.failure(WaterRouteFailureReason.CANCELLED));
+            return true;
+        }
         if (!asyncStarted) {
             asyncStarted = true;
             startBackgroundSearch();
@@ -117,7 +124,7 @@ public final class WaterRouteTask {
         if (customSearch != null) {
             final long t0 = System.nanoTime();
             LOGGER.info("[WaterPath] 三段编排后台提交 key={}", key);
-            WaterRouteTaskExecutor.submit(() -> {
+            submitCancellable(() -> {
                 try {
                     WaterRouteResult<List<BlockPos>> r = customSearch.get();
                     long ms = (System.nanoTime() - t0) / 1_000_000L;
@@ -125,12 +132,14 @@ public final class WaterRouteTask {
                             key, ms, r != null && r.successful(),
                             r != null && r.value() != null ? r.value().size() : 0);
                     return r != null ? r : WaterRouteResult.<List<BlockPos>>failure(WaterRouteFailureReason.NO_WATER_PATH);
+                } catch (java.util.concurrent.CancellationException cancelledSearch) {
+                    return WaterRouteResult.<List<BlockPos>>failure(WaterRouteFailureReason.CANCELLED);
                 } catch (Throwable t) {
                     LOGGER.error("[WaterPath] 三段编排异常 key={}", key, t);
                     return WaterRouteResult.<List<BlockPos>>failure(WaterRouteFailureReason.NO_WATER_PATH);
                 }
             }).whenComplete((res, ex) ->
-                    asyncResult = (ex != null || res == null)
+                    asyncResult = cancelled ? WaterRouteResult.failure(WaterRouteFailureReason.CANCELLED) : (ex != null || res == null)
                             ? WaterRouteResult.<List<BlockPos>>failure(WaterRouteFailureReason.NO_WATER_PATH)
                             : res);
             return;
@@ -140,10 +149,11 @@ public final class WaterRouteTask {
         final long deadlineNanos = startNanos + timeoutMs * 1_000_000L;
         LOGGER.info("[WaterPath] 后台寻路提交 key={} 超时={}s nodesPerTick={} maxNodes={}",
                 key, timeoutMs / 1000.0, policy.nodesPerTick(), policy.maxExpandedNodes());
-        WaterRouteTaskExecutor.submit(() -> {
+        submitCancellable(() -> {
             try {
                 WaterRoutePathfinder.Status status;
                 do {
+                    WaterRouteCancellation.check();
                     status = pathfinder.step(policy.nodesPerTick(), policy.chunkLoadsPerTick());
                 } while (status == WaterRoutePathfinder.Status.RUNNING
                         && System.nanoTime() < deadlineNanos);
@@ -163,15 +173,44 @@ public final class WaterRouteTask {
                 LOGGER.warn("[WaterPath] 后台寻路超时 key={} 耗时={}ms 节点={}/{} (仍 RUNNING,航线太长/采样太慢)",
                         key, elapsedMs, pathfinder.expandedNodes(), policy.maxExpandedNodes());
                 return WaterRouteResult.<List<BlockPos>>failure(WaterRouteFailureReason.TIMEOUT);
+            } catch (java.util.concurrent.CancellationException cancelledSearch) {
+                return WaterRouteResult.<List<BlockPos>>failure(WaterRouteFailureReason.CANCELLED);
             } catch (Throwable t) {
                 LOGGER.error("[WaterPath] 后台寻路异常 key={}", key, t);
                 return WaterRouteResult.<List<BlockPos>>failure(WaterRouteFailureReason.NO_WATER_PATH);
             }
         }).whenComplete((res, ex) ->
                 // 必写非 null,否则 task 永久 pending。try/catch 已兜住绝大多数异常,ex 是最后保险。
-                asyncResult = (ex != null || res == null)
+                asyncResult = cancelled ? WaterRouteResult.failure(WaterRouteFailureReason.CANCELLED) : (ex != null || res == null)
                         ? WaterRouteResult.<List<BlockPos>>failure(WaterRouteFailureReason.NO_WATER_PATH)
                         : res);
+    }
+
+    private <T> java.util.concurrent.CompletableFuture<T> submitCancellable(Supplier<T> work) {
+        return WaterRouteTaskExecutor.submit(() -> {
+            synchronized (executionLock) {
+                if (cancelled) throw new java.util.concurrent.CancellationException("Water route cancelled before start");
+                runningThread = Thread.currentThread();
+            }
+            try {
+                return WaterRouteCancellation.run(() -> cancelled, work);
+            } finally {
+                synchronized (executionLock) {
+                    runningThread = null;
+                    // This task owns its cancellation interrupt; do not leak it into the next pooled request.
+                    if (cancelled) Thread.interrupted();
+                }
+            }
+        });
+    }
+
+    /** Cancels queued and running work cooperatively; a late result cannot publish a route. */
+    public void cancel() {
+        synchronized (executionLock) {
+            if (completed) return;
+            cancelled = true;
+            if (runningThread != null) runningThread.interrupt();
+        }
     }
 
     private void complete(WaterRouteResult<List<BlockPos>> result) {

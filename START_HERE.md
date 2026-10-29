@@ -1,6 +1,6 @@
 # SailboatMod 開發入口
 
-本專案目標 Minecraft 1.21.1、NeoForge 21.1.259、Java 21；網路協定為 **12**。
+本專案目標 Minecraft 1.21.1、NeoForge 21.1.259、Java 21；網路協定為 **13**。
 
 先讀 [README.md](README.md) 的建置與安裝方式，再讀 [AGENTS.md](AGENTS.md) 的架構與 [LDLib2 接入說明](docs/handoff/LDLIB2_INTEGRATION.md)。GeckoLib 4.9.3 與 LDLib2 2.2.42 為必要外置模組；Tellus 0.8.3、Create 6.0.10 是可選整合，其編譯用 JAR 在 `libs/compile-only/`。
 

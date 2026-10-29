@@ -109,6 +109,13 @@ public final class ModBlocks {
             () -> new SchoolBlock(BlockBehaviour.Properties.of().mapColor(MapColor.WOOD).strength(3.0F).sound(SoundType.WOOD))
     );
 
+    public static final DeferredHolder<Block, Block> VESSEL_REGISTRATION_CONTROLLER = BLOCKS.register(
+            "vessel_registration_controller", () -> new com.monpai.sailboatmod.block.VesselRegistrationControllerBlock(
+                    BlockBehaviour.Properties.of().mapColor(MapColor.COLOR_CYAN).strength(3.0F).sound(SoundType.METAL)));
+    public static final DeferredHolder<Block, Block> LAND_VEHICLE_REGISTRATION_CONTROLLER = BLOCKS.register(
+            "land_vehicle_registration_controller", () -> new com.monpai.sailboatmod.block.LandVehicleRegistrationControllerBlock(
+                    BlockBehaviour.Properties.of().mapColor(MapColor.COLOR_ORANGE).strength(3.0F).sound(SoundType.METAL)));
+
     private ModBlocks() {
     }
 }

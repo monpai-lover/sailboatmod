@@ -27,6 +27,7 @@ public final class RealBlockWaterWorld implements WaterRouteWorld, DockBerthReso
     private final long radiusSq;
     private final int seaLevel;
     private final int boatHalfWidth;          // >0 时启用 3×3 船宽校验(单段模式 1=船 3×3);0=只判中线一格
+    private boolean preserveUnknown;
     private BlockPos trustedBerthA;           // 信任泊位(起点);可 null
     private BlockPos trustedBerthB;           // 信任泊位(终点);可 null
 
@@ -52,6 +53,13 @@ public final class RealBlockWaterWorld implements WaterRouteWorld, DockBerthReso
         w.trustedBerthA = berthA;
         w.trustedBerthB = berthB;
         return w;
+    }
+
+    /** Hierarchical stages can wait for missing prediction without permanently classifying it as land. */
+    public static RealBlockWaterWorld streaming(RealBlockWaterMap map, int seaY, int boatHalfWidth, BlockPos berthA, BlockPos berthB) {
+        RealBlockWaterWorld world = singleSegment(map, seaY, boatHalfWidth, berthA, berthB);
+        world.preserveUnknown = true;
+        return world;
     }
 
     /**
@@ -90,7 +98,7 @@ public final class RealBlockWaterWorld implements WaterRouteWorld, DockBerthReso
         }
         WaterColumn c = boatHalfWidth > 0 ? map.sampleHull(x, z, boatHalfWidth) : map.sample(x, z);
         if (c == null) {
-            return WaterColumn.blocked(); // 未加载/读不到 → 保守 blocked,A* 绕开
+            return preserveUnknown ? null : WaterColumn.blocked();
         }
         return c;
     }
@@ -172,7 +180,8 @@ public final class RealBlockWaterWorld implements WaterRouteWorld, DockBerthReso
 
     @Override
     public boolean isBerthWater(int x, int z, WaterRoutePolicy policy) {
-        return sample(x, z, policy).passable();
+        WaterColumn column = sample(x, z, policy);
+        return column != null && column.passable();
     }
 
     @Override

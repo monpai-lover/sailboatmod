@@ -33,6 +33,16 @@ class SharedMapClientStateTest {
         assertFalse(state.isRendered("minecraft:overworld", 0, 0));
     }
 
+    @Test
+    void transparentSnapshotPixelsCannotClaimRealCoverage() {
+        SharedMapClientState state = new SharedMapClientState(null);
+        RoadPlannerMapTileSyncPacket opaque = packet("minecraft:overworld", 0, 0, firstChunkOnlyMask());
+        state.applyTileDelta(new RoadPlannerMapTileSyncPacket(opaque.sessionId(), opaque.requestId(), opaque.purpose(),
+                opaque.worldId(), opaque.dimensionId(), opaque.lod(), opaque.tileX(), opaque.tileZ(),
+                opaque.pixelWidth(), opaque.pixelHeight(), new int[opaque.argbPixels().length], opaque.coverageMask()));
+        assertFalse(state.isRendered("minecraft:overworld", 0, 0));
+    }
+
     private static RoadPlannerMapTileSyncPacket packet(String dimensionId, int tileX, int tileZ, boolean[] mask) {
         return new RoadPlannerMapTileSyncPacket(
                 UUID.randomUUID(),
@@ -45,9 +55,15 @@ class SharedMapClientStateTest {
                 tileZ,
                 RoadMapTileSpec.TILE_PIXELS,
                 RoadMapTileSpec.TILE_PIXELS,
-                new int[RoadMapTileSpec.TILE_PIXELS * RoadMapTileSpec.TILE_PIXELS],
+                opaquePixels(),
                 mask
         );
+    }
+
+    private static int[] opaquePixels() {
+        int[] pixels = new int[RoadMapTileSpec.TILE_PIXELS * RoadMapTileSpec.TILE_PIXELS];
+        java.util.Arrays.fill(pixels, 0xFF336699);
+        return pixels;
     }
 
     private static boolean[] firstChunkOnlyMask() {

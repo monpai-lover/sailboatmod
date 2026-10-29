@@ -168,6 +168,7 @@ public final class ClaimWorldMapView implements AutoCloseable {
     }
 
     public boolean markVisibleForceRenderRequested(ClaimMapViewport viewport) {
+        if (view != null && view.scale() < 0.25D) return false; // The shared BPS stream owns far views; never enumerate a huge legacy rectangle.
         if (viewport == null) {
             return markInitialForceRenderRequested();
         }
@@ -180,6 +181,7 @@ public final class ClaimWorldMapView implements AutoCloseable {
         return true;
     }
 
+    @org.jetbrains.annotations.Nullable
     public RoadPlannerMapPreloadRequestPacket createVisibleForceRenderRequest(String worldId,
                                                                              String dimensionId,
                                                                              int mapX,
@@ -187,17 +189,19 @@ public final class ClaimWorldMapView implements AutoCloseable {
                                                                              int width,
                                                                              int height) {
         ensureView(0, 0, 0, width, height);
+        if (view.scale() < 0.25D) return null;
         RoadPlannerMapLayout.Rect rect = mapRect(mapX, mapY, width, height);
         int minWorldX = Math.min(view.screenToWorldX(mapX, rect), view.screenToWorldX(mapX + width, rect));
         int maxWorldX = Math.max(view.screenToWorldX(mapX, rect), view.screenToWorldX(mapX + width, rect));
         int minWorldZ = Math.min(view.screenToWorldZ(mapY, rect), view.screenToWorldZ(mapY + height, rect));
         int maxWorldZ = Math.max(view.screenToWorldZ(mapY, rect), view.screenToWorldZ(mapY + height, rect));
+        if (minWorldX < -33_554_432 || maxWorldX > 33_554_431 || minWorldZ < -33_554_432 || maxWorldZ > 33_554_431) return null;
         BlockPos start = new BlockPos(minWorldX, 64, minWorldZ);
         BlockPos destination = new BlockPos(maxWorldX, 64, maxWorldZ);
         return new RoadPlannerMapPreloadRequestPacket(
                 sessionId,
                 nextRequestId++,
-                RoadPlannerMapPreloadRequestPacket.Purpose.FORCE_RENDER,
+                RoadPlannerMapPreloadRequestPacket.Purpose.VIEWPORT,
                 worldId == null ? "" : worldId,
                 dimensionId == null ? "" : dimensionId,
                 start,
@@ -207,6 +211,7 @@ public final class ClaimWorldMapView implements AutoCloseable {
         );
     }
 
+    @org.jetbrains.annotations.Nullable
     public RoadPlannerMapPreloadRequestPacket createVisibleForceRenderRequest(String worldId,
                                                                              String dimensionId,
                                                                              ClaimMapViewport viewport) {

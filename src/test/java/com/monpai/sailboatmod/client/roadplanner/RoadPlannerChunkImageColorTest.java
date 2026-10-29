@@ -10,26 +10,26 @@ import static org.junit.jupiter.api.Assertions.assertNotEquals;
 
 class RoadPlannerChunkImageColorTest {
     @Test
-    void terrainUsesVanillaMapColorInsteadOfSharedBlockColorOverrides() {
+    void terrainUsesTheSharedPredictionPalette() {
         int actual = RoadPlannerChunkImage.terrainArgbForMapColor(MapColor.GRASS, 0);
         int oldClientColor = RoadPlannerMapPalette.softenTerrain(
                 0xFF000000 | MapColor.GRASS.calculateRGBColor(MapColor.Brightness.LOW));
         int sharedBlockColor = RoadMapRenderStyle.styleTerrainByDelta(
                 MapBlockColors.lookup("minecraft:grass_block"), 0);
 
-        assertEquals(oldClientColor, actual);
-        assertNotEquals(sharedBlockColor, actual);
+        assertEquals(sharedBlockColor, actual);
+        assertNotEquals(oldClientColor, actual);
     }
 
     @Test
-    void waterUsesVanillaMapColorInsteadOfFixedWaterOverride() {
+    void waterUsesTheSharedPredictionDepthStyle() {
         int actual = RoadPlannerChunkImage.waterArgbForDepth(1);
         int oldClientColor = RoadPlannerMapPalette.softenWater(
                 0xFF000000 | MapColor.WATER.calculateRGBColor(MapColor.Brightness.NORMAL));
         int sharedFixedWaterColor = RoadMapRenderStyle.styleWater(1);
 
-        assertEquals(oldClientColor, actual);
-        assertNotEquals(sharedFixedWaterColor, actual);
+        assertEquals(sharedFixedWaterColor, actual);
+        assertNotEquals(oldClientColor, actual);
     }
 
     @Test

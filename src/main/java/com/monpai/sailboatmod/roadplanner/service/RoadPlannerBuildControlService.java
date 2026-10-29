@@ -42,10 +42,23 @@ public class RoadPlannerBuildControlService {
     private final ConcurrentMap<UUID, PreviewSnapshot> previews = new ConcurrentHashMap<>();
     /** Build steps computed together with the preview, so confirming does not load chunks and compile again. */
     private final ConcurrentMap<UUID, List<BuildStep>> previewSteps = new ConcurrentHashMap<>();
+    private final ConcurrentMap<UUID, RoadPlannerStagedPlan> stagedPlans = new ConcurrentHashMap<>();
+    private final ConcurrentMap<UUID, RoadPlannerStageCompiler> stagedCompilers = new ConcurrentHashMap<>();
     private static final int STEPS_PER_TICK = 8;
 
     private final ConcurrentMap<UUID, ConstructionQueue> buildQueues = new ConcurrentHashMap<>();
     private final ConcurrentMap<UUID, BuildMetadata> buildMetadata = new ConcurrentHashMap<>();
+    private final ConcurrentMap<UUID, RollbackWork> rollbacks = new ConcurrentHashMap<>();
+
+    private static final class RollbackWork {
+        final UUID owner;
+        final ResourceKey<Level> dimension;
+        final RoadPlannerRollbackJob job;
+        long lastWarning = Long.MIN_VALUE;
+        RollbackWork(UUID owner, ResourceKey<Level> dimension, RoadPlannerRollbackJob job) {
+            this.owner = owner; this.dimension = dimension; this.job = job;
+        }
+    }
 
     public RoadPlannerBuildControlService() {
         this(RoadPlannerBuiltRoadRegistry::register);
@@ -136,6 +149,8 @@ public class RoadPlannerBuildControlService {
         if (replaced != null) {
             previews.remove(replaced);
             previewSteps.remove(replaced);
+            stagedPlans.remove(replaced);
+            stagedCompilers.remove(replaced);
         }
         previews.put(previewId, new PreviewSnapshot(nodes, segmentTypes, settings, mergeSelection,
                 logicalNodes, sharedSpans, sourceTownName, targetTownName, "", "", reusePlan));
@@ -149,12 +164,39 @@ public class RoadPlannerBuildControlService {
         }
     }
 
+    public void attachStagedPlan(UUID previewId, RoadPlannerStagedPlan plan) {
+        PreviewSnapshot snapshot = previews.get(previewId);
+        if (snapshot != null) attachStagedPlan(previewId, plan, new RoadPlannerStageCompiler(plan, snapshot.settings()));
+    }
+
+    public void attachStagedPlan(UUID previewId, RoadPlannerStagedPlan plan, RoadPlannerStageCompiler compiler) {
+        if (previewId != null && plan != null && compiler != null && previews.containsKey(previewId)) {
+            previewSteps.remove(previewId);
+            stagedPlans.put(previewId, plan);
+            stagedCompilers.put(previewId, compiler);
+        }
+    }
+
+    public void bindPreviewDimension(UUID previewId, ResourceKey<Level> dimension) {
+        if (previewId == null || dimension == null) return;
+        previews.computeIfPresent(previewId, (id, snapshot) -> snapshot.withDimension(dimension));
+    }
+
+    public boolean canConfirmInDimension(UUID playerId, UUID requestedId, ResourceKey<Level> dimension) {
+        UUID active = activePreviews.get(playerId);
+        if (active == null || !matches(requestedId, active)) return false;
+        PreviewSnapshot snapshot = previews.get(active);
+        return snapshot != null && (snapshot.dimension() == null || snapshot.dimension().equals(dimension));
+    }
+
     /** Drops the player's unconfirmed preview and its cached build steps (logout), which can be millions of steps. */
     public void forgetPlayer(UUID playerId) {
         UUID previewId = activePreviews.remove(playerId);
         if (previewId != null) {
             previews.remove(previewId);
             previewSteps.remove(previewId);
+            stagedPlans.remove(previewId);
+            stagedCompilers.remove(previewId);
         }
     }
 
@@ -163,6 +205,19 @@ public class RoadPlannerBuildControlService {
         activePreviews.clear();
         previews.clear();
         previewSteps.clear();
+        stagedPlans.clear();
+        stagedCompilers.clear();
+    }
+
+    /** Release transient world-bound windows before the old server level is discarded. */
+    public void stopServer() {
+        clearPreviews();
+        buildQueues.values().forEach(ConstructionQueue::cancel);
+        buildQueues.clear();
+        buildMetadata.clear();
+        activeBuilds.clear();
+        rollbacks.values().forEach(work -> work.job.cancel());
+        rollbacks.clear();
     }
 
     int cachedPreviewStepsForTest() {
@@ -175,6 +230,11 @@ public class RoadPlannerBuildControlService {
 
     public Optional<UUID> buildFor(UUID playerId) {
         return Optional.ofNullable(activeBuilds.get(playerId));
+    }
+
+    public boolean hasPendingRollback(UUID playerId) {
+        if (playerId == null) return false;
+        return rollbacks.values().stream().anyMatch(work -> playerId.equals(work.owner) && !work.job.isDone());
     }
 
     public Optional<ConstructionQueue> buildQueueForTest(UUID jobId) {
@@ -200,14 +260,37 @@ public class RoadPlannerBuildControlService {
         if (previewId == null || !matches(requestedId, previewId)) {
             return Optional.empty();
         }
+        if (activeBuilds.containsKey(playerId) || hasPendingRollback(playerId)) return Optional.empty();
+        if (!canConfirmInDimension(playerId, requestedId, level == null ? null : level.dimension())) return Optional.empty();
+        if (level != null && !previewSteps.containsKey(previewId) && !stagedPlans.containsKey(previewId)) {
+            return Optional.empty(); // A real confirmation needs a finished preview, never a synchronous corridor fallback.
+        }
         activePreviews.remove(playerId);
         UUID jobId = UUID.randomUUID();
         PreviewSnapshot snapshot = revalidatedSnapshot(level, playerId, previews.remove(previewId));
         List<BuildStep> computed = previewSteps.remove(previewId);
-        List<BuildStep> steps = computed != null && snapshot != null
-                ? filterOwnedBuildSteps(computed, snapshot.reusePlan())
-                : buildSteps(snapshot, level);
-        ConstructionQueue queue = new ConstructionQueue(jobId.toString(), steps);
+        RoadPlannerStagedPlan plan = stagedPlans.remove(previewId);
+        RoadPlannerStageCompiler compiler = stagedCompilers.remove(previewId);
+        ConstructionQueue queue;
+        if (plan != null && compiler != null && snapshot != null) {
+            RoadChunkWarmup.ChunkPort port = level == null ? new RoadChunkWarmup.ChunkPort() {
+                @Override public void request(long key) { }
+                @Override public boolean isLoaded(long key) { return false; }
+                @Override public void release(long key) { }
+            } : new RoadPlannerChunkTickets(level);
+            RoadPlannerStagedBuildQueue staged = new RoadPlannerStagedBuildQueue(jobId.toString(), plan, port,
+                    stage -> filterOwnedBuildSteps(compiler.expand(stage,
+                            com.monpai.sailboatmod.roadplanner.structure.RoadTerrainSampler.fromLevel(level), false).buildSteps(), snapshot.reusePlan()));
+            if (level != null) staged.onWindowCompleted(steps -> {
+                RoadPlannerBuiltRoadMapRefresh.enqueueBuildStepRefresh(level, steps);
+                resendAffectedChunks(level, steps);
+            });
+            queue = staged;
+        } else {
+            List<BuildStep> steps = computed != null && snapshot != null
+                    ? filterOwnedBuildSteps(computed, snapshot.reusePlan()) : buildSteps(snapshot, level);
+            queue = new ConstructionQueue(jobId.toString(), steps);
+        }
         buildQueues.put(jobId, queue);
         ResourceKey<Level> dim = level != null ? level.dimension() : Level.OVERWORLD;
         buildMetadata.put(jobId, BuildMetadata.from(playerId, jobId, snapshot, queue, dim));
@@ -227,6 +310,8 @@ public class RoadPlannerBuildControlService {
         activePreviews.remove(playerId);
         previews.remove(previewId);
         previewSteps.remove(previewId);
+        stagedPlans.remove(previewId);
+        stagedCompilers.remove(previewId);
         return true;
     }
 
@@ -236,9 +321,16 @@ public class RoadPlannerBuildControlService {
             return false;
         }
         ConstructionQueue queue = buildQueues.remove(jobId);
-        buildMetadata.remove(jobId);
+        BuildMetadata metadata = buildMetadata.remove(jobId);
+        if (queue != null) queue.cancel();
         if (queue != null && level != null) {
-            queue.rollback(level);
+            ServerLevel actualLevel = metadata == null || metadata.dimension().equals(level.dimension())
+                    ? level : level.getServer().getLevel(metadata.dimension());
+            if (actualLevel != null && queue instanceof RoadPlannerStagedBuildQueue) {
+                RoadPlannerRollbackJob undo = new RoadPlannerRollbackJob(queue.getRollbackEntries(),
+                        new RoadPlannerChunkTickets(actualLevel), entry -> actualLevel.setBlock(entry.pos(), entry.previousState(), 3));
+                rollbacks.put(jobId, new RollbackWork(playerId, actualLevel.dimension(), undo));
+            } else if (actualLevel != null) queue.rollback(actualLevel);
         }
         activeBuilds.remove(playerId);
         return true;
@@ -268,6 +360,23 @@ public class RoadPlannerBuildControlService {
 
     public void tick(ServerLevel level) {
         ResourceKey<Level> currentDim = level != null ? level.dimension() : null;
+        if (level != null) {
+            for (var entry : rollbacks.entrySet()) {
+                RollbackWork work = entry.getValue();
+                if (!work.dimension.equals(currentDim)) continue;
+                try { work.job.tick(); }
+                catch (RuntimeException unavailable) {
+                    long now = level.getGameTime();
+                    if (work.lastWarning == Long.MIN_VALUE || now - work.lastWarning >= 200) {
+                        work.lastWarning = now;
+                        com.mojang.logging.LogUtils.getLogger().warn("Road rollback window unavailable: {}", unavailable.toString());
+                        ServerPlayer owner = level.getServer().getPlayerList().getPlayer(work.owner);
+                        if (owner != null) owner.sendSystemMessage(net.minecraft.network.chat.Component.literal("道路撤销正在等待当前区块恢复。"));
+                    }
+                }
+                if (work.job.isDone()) rollbacks.remove(entry.getKey(), work);
+            }
+        }
         List<UUID> completedJobs = new java.util.ArrayList<>();
         for (java.util.Map.Entry<UUID, ConstructionQueue> entry : buildQueues.entrySet()) {
             if (currentDim != null) {
@@ -277,18 +386,33 @@ public class RoadPlannerBuildControlService {
                 }
             }
             ConstructionQueue queue = entry.getValue();
+            if (queue instanceof RoadPlannerStagedBuildQueue staged) {
+                try { staged.advanceWindow(); }
+                catch (RuntimeException unavailable) {
+                    staged.pause();
+                    com.mojang.logging.LogUtils.getLogger().warn("Road construction window unavailable: {}", unavailable.toString());
+                    BuildMetadata metadata = buildMetadata.get(entry.getKey());
+                    ServerPlayer owner = level == null || metadata == null ? null : level.getServer().getPlayerList().getPlayer(metadata.ownerId());
+                    if (owner != null) owner.sendSystemMessage(net.minecraft.network.chat.Component.literal("道路施工已暂停，当前真实地形暂不可用：" + unavailable.getMessage()));
+                    continue;
+                }
+            }
             executeSteps(queue, level, STEPS_PER_TICK);
+            if (queue instanceof RoadPlannerStagedBuildQueue staged && !staged.finishedPlanning()) continue;
             if (!queue.hasNext()) {
                 queue.complete();
                 BuildMetadata metadata = buildMetadata.get(entry.getKey());
-                completedRoadRegistrar.register(level, completedRoadBuild(level, metadata, queue));
+                CompletedRoadBuild completed = completedRoadBuild(level, metadata, queue);
+                completedRoadRegistrar.register(level, completed);
                 if (level != null) {
-                    RoadPlannerBuiltRoadMapRefresh.enqueueBuildStepRefresh(level, queue.getSteps());
+                    if (!(queue instanceof RoadPlannerStagedBuildQueue)) {
+                        RoadPlannerBuiltRoadMapRefresh.enqueueBuildStepRefresh(level, completed.buildSteps());
+                        resendAffectedChunks(level, completed.buildSteps());
+                    }
                     if (metadata != null && metadata.reusePlan() != null) {
                         RoadPlannerBuiltRoadMapRefresh.enqueueGraphPlacementRefresh(level,
                                 metadata.reusePlan().plannedPlacements());
                     }
-                    resendAffectedChunks(level, queue.getSteps());
                 }
                 completedJobs.add(entry.getKey());
             }
@@ -362,48 +486,8 @@ public class RoadPlannerBuildControlService {
         if (snapshot == null) {
             return List.of();
         }
-        // 编译前确保沿途区块已加载：未加载区块地形采样到世界底部会导致整段路面「钻地」。主线程同步加载。
-        forceLoadNodeChunks(level, snapshot.nodes());
         List<BuildStep> compiled = RoadPlannerBuildStepCompiler.compile(snapshot.nodes(), snapshot.segmentTypes(), snapshot.settings(), level);
         return filterOwnedBuildSteps(compiled, snapshot.reusePlan());
-    }
-
-    /** 沿相邻 node 连线按区块步进同步加载，保证采样读到真实地形高度。 */
-    private static void forceLoadNodeChunks(ServerLevel level, List<BlockPos> nodes) {
-        if (level == null || nodes == null || nodes.isEmpty()) {
-            return;
-        }
-        java.util.Set<Long> chunks = new java.util.HashSet<>();
-        for (int i = 0; i < nodes.size(); i++) {
-            BlockPos a = nodes.get(i);
-            addChunkArea(chunks, a.getX() >> 4, a.getZ() >> 4);
-            if (i + 1 < nodes.size()) {
-                BlockPos b = nodes.get(i + 1);
-                int steps = Math.max(Math.abs(b.getX() - a.getX()), Math.abs(b.getZ() - a.getZ()));
-                for (int s = 0; s <= steps; s += 8) {
-                    double t = steps == 0 ? 0.0 : (double) s / steps;
-                    int x = (int) Math.round(a.getX() + (b.getX() - a.getX()) * t);
-                    int z = (int) Math.round(a.getZ() + (b.getZ() - a.getZ()) * t);
-                    addChunkArea(chunks, x >> 4, z >> 4);
-                }
-            }
-        }
-        int limit = 6000;
-        int loaded = 0;
-        for (long key : chunks) {
-            if (loaded++ >= limit) {
-                break;
-            }
-            level.getChunk(net.minecraft.world.level.ChunkPos.getX(key), net.minecraft.world.level.ChunkPos.getZ(key));
-        }
-    }
-
-    private static void addChunkArea(java.util.Set<Long> out, int chunkX, int chunkZ) {
-        for (int dx = -1; dx <= 1; dx++) {
-            for (int dz = -1; dz <= 1; dz++) {
-                out.add(net.minecraft.world.level.ChunkPos.asLong(chunkX + dx, chunkZ + dz));
-            }
-        }
     }
 
     static List<BuildStep> filterOwnedBuildStepsForTest(List<BuildStep> buildSteps, RoadReusePlan reusePlan) {
@@ -470,7 +554,7 @@ public class RoadPlannerBuildControlService {
         }
         return new PreviewSnapshot(snapshot.nodes(), snapshot.segmentTypes(), snapshot.settings(), revalidated,
                 snapshot.logicalNodes(), snapshot.sharedSpans(), snapshot.sourceTownName(), snapshot.targetTownName(),
-                snapshot.sourceTownId(), snapshot.targetTownId(), snapshot.reusePlan());
+                snapshot.sourceTownId(), snapshot.targetTownId(), snapshot.reusePlan(), snapshot.dimension());
     }
 
     static List<BuildStep> nodeAnchoredBridgeStepsForCompiler(List<BlockPos> bridgeNodes, int width, ServerLevel level, int heightBonus, com.monpai.sailboatmod.client.roadplanner.RoadPlannerBuildSettings settings) {
@@ -660,7 +744,7 @@ public class RoadPlannerBuildControlService {
         return new CompletedRoadBuild(
                 metadata.roadId(),
                 metadata.ownerId(),
-                metadata.centerPath(),
+                queue instanceof RoadPlannerStagedBuildQueue staged ? staged.completedCenterPath() : metadata.centerPath(),
                 displayPath,
                 queue == null ? List.of() : queue.getSteps(),
                 queue == null ? List.of() : queue.getRollbackEntries(),
@@ -923,7 +1007,8 @@ public class RoadPlannerBuildControlService {
             RoadPlannerSegmentType finalSegmentType = snapshot == null || snapshot.segmentTypes().isEmpty()
                     ? RoadPlannerSegmentType.ROAD
                     : snapshot.segmentTypes().get(snapshot.segmentTypes().size() - 1);
-            List<BlockPos> centerPath = resolveCenterPath(snapshot, queue);
+            List<BlockPos> centerPath = queue instanceof RoadPlannerStagedBuildQueue && snapshot != null
+                    ? snapshot.logicalNodes() : resolveCenterPath(snapshot, queue);
             List<BlockPos> displayPath = resolveDisplayPath(snapshot, centerPath);
             return new BuildMetadata(ownerId, jobId.toString(),
                     snapshot == null ? "" : snapshot.sourceTownName(),
@@ -980,7 +1065,8 @@ public class RoadPlannerBuildControlService {
                                   String targetTownName,
                                   String sourceTownId,
                                   String targetTownId,
-                                  RoadReusePlan reusePlan) {
+                                  RoadReusePlan reusePlan,
+                                  ResourceKey<Level> dimension) {
         public PreviewSnapshot {
             nodes = nodes == null ? List.of() : nodes.stream().map(BlockPos::immutable).toList();
             segmentTypes = segmentTypes == null ? List.of() : List.copyOf(segmentTypes);
@@ -998,6 +1084,20 @@ public class RoadPlannerBuildControlService {
             sourceTownId = normalizeTownId(sourceTownId);
             targetTownId = normalizeTownId(targetTownId);
             reusePlan = reusePlan == null ? RoadReusePlan.noReuse(List.of(), logicalNodes) : reusePlan;
+        }
+
+        public PreviewSnapshot(List<BlockPos> nodes, List<RoadPlannerSegmentType> segmentTypes,
+                               RoadPlannerBuildSettings settings, RoadPlannerMergeSelection mergeSelection,
+                               List<BlockPos> logicalNodes, List<RoadPlannerSharedRoadSpan> sharedSpans,
+                               String sourceTownName, String targetTownName, String sourceTownId, String targetTownId,
+                               RoadReusePlan reusePlan) {
+            this(nodes, segmentTypes, settings, mergeSelection, logicalNodes, sharedSpans, sourceTownName,
+                    targetTownName, sourceTownId, targetTownId, reusePlan, null);
+        }
+
+        public PreviewSnapshot withDimension(ResourceKey<Level> dimension) {
+            return new PreviewSnapshot(nodes, segmentTypes, settings, mergeSelection, logicalNodes, sharedSpans,
+                    sourceTownName, targetTownName, sourceTownId, targetTownId, reusePlan, dimension);
         }
 
         public PreviewSnapshot(List<BlockPos> nodes, List<RoadPlannerSegmentType> segmentTypes, RoadPlannerBuildSettings settings) {

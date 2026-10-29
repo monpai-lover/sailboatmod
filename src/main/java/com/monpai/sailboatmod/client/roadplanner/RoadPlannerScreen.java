@@ -669,6 +669,7 @@ public class RoadPlannerScreen extends Screen implements RoadPlannerTileSyncRece
             case ROUTE_PRELOAD -> "地图: 路线预热中";
             case FORCE_RENDER -> "地图: 强制渲染预热中";
             case BUILT_ROAD_REFRESH -> "地图: 已建道路刷新中";
+            case VIEWPORT -> "地图: 地形更新中";
         };
         if (testMode || minecraft == null || minecraft.getConnection() == null) {
             return;
@@ -2491,6 +2492,10 @@ public class RoadPlannerScreen extends Screen implements RoadPlannerTileSyncRece
         }
         RoadPlannerRouteExpander.Result expanded = expandRoute(submission.buildNodes(), submission.buildSegments());
         if (!expanded.success()) {
+            if (expanded.issues().contains("streamed_route_requires_explicit_bridge")) {
+                statusLine = "远距离路线包含待确认的跨水路段，请先明确设置桥梁路段。";
+                return;
+            }
             statusLine = "\u6865\u6881\u7f3a\u5c11\u9646\u5730\u951a\u70b9\u6216\u8def\u7ebf\u8282\u70b9\u4e0d\u8db3\uff0c\u8bf7\u68c0\u67e5\u8def\u7ebf";
             return;
         }
@@ -2734,7 +2739,7 @@ public class RoadPlannerScreen extends Screen implements RoadPlannerTileSyncRece
         RoadPlannerBridgeRuleService.LandProbe clientLandProbe = RoadPlannerScreen::isClientLand;
         RoadPlannerHeightSampler clientHeightSampler = testMode ? (x, z) -> 64 : RoadPlannerHeightSampler.clientLoadedTerrain();
         RoadPlannerWaterDepthProbe clientWaterDepthProbe = testMode ? (x, z) -> 1 : RoadPlannerScreen::clientWaterDepth;
-        return RoadPlannerRouteExpander.expand(
+        return RoadPlannerRouteExpander.expandForSubmission(
                 nodes,
                 segmentTypes,
                 (x, z) -> sampleIndex.isLand(x, z, clientLandProbe),
@@ -2750,6 +2755,10 @@ public class RoadPlannerScreen extends Screen implements RoadPlannerTileSyncRece
             return;
         }
         BlockPos from = linePlan.nodes().get(linePlan.nodeCount() - 1);
+        if (RoadPlannerRouteExpander.requiresStreaming(List.of(from, target))) {
+            linePlan.addClickNode(target, segmentType);
+            return;
+        }
         RoadPlannerWaterCrossingSplitter.SplitResult split = RoadPlannerWaterCrossingSplitter.split(
                 from,
                 target,
@@ -2770,6 +2779,7 @@ public class RoadPlannerScreen extends Screen implements RoadPlannerTileSyncRece
     }
 
     private void normalizeCurrentBridgeSegments() {
+        if (RoadPlannerRouteExpander.requiresStreaming(linePlan.nodes())) return;
         RoadPlannerBridgeSegmentNormalizer.Result normalized = normalizeBridgeSegments(linePlan.nodes(), linePlan.segments());
         linePlan.replaceWith(normalized.nodes(), normalized.segmentTypes());
     }

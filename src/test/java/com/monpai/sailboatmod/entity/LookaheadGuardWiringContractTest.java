@@ -8,6 +8,16 @@ import java.nio.file.Path;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class LookaheadGuardWiringContractTest {
+    @Test
+    void regularSailboatStoresTheCompleteRouteButValidatesABoundedWindow() throws Exception {
+        String source = sailboat();
+        assertTrue(source.contains("AutopilotRouteWindow.complete(route.waypoints())"), "dispatch must retain the true final dock beyond point 512");
+        assertTrue(source.contains("AutopilotRouteWindow.around(autopilotRoute, autopilotTargetIndex)"));
+        assertTrue(source.contains("AutopilotRouteWindow.apply(autopilotRoute,"));
+        assertTrue(source.contains("AutopilotRouteWindow.save(tag, autopilotRoute, autopilotTargetIndex)"));
+        assertTrue(source.contains("AutopilotRouteWindow.load(tag)"));
+    }
+
     private static String sailboat() throws Exception {
         return Files.readString(Path.of("src/main/java/com/monpai/sailboatmod/entity/SailboatEntity.java"));
     }

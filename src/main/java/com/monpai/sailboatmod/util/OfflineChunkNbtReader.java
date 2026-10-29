@@ -54,12 +54,13 @@ public final class OfflineChunkNbtReader {
      */
     public static Optional<CompoundTag> readSafeFromWorkerThread(ServerLevel level, ChunkPos pos,
                                                                  long timeoutMs, boolean flush) {
-        if (level == null || pos == null) {
+        if (level == null || pos == null || Thread.currentThread().isInterrupted()) {
             return Optional.empty();
         }
         if (flush) {
             flushFromWorkerThread(level);
         }
+        if (Thread.currentThread().isInterrupted()) return Optional.empty();
         return readFullTag(level, pos, timeoutMs);
     }
 
@@ -112,7 +113,16 @@ public final class OfflineChunkNbtReader {
 
     private static Optional<CompoundTag> readFullTag(ServerLevel level, ChunkPos pos, long timeoutMs) {
         try {
-            CompletableFuture<Optional<CompoundTag>> future = level.getChunkSource().chunkMap.read(pos);
+            if (Thread.currentThread().isInterrupted()) return Optional.empty();
+            return awaitFull(level.getChunkSource().chunkMap.read(pos), timeoutMs);
+        } catch (Throwable t) {
+            return Optional.empty();
+        }
+    }
+
+    static Optional<CompoundTag> awaitFull(CompletableFuture<Optional<CompoundTag>> future, long timeoutMs) {
+        if (Thread.currentThread().isInterrupted()) return Optional.empty();
+        try {
             Optional<CompoundTag> tag = timeoutMs > 0
                     ? future.get(timeoutMs, TimeUnit.MILLISECONDS)
                     : future.get();
@@ -120,6 +130,9 @@ public final class OfflineChunkNbtReader {
                 return Optional.empty();
             }
             return tag;
+        } catch (InterruptedException stopped) {
+            Thread.currentThread().interrupt();
+            return Optional.empty();
         } catch (Throwable t) {
             return Optional.empty();
         }
@@ -139,6 +152,8 @@ public final class OfflineChunkNbtReader {
                 }
                 return null;
             }).get(2000L, TimeUnit.MILLISECONDS);
+        } catch (InterruptedException stopped) {
+            Thread.currentThread().interrupt();
         } catch (Throwable ignored) {
             // flush 失败不致命:最坏读到稍旧的盘上数据。
         }

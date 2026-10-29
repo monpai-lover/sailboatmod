@@ -7,6 +7,7 @@ const appJs = fs.readFileSync(path.join(root, "src/main/resources/marketweb/app.
 const appCss = fs.readFileSync(path.join(root, "src/main/resources/marketweb/app.css"), "utf8");
 const mapJsPath = path.join(root, "src/main/resources/marketweb/map.js");
 const mapJs = fs.existsSync(mapJsPath) ? fs.readFileSync(mapJsPath, "utf8") : "";
+const logisticsJs = fs.readFileSync(path.join(root, "src/main/resources/marketweb/logistics-render.js"), "utf8");
 
 function fail(message) {
   console.error(`marketweb frontend check failed: ${message}`);
@@ -83,8 +84,12 @@ expectContains(mapJs, "window.SailboatMarketMap", "map.js must expose SailboatMa
 expectContains(mapJs, "/api/map/square/tile/overworld/${tileZoom}/", "map.js must request cached squaremap tiles");
 expectContains(mapJs, "setLineDash", "map.js must draw dashed remaining shipment traces");
 expectContains(mapJs, "drawShipmentVehicleIcon", "map.js must draw a directional vehicle icon on active shipment traces");
-expectContains(mapJs, "drawSailboatIcon", "map.js must include a sailboat-shaped shipment icon");
-expectContains(mapJs, "drawCarriageIcon", "map.js must include a carriage-shaped shipment icon");
+expectContains(indexHtml, "/logistics-render.js", "marketweb must load the shared logistics renderer");
+expectContains(mapJs, "api.drawVehicle(ctx, kind, size, style", "map.js must delegate shipment icons to the shared logistics renderer");
+expectContains(logisticsJs, "function drawSailboat(", "the shared logistics renderer must include a sailboat-shaped shipment icon");
+expectContains(logisticsJs, "function drawCarriage(", "the shared logistics renderer must include a carriage-shaped shipment icon");
+expectContains(logisticsJs, "drawSailboat(ctx, size, style, t);", "shared vehicle drawing must dispatch sailboat icons");
+expectContains(logisticsJs, "drawCarriage(ctx, size, style, t);", "shared vehicle drawing must dispatch carriage icons");
 expectContains(mapJs, "shipmentIconPose", "map.js must derive vehicle icon position and route direction");
 
 expectCount("renderSession", /function\s+renderSession\s*\(/g, 1);

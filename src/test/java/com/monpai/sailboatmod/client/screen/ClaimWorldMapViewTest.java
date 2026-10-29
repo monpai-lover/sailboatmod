@@ -19,6 +19,22 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class ClaimWorldMapViewTest {
     @Test
+    void farViewDoesNotCreateALegacyPackedBlockRectangleRequest() {
+        ClaimWorldMapView view = ClaimWorldMapView.forTest(2_089_495, 0, 1_000_000, 1280, 720);
+        assertTrue(view.scale() < 0.25);
+        assertNull(view.createVisibleForceRenderRequest("earth", "minecraft:overworld", 0, 0, 1280, 720),
+                "far views use int-safe BPS tiles and cannot route around the guard through pan-finished sends");
+    }
+
+    @Test
+    void closeViewBeyondPackedBlockCoordinatesStillUsesTheIntSafeSharedStream() {
+        ClaimWorldMapView view = ClaimWorldMapView.forTest(4_687_500, 0, 10, 1280, 720);
+        assertTrue(view.scale() >= 0.25);
+        assertNull(view.createVisibleForceRenderRequest("earth", "minecraft:overworld", 0, 0, 1280, 720),
+                "a valid int world coordinate must not wrap through the legacy 26-bit BlockPos packet");
+    }
+
+    @Test
     void initializesAroundClaimChunkAndMapsMouseToChunk() {
         ClaimWorldMapView view = ClaimWorldMapView.forTest(10, -4, 4, 164, 164);
 
@@ -40,7 +56,7 @@ class ClaimWorldMapViewTest {
                 160,
                 160);
 
-        assertEquals(RoadPlannerMapPreloadRequestPacket.Purpose.FORCE_RENDER, packet.purpose());
+        assertEquals("VIEWPORT", packet.purpose().name(), "opening an automatic claim map must not request world generation");
         assertEquals("world_a", packet.worldId());
         assertEquals("minecraft:overworld", packet.dimensionId());
         assertTrue(packet.start().getX() < packet.destination().getX());
@@ -95,7 +111,7 @@ class ClaimWorldMapViewTest {
                 0,
                 RoadMapTileSpec.TILE_PIXELS,
                 RoadMapTileSpec.TILE_PIXELS,
-                new int[RoadMapTileSpec.TILE_PIXELS * RoadMapTileSpec.TILE_PIXELS],
+                opaqueActualPixels(),
                 null
         );
 
@@ -110,6 +126,12 @@ class ClaimWorldMapViewTest {
             SharedMapClientState.defaultState().clearAll();
             RoadPlannerTileManager.clearSharedDefaultForTest();
         }
+    }
+
+    private static int[] opaqueActualPixels() {
+        int[] pixels = new int[RoadMapTileSpec.TILE_PIXELS * RoadMapTileSpec.TILE_PIXELS];
+        java.util.Arrays.fill(pixels, 0xFF336699);
+        return pixels;
     }
 
     @Test

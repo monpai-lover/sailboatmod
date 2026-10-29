@@ -3,6 +3,7 @@ package com.monpai.sailboatmod.client.roadplanner;
 import com.monpai.sailboatmod.network.packet.roadplanner.RoadMapSnapshotSyncPacket;
 import com.monpai.sailboatmod.network.packet.roadplanner.RoadPlannerMapTileSyncPacket;
 import com.monpai.sailboatmod.roadplanner.map.MapLod;
+import com.monpai.sailboatmod.roadplanner.map.SharedMapTileGrid;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.multiplayer.ClientLevel;
 import net.minecraft.client.multiplayer.ServerData;
@@ -14,6 +15,9 @@ import java.util.List;
 import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.LinkedHashMap;
+import com.monpai.sailboatmod.network.ModNetwork;
+import com.monpai.sailboatmod.network.packet.roadplanner.SharedMapTerrainRequestPacket;
 
 public class RoadPlannerTileManager implements AutoCloseable {
     private static RoadPlannerTileManager sharedDefault;
@@ -22,6 +26,9 @@ public class RoadPlannerTileManager implements AutoCloseable {
     private final Map<RoadPlannerTileKey, RoadPlannerTile> loadedTiles = new ConcurrentHashMap<>();
     private String worldId;
     private String dimensionId;
+    private final LinkedHashMap<RoadPlannerTileKey, Long> terrainRequests = new LinkedHashMap<>();
+    private long terrainRequestTick = Long.MIN_VALUE;
+    private int terrainRequestsThisTick;
 
     public RoadPlannerTileManager(File rootDir) {
         this(rootDir, detectWorldId(), detectDimensionId());
@@ -78,6 +85,47 @@ public class RoadPlannerTileManager implements AutoCloseable {
         return loadedTiles.size();
     }
 
+    public int applyTerrainPatch(String world, String dimension, int tileX, int tileZ, int offsetX, int offsetZ,
+                                 int width, int height, int[] pixels, boolean prediction) {
+        return applyTerrainPatch(world, dimension, tileX, tileZ, offsetX, offsetZ, width, height, pixels, prediction, 1);
+    }
+
+    public int applyTerrainPatch(String world, String dimension, int tileX, int tileZ, int offsetX, int offsetZ,
+                                 int width, int height, int[] pixels, boolean prediction, int blocksPerPixel) {
+        if (!worldId.equals(world) || !dimensionId.equals(dimension) || pixels == null || width < 1 || height < 1
+                || offsetX < 0 || offsetZ < 0 || offsetX + width > 256 || offsetZ + height > 256
+                || pixels.length != width * height || !SharedMapTileGrid.validTile(tileX, tileZ, blocksPerPixel)) return 0;
+        if (prediction && (width != 256 || height != 256 || offsetX != 0 || offsetZ != 0)) return 0;
+        RoadPlannerTile tile = getTerrainTile(tileX, tileZ, blocksPerPixel);
+        if (prediction) return tile.setPredictionPixels(pixels) ? 1 : 0;
+        if (!tile.applyActualPatch(offsetX, offsetZ, width, height, pixels)) return 0;
+        saveTile(tile);
+        return 1;
+    }
+
+    public void requestTerrain(int tileX, int tileZ) {
+        requestTerrain(tileX, tileZ, 1);
+    }
+
+    public void requestTerrain(int tileX, int tileZ, int blocksPerPixel) {
+        if (!SharedMapTileGrid.validTile(tileX, tileZ, blocksPerPixel)) return;
+        Minecraft minecraft = Minecraft.getInstance();
+        if (minecraft == null || minecraft.level == null || minecraft.getConnection() == null) return;
+        long tick = minecraft.level.getGameTime();
+        if (terrainRequestTick != tick) {
+            terrainRequestTick = tick;
+            terrainRequestsThisTick = 0;
+        }
+        if (terrainRequestsThisTick >= 2) return;
+        RoadPlannerTileKey key = terrainKey(tileX, tileZ, blocksPerPixel);
+        Long last = terrainRequests.get(key);
+        if (last != null && tick >= last && tick - last < 100) return;
+        terrainRequests.put(key, tick);
+        while (terrainRequests.size() > 256) terrainRequests.remove(terrainRequests.keySet().iterator().next());
+        terrainRequestsThisTick++;
+        ModNetwork.CHANNEL.sendToServer(new SharedMapTerrainRequestPacket(worldId, dimensionId, tileX, tileZ, blocksPerPixel));
+    }
+
     public String worldId() {
         return worldId;
     }
@@ -93,12 +141,32 @@ public class RoadPlannerTileManager implements AutoCloseable {
     public RoadPlannerTile getOrCreateTile(int tileX, int tileZ, MapLod lod) {
         MapLod safeLod = lod == null ? MapLod.LOD_1 : lod;
         RoadPlannerTileKey key = new RoadPlannerTileKey(worldId, dimensionId, safeLod, tileX, tileZ);
+        return getOrCreateTile(key);
+    }
+
+    public RoadPlannerTile getTerrainTile(int tileX, int tileZ, int blocksPerPixel) {
+        if (!SharedMapTileGrid.validTile(tileX, tileZ, blocksPerPixel)) throw new IllegalArgumentException("Invalid terrain tile");
+        return getOrCreateTile(terrainKey(tileX, tileZ, blocksPerPixel));
+    }
+
+    private RoadPlannerTileKey terrainKey(int tileX, int tileZ, int blocksPerPixel) {
+        return new RoadPlannerTileKey(worldId, dimensionId, MapLod.LOD_1, tileX, tileZ, blocksPerPixel == 1 ? 0 : blocksPerPixel);
+    }
+
+    private RoadPlannerTile getOrCreateTile(RoadPlannerTileKey key) {
         RoadPlannerTile tile = loadedTiles.computeIfAbsent(key, candidate -> {
             RoadPlannerTile created = new RoadPlannerTile(candidate);
             created.loadOrCreate(tileFile(candidate));
             return created;
         });
         tile.markAccessed();
+        while (loadedTiles.size() > 256) {
+            Map.Entry<RoadPlannerTileKey, RoadPlannerTile> oldest = loadedTiles.entrySet().stream()
+                    .filter(entry -> !entry.getKey().equals(key))
+                    .min(java.util.Comparator.comparingLong(entry -> entry.getValue().lastAccessedAt())).orElse(null);
+            if (oldest == null) break;
+            if (loadedTiles.remove(oldest.getKey(), oldest.getValue())) oldest.getValue().close();
+        }
         return tile;
     }
 
@@ -135,7 +203,7 @@ public class RoadPlannerTileManager implements AutoCloseable {
     public void updateLoadedChunksInTile(RoadPlannerTile tile) {
         Minecraft minecraft = Minecraft.getInstance();
         ClientLevel level = minecraft.level;
-        if (level == null || tile == null) {
+        if (level == null || tile == null || tile.key().terrainBlocksPerPixel() > 1) {
             return;
         }
         int startChunkX = tile.key().tileX() * 16;
@@ -323,7 +391,12 @@ public class RoadPlannerTileManager implements AutoCloseable {
     }
 
     private File tileFile(RoadPlannerTileKey key) {
-        File lodDir = new File(new File(new File(rootDir, key.worldId()), key.dimensionId()), "lod_" + key.lod().blocksPerPixel());
+        if (key.terrainBlocksPerPixel() > 1) {
+            File actualDir = new File(new File(new File(rootDir, key.worldId()), key.dimensionId()), "actual_v3");
+            return new File(new File(actualDir, "bps_" + key.terrainBlocksPerPixel()), key.fileName());
+        }
+        File actualDir = new File(new File(new File(rootDir, key.worldId()), key.dimensionId()), "actual_v2");
+        File lodDir = new File(actualDir, "lod_" + key.lod().blocksPerPixel());
         return new File(lodDir, key.fileName());
     }
 
@@ -362,6 +435,7 @@ public class RoadPlannerTileManager implements AutoCloseable {
     }
 
     private void closeLoadedTiles() {
+        terrainRequests.clear();
         for (RoadPlannerTile tile : loadedTiles.values()) {
             tile.close();
         }

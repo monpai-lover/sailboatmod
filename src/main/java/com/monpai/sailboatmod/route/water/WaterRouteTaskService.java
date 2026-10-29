@@ -71,7 +71,15 @@ public final class WaterRouteTaskService {
     }
 
     public void clear() {
+        pendingTasks.values().forEach(WaterRouteTask::cancel);
         pendingTasks.clear();
+    }
+
+    public boolean cancel(String key) {
+        WaterRouteTask task = pendingTasks.get(key);
+        if (task == null) return false;
+        task.cancel();
+        return true;
     }
 
     public int pendingCount() {

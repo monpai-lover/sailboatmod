@@ -40,6 +40,10 @@ public final class AutopilotChunkLoader {
      */
     private static void validateTickets(ServerLevel level, TicketHelper helper) {
         Map<UUID, ?> entityTickets = helper.getEntityTickets();
+        var physical=com.monpai.sailboatmod.transport.control.RegisteredTransportSavedData.get(level);
+        for(UUID owner:java.util.List.copyOf(entityTickets.keySet())) {
+            if(physical.isOwnedRegistration(owner)&&!physical.shouldRetainPhysicalTicket(owner))helper.removeAllTickets(owner);
+        }
         int kept = entityTickets.size();
         // 全部保留:不调 removeAllTickets/removeTicket → Forge 据持久化票据重新强加载区块 → 载具回来。
         if (kept > 0) {

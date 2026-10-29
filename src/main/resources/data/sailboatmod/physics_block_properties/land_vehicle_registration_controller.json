@@ -1,0 +1,7 @@
+{
+  "priority": 2000,
+  "selector": "sailboatmod:land_vehicle_registration_controller",
+  "properties": {
+    "sable:mass": 0.0
+  }
+}

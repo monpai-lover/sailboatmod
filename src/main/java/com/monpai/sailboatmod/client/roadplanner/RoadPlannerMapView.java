@@ -1,7 +1,7 @@
 package com.monpai.sailboatmod.client.roadplanner;
 
 public class RoadPlannerMapView {
-    private static final double MIN_SCALE = 0.25D;
+    private static final double MIN_SCALE = 1.0D / 1_048_576;
     private static final double MAX_SCALE = 8.0D;
 
     private double centerX;
@@ -39,11 +39,11 @@ public class RoadPlannerMapView {
     }
 
     public int screenToWorldX(double screenX, RoadPlannerMapLayout.Rect map) {
-        return (int) Math.round(centerX + (screenX - (map.x() + map.width() / 2.0D)) / scale);
+        return clampCoordinate(centerX + (screenX - (map.x() + map.width() / 2.0D)) / scale);
     }
 
     public int screenToWorldZ(double screenY, RoadPlannerMapLayout.Rect map) {
-        return (int) Math.round(centerZ + (screenY - (map.y() + map.height() / 2.0D)) / scale);
+        return clampCoordinate(centerZ + (screenY - (map.y() + map.height() / 2.0D)) / scale);
     }
 
     public void panByScreenDelta(double deltaX, double deltaY) {
@@ -60,6 +60,11 @@ public class RoadPlannerMapView {
     }
 
     private static double clampScale(double value) {
+        if (Double.isNaN(value)) return 1.0D;
         return Math.max(MIN_SCALE, Math.min(MAX_SCALE, value));
+    }
+
+    private static int clampCoordinate(double value) {
+        return (int) Math.max(Integer.MIN_VALUE, Math.min(Integer.MAX_VALUE, Math.round(value)));
     }
 }

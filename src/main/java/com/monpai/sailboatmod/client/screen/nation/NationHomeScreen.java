@@ -407,7 +407,8 @@ public class NationHomeScreen extends ThemedScreen implements RoadPlannerTileSyn
 
     private UIElement buildClaimsPage() {
         UIElement page = Ui.column();
-        page.layout(l -> l.gapAll(Ui.GAP_S).flexGrow(1).minHeight(0));
+        // The enclosing scroller needs the full wrapped height, not a viewport-sized flex item.
+        page.layout(l -> l.gapAll(Ui.GAP_S).heightAuto().flexGrow(0).flexShrink(0));
         claimsTabs = TabBar.horizontal(sub -> {
             claimsSubPage = sub;
             refresh();
@@ -416,7 +417,8 @@ public class NationHomeScreen extends ThemedScreen implements RoadPlannerTileSyn
                 .add(1, new ItemStack(Items.SHIELD), Component.translatable("screen.sailboatmod.nation.claims.show_perms"));
 
         claimsMapView = Ui.row();
-        claimsMapView.layout(l -> l.gapAll(Ui.GAP_M).flexWrap(FlexWrap.WRAP).alignItems(AlignItems.STRETCH).flexGrow(1).minHeight(0));
+        claimsMapView.layout(l -> l.gapAll(Ui.GAP_M).flexWrap(FlexWrap.WRAP).alignItems(AlignItems.STRETCH)
+                .heightAuto().flexGrow(0).flexShrink(0));
         UIElement info = Ui.column();
         info.layout(l -> l.width(0).flexGrow(1).minWidth(120).gapAll(Ui.GAP_S));
         claimLines = Ui.column("sm-pane");
@@ -1057,7 +1059,7 @@ public class NationHomeScreen extends ThemedScreen implements RoadPlannerTileSyn
             public void paintMap(GuiGraphics g, ClaimMapViewport viewport, int mouseX, int mouseY) {
                 claimWorldMapView.renderBase(g, font, viewport, mapCenterX(), mapCenterZ(), claimRadius());
                 requestInitialVisibleClaimMapForceRender(viewport);
-                ClaimMapPainter.drawClaims(g, claimWorldMapView, viewport, NationHomeScreen.this::findClaim, NationOverviewClaim::nationId);
+                ClaimMapPainter.drawClaims(g, claimWorldMapView, viewport, cachedClaimOverlays.values(), NationHomeScreen.this::findClaim, NationOverviewClaim::nationId);
                 ClaimMapPainter.drawMarker(g, claimWorldMapView, viewport, data.currentChunkX(), data.currentChunkZ(), 0xFFFFFFFF);
                 ClaimMapPainter.drawMarker(g, claimWorldMapView, viewport, selectedClaimChunkX, selectedClaimChunkZ, 0xFFFFD166);
                 ClaimMapPainter.drawArea(g, claimWorldMapView, viewport, areaCorner1X, areaCorner1Z, areaCorner2X, areaCorner2Z);
@@ -1222,6 +1224,7 @@ public class NationHomeScreen extends ThemedScreen implements RoadPlannerTileSyn
     public NationHomeScreen(NationOverviewData data) {
         super(Component.translatable("screen.sailboatmod.nation.home.title"));
         this.data = data == null ? NationOverviewData.empty() : data;
+        cacheNearbyClaims();
         rememberClaimRadius(this.data);
         syncSelections();
         syncTownSelection();
@@ -1726,6 +1729,7 @@ public class NationHomeScreen extends ThemedScreen implements RoadPlannerTileSyn
                 currentDimensionId(),
                 viewport
         );
+        if (packet == null) return;
         ModNetwork.CHANNEL.sendToServer(packet);
     }
 
@@ -2033,12 +2037,6 @@ public class NationHomeScreen extends ThemedScreen implements RoadPlannerTileSyn
     }
 
     private NationOverviewClaim findClaim(int x, int z) {
-        for (NationOverviewClaim claim : this.data.nearbyClaims()) {
-            if (claim.chunkX() == x && claim.chunkZ() == z) {
-                this.cachedClaimOverlays.put(claimKey(x, z), claim);
-                return claim;
-            }
-        }
         return this.cachedClaimOverlays.get(claimKey(x, z));
     }
     private boolean sameOwner(String ownerId, int x, int z) { NationOverviewClaim c = findClaim(x, z); return c != null && ownerId.equals(c.nationId()); }

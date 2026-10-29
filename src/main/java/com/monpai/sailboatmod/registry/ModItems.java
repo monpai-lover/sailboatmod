@@ -142,6 +142,11 @@ public final class ModItems {
             () -> new CarriageItem(new Item.Properties().stacksTo(1))
     );
 
+    public static final DeferredHolder<Item, Item> VESSEL_REGISTRATION_CONTROLLER = ITEMS.register("vessel_registration_controller",
+            () -> new DescribedBlockItem(ModBlocks.VESSEL_REGISTRATION_CONTROLLER.get(), new Item.Properties(), "item.sailboatmod.vessel_registration_controller.desc"));
+    public static final DeferredHolder<Item, Item> LAND_VEHICLE_REGISTRATION_CONTROLLER = ITEMS.register("land_vehicle_registration_controller",
+            () -> new DescribedBlockItem(ModBlocks.LAND_VEHICLE_REGISTRATION_CONTROLLER.get(), new Item.Properties(), "item.sailboatmod.land_vehicle_registration_controller.desc"));
+
     private ModItems() {
     }
 }

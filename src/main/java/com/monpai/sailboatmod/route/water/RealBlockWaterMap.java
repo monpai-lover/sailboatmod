@@ -61,6 +61,7 @@ public final class RealBlockWaterMap {
     // ---- 地形预测后备(Tellus 世界):NBT 读不到(区块从未生成/未达 FULL)时问预测器,而不是直接当陆 ----
     private volatile com.monpai.sailboatmod.route.terrain.TerrainPredictor predictor;
     private volatile com.monpai.sailboatmod.route.terrain.PredictionBudget predictionBudget;
+    private boolean retryUnknownPrediction;
 
     // ---- 按需加载 + 滑动窗口卸载(单段 NBT A* 用)----
     // onDemand=true:sample 未命中时后台 NBT 直读该区块填缓存(不预加载整走廊);读不到的区块本次不 force
@@ -83,6 +84,14 @@ public final class RealBlockWaterMap {
         this.onDemandLoad = true;
         return this;
     }
+
+    /** Staged routes retain missing predictions as unknown so a later slice can retry after download. */
+    public RealBlockWaterMap retryUnknownPrediction() {
+        retryUnknownPrediction = true;
+        return this;
+    }
+
+    public int predictionMisses() { return predictTimeout.get() + predictFail.get(); }
 
     /**
      * 挂地形预测后备:按需模式下 NBT 未命中 → predictor(等待受 budget 限制);READY 填预测列,NOT_READY/FAILED 填全陆。
@@ -396,6 +405,7 @@ public final class RealBlockWaterMap {
      * 非按需模式未命中返回 null(沿用预加载语义)。后台线程安全(loadNbtOffThread 走 chunkMap.read 不 join 主线程)。
      */
     private ChunkWater chunkAt(int cx, int cz) {
+        WaterRouteCancellation.check();
         long k = key(cx, cz);
         ChunkWater cw = cache.get(k);
         if (cw != null) {
@@ -407,6 +417,7 @@ public final class RealBlockWaterMap {
         }
         // 按需后台读:读到填真实水图;读不到(未存盘)→ 有预测器问预测器,否则填全陆,既绕开又不反复重读。
         if (!loadNbtOffThread(cx, cz) && !loadPredicted(cx, cz)) {
+            if (retryUnknownPrediction && predictor != null) return null;
             cache.putIfAbsent(k, allLand());
             hitUnknown.incrementAndGet();
         }

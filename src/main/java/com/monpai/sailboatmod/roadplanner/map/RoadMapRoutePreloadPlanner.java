@@ -28,63 +28,70 @@ public final class RoadMapRoutePreloadPlanner {
         if (nodes.isEmpty()) {
             return new RoadMapRoutePreloadPlan(RoadMapRoutePreloadPlan.CoverageMode.PATH_ONLY, List.of(), 0, 0);
         }
+        Bounds bounds = bounds(nodes, rectanglePaddingChunks);
         List<ChunkPos> pathChunks = pathChunks(nodes, pathPaddingChunks);
-        List<ChunkPos> rectangleChunks = rectangleChunks(nodes, rectanglePaddingChunks);
-        return buildPlan(pathChunks, rectangleChunks);
+        List<ChunkPos> rectangleChunks = bounds.count() <= maxRectangleChunks ? rectangleChunks(bounds) : List.of();
+        return buildPlan(pathChunks, rectangleChunks, bounds.count());
     }
 
     public RoadMapRoutePreloadPlan planSelection(BlockPos start, BlockPos destination) {
         List<BlockPos> nodes = List.of(
                 (start == null ? BlockPos.ZERO : start).immutable(),
                 (destination == null ? BlockPos.ZERO : destination).immutable());
-        List<ChunkPos> pathChunks = pathChunks(nodes, 0);
-        List<ChunkPos> rectangleChunks = rectangleChunks(nodes, 0);
-        return buildPlan(pathChunks, rectangleChunks);
+        Bounds bounds = bounds(nodes, 0);
+        if (bounds.count() > maxRectangleChunks) {
+            return new RoadMapRoutePreloadPlan(RoadMapRoutePreloadPlan.CoverageMode.PATH_ONLY, List.of(), 0, bounds.count());
+        }
+        return buildPlan(pathChunks(nodes, 0), rectangleChunks(bounds), bounds.count());
     }
 
-    private RoadMapRoutePreloadPlan buildPlan(List<ChunkPos> pathChunks, List<ChunkPos> rectangleChunks) {
+    public int chunkBudget() { return maxRectangleChunks; }
+
+    private RoadMapRoutePreloadPlan buildPlan(List<ChunkPos> pathChunks, List<ChunkPos> rectangleChunks, int rectangleCount) {
         RoadMapRoutePreloadPlan.CoverageMode mode =
-                rectangleChunks.size() <= maxRectangleChunks
+                rectangleCount <= maxRectangleChunks
                         ? RoadMapRoutePreloadPlan.CoverageMode.RECTANGLE
                         : RoadMapRoutePreloadPlan.CoverageMode.PATH_ONLY;
         LinkedHashSet<ChunkPos> ordered = new LinkedHashSet<>(pathChunks);
         if (mode == RoadMapRoutePreloadPlan.CoverageMode.RECTANGLE) {
             ordered.addAll(rectangleChunks);
         }
-        return new RoadMapRoutePreloadPlan(mode, List.copyOf(ordered), pathChunks.size(), rectangleChunks.size());
+        return new RoadMapRoutePreloadPlan(mode, List.copyOf(ordered), pathChunks.size(), rectangleCount);
     }
 
     private List<ChunkPos> pathChunks(List<BlockPos> nodes, int paddingChunks) {
         LinkedHashSet<ChunkPos> ordered = new LinkedHashSet<>();
-        addPathChunk(nodes.get(0), ordered, paddingChunks);
+        if (!addPathChunk(nodes.get(0), ordered, paddingChunks)) return List.copyOf(ordered);
         for (int index = 1; index < nodes.size(); index++) {
             BlockPos from = nodes.get(index - 1);
             BlockPos to = nodes.get(index);
-            int dx = to.getX() - from.getX();
-            int dz = to.getZ() - from.getZ();
-            int samples = Math.max(1, (int) Math.ceil(Math.max(Math.abs(dx), Math.abs(dz)) / (double) segmentSampleStepBlocks));
-            for (int step = 0; step <= samples; step++) {
+            long dx = (long) to.getX() - from.getX();
+            long dz = (long) to.getZ() - from.getZ();
+            long samples = Math.max(1L, (long) Math.ceil(Math.max(Math.abs(dx), Math.abs(dz)) / (double) segmentSampleStepBlocks));
+            for (long step = 0; step <= samples; step++) {
                 double t = step / (double) samples;
                 int x = (int) Math.round(from.getX() + dx * t);
                 int z = (int) Math.round(from.getZ() + dz * t);
-                addPathChunk(new BlockPos(x, from.getY(), z), ordered, paddingChunks);
+                if (!addPathChunk(new BlockPos(x, from.getY(), z), ordered, paddingChunks)) return List.copyOf(ordered);
             }
         }
         return List.copyOf(ordered);
     }
 
-    private void addPathChunk(BlockPos pos, LinkedHashSet<ChunkPos> ordered, int paddingChunks) {
+    private boolean addPathChunk(BlockPos pos, LinkedHashSet<ChunkPos> ordered, int paddingChunks) {
         int chunkX = Math.floorDiv(pos.getX(), 16);
         int chunkZ = Math.floorDiv(pos.getZ(), 16);
         int safePaddingChunks = Math.max(0, paddingChunks);
         for (int offsetX = -safePaddingChunks; offsetX <= safePaddingChunks; offsetX++) {
             for (int offsetZ = -safePaddingChunks; offsetZ <= safePaddingChunks; offsetZ++) {
+                if (ordered.size() >= maxRectangleChunks) return false;
                 ordered.add(new ChunkPos(chunkX + offsetX, chunkZ + offsetZ));
             }
         }
+        return true;
     }
 
-    private List<ChunkPos> rectangleChunks(List<BlockPos> nodes, int paddingChunks) {
+    private Bounds bounds(List<BlockPos> nodes, int paddingChunks) {
         int minX = nodes.stream().mapToInt(BlockPos::getX).min().orElse(0);
         int maxX = nodes.stream().mapToInt(BlockPos::getX).max().orElse(0);
         int minZ = nodes.stream().mapToInt(BlockPos::getZ).min().orElse(0);
@@ -94,12 +101,24 @@ public final class RoadMapRoutePreloadPlanner {
         int endChunkX = Math.floorDiv(maxX, 16) + safePaddingChunks;
         int startChunkZ = Math.floorDiv(minZ, 16) - safePaddingChunks;
         int endChunkZ = Math.floorDiv(maxZ, 16) + safePaddingChunks;
-        List<ChunkPos> chunks = new ArrayList<>();
-        for (int chunkZ = startChunkZ; chunkZ <= endChunkZ; chunkZ++) {
-            for (int chunkX = startChunkX; chunkX <= endChunkX; chunkX++) {
+        return new Bounds(startChunkX, endChunkX, startChunkZ, endChunkZ);
+    }
+
+    private List<ChunkPos> rectangleChunks(Bounds bounds) {
+        List<ChunkPos> chunks = new ArrayList<>(bounds.count());
+        for (int chunkZ = bounds.minZ; chunkZ <= bounds.maxZ; chunkZ++) {
+            for (int chunkX = bounds.minX; chunkX <= bounds.maxX; chunkX++) {
                 chunks.add(new ChunkPos(chunkX, chunkZ));
             }
         }
         return chunks;
+    }
+
+    private record Bounds(int minX, int maxX, int minZ, int maxZ) {
+        int count() {
+            long width = (long) maxX - minX + 1, height = (long) maxZ - minZ + 1;
+            if (width <= 0 || height <= 0 || width > Integer.MAX_VALUE / height) return Integer.MAX_VALUE;
+            return (int) (width * height);
+        }
     }
 }

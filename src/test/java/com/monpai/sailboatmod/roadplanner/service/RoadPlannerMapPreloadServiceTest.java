@@ -5,6 +5,8 @@ import com.monpai.sailboatmod.network.packet.roadplanner.RoadPlannerMapPreloadRe
 import com.monpai.sailboatmod.roadplanner.map.MapLod;
 import com.monpai.sailboatmod.roadplanner.map.RoadMapRoutePreloadPlan;
 import net.minecraft.world.level.ChunkPos;
+import net.minecraft.core.BlockPos;
+import net.minecraft.server.level.ServerLevel;
 import org.junit.jupiter.api.Test;
 
 import java.lang.reflect.Constructor;
@@ -20,14 +22,30 @@ import java.util.UUID;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertSame;
 import static org.junit.jupiter.api.Assertions.assertTrue;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 
 class RoadPlannerMapPreloadServiceTest {
     @Test
-    void routePreloadForcesMissingChunksForRoadTiles() {
-        assertTrue(RoadPlannerMapPreloadService.forcesMissingChunksForTest(
+    void automaticRoutePreloadNeverForcesMissingChunksButExplicitForceRemainsDistinct() {
+        assertFalse(RoadPlannerMapPreloadService.forcesMissingChunksForTest(
                 RoadPlannerMapPreloadRequestPacket.Purpose.ROUTE_PRELOAD));
         assertTrue(RoadPlannerMapPreloadService.forcesMissingChunksForTest(
                 RoadPlannerMapPreloadRequestPacket.Purpose.FORCE_RENDER));
+    }
+
+    @Test
+    void actualAutomaticMapEntryAndRouteRequestsLeaveCorridorWorkToTheViewportStream() throws Exception {
+        RoadPlannerMapPreloadService service = new RoadPlannerMapPreloadService();
+        Method resolve = RoadPlannerMapPreloadService.class.getDeclaredMethod("resolvePlan", ServerLevel.class, RoadPlannerMapPreloadRequestPacket.class);
+        resolve.setAccessible(true);
+        for (var purpose : List.of(RoadPlannerMapPreloadRequestPacket.Purpose.ROUTE_PRELOAD,
+                RoadPlannerMapPreloadRequestPacket.Purpose.ENTER_PLANNER_PRELOAD)) {
+            var nodes = List.of(BlockPos.ZERO, new BlockPos(4096, 64, 4096));
+            var request = new RoadPlannerMapPreloadRequestPacket(UUID.randomUUID(), 1, purpose, "earth", "minecraft:overworld",
+                    nodes.get(0), nodes.get(1), nodes, RoadPlannerMapPreloadRequestPacket.PROTOCOL_VERSION);
+            var plan = (RoadMapRoutePreloadPlan) resolve.invoke(service, null, request);
+            assertTrue(plan.chunks().isEmpty(), "opening/editing a road must not enumerate a complete corridor before the streaming preview starts");
+        }
     }
 
     @Test

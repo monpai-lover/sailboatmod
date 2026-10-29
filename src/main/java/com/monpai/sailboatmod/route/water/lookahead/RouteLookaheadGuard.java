@@ -28,7 +28,7 @@ public final class RouteLookaheadGuard {
     public static final int MAX_EXTRA_CHUNKS = 40;
     public static final int TICK_INTERVAL = 10;
     public static final double HOLD_DISTANCE = 48.0D;
-    /** 与 SailboatEntity.MAX_AUTOPILOT_WAYPOINTS 一致;自动航线生成时被抽稀到 256,留出绕行插点的余量。 */
+    /** Local validation/repair window budget; full persistent routes can contain more points. */
     public static final int MAX_WAYPOINTS = 512;
     private static final int HALF_WIDTH = 1;
 

@@ -7,8 +7,41 @@ import java.util.List;
 
 public final class RoadPlannerRouteExpander {
     private static final int DEFAULT_SPACING_BLOCKS = 8;
+    private static final int MAX_INLINE_SAMPLES = 512;
 
     private RoadPlannerRouteExpander() {
+    }
+
+    /** Decide before any terrain probing or interpolation; distant typed geometry is sampled by the server windows. */
+    public static boolean requiresStreaming(List<BlockPos> nodes) {
+        if (nodes == null) return false;
+        long estimated = 1;
+        BlockPos previous = null;
+        for (BlockPos node : nodes) {
+            if (node == null || node.equals(previous)) continue;
+            if (previous != null) {
+                double distance = Math.hypot((double) node.getX() - previous.getX(), (double) node.getZ() - previous.getZ());
+                estimated += Math.max(1L, (long) Math.ceil(distance / DEFAULT_SPACING_BLOCKS));
+                if (estimated > MAX_INLINE_SAMPLES) return true;
+            }
+            previous = node;
+        }
+        return false;
+    }
+
+    public static Result expandForSubmission(List<BlockPos> nodes, List<RoadPlannerSegmentType> types,
+                                              RoadPlannerBridgeRuleService.LandProbe land,
+                                              RoadPlannerHeightSampler height, RoadPlannerWaterDepthProbe water) {
+        List<BlockPos> compact = compact(nodes);
+        if (!requiresStreaming(compact)) return expand(compact, types, land, height, water);
+        List<RoadPlannerSegmentType> submittedTypes = new ArrayList<>();
+        for (int i = 0; i < compact.size() - 1; i++) {
+            submittedTypes.add(types != null && i < types.size() && types.get(i) != null ? types.get(i) : RoadPlannerSegmentType.ROAD);
+        }
+        if (submittedTypes.contains(RoadPlannerSegmentType.BLOCKED_REQUIRES_BRIDGE)) {
+            return Result.failure(compact, submittedTypes, "streamed_route_requires_explicit_bridge");
+        }
+        return new Result(true, compact, submittedTypes, List.of());
     }
 
     public static Result expand(List<BlockPos> nodes,
@@ -102,9 +135,9 @@ public final class RoadPlannerRouteExpander {
                                                        BlockPos to,
                                                        RoadPlannerSegmentType type,
                                                        RoadPlannerHeightSampler heightSampler) {
-        int dx = to.getX() - from.getX();
-        int dz = to.getZ() - from.getZ();
-        double distance = Math.sqrt(dx * dx + dz * dz);
+        double dx = (double) to.getX() - from.getX();
+        double dz = (double) to.getZ() - from.getZ();
+        double distance = Math.hypot(dx, dz);
         int steps = Math.max(1, (int) Math.ceil(distance / DEFAULT_SPACING_BLOCKS));
         List<SegmentPoint> points = new ArrayList<>(steps + 1);
         for (int step = 0; step <= steps; step++) {

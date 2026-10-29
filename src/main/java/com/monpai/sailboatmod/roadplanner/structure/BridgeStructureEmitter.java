@@ -262,7 +262,10 @@ public final class BridgeStructureEmitter {
             }
         }
 
-        int deckLightIndex = 0;
+        RoadTerrainSampler.BridgeWindow globalWindow = supportSampler.bridgeWindow(points);
+        int entryRamp = globalWindow == null ? 0 : Math.min(globalWindow.length(),
+                Math.max(0, plan.deckY() - globalWindow.entryY()) == 0 ? 0 : Math.max(2, (plan.deckY() - globalWindow.entryY()) * 2));
+        int deckLightIndex = globalWindow == null ? 0 : Math.max(0, globalWindow.offset() - entryRamp);
         CenterlineSegmentLocator profileLocator = null;
         for (int index = 0; index < plannedPoints.size(); index++) {
             RoadPlannerBridgeGeometryPlanner.PlannedPoint planned = plannedPoints.get(index);

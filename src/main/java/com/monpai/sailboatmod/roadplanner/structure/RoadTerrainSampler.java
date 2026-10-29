@@ -20,6 +20,16 @@ public interface RoadTerrainSampler {
         return false;
     }
 
+    /** Optional full-span coordinates for a streamed bridge; ordinary samplers retain the original geometry path. */
+    default BridgeWindow bridgeWindow(java.util.List<RoadCenterlinePoint> points) { return null; }
+
+    record BridgeWindow(int offset, int length, int entryY, int exitY, int waterY,
+                        com.monpai.sailboatmod.client.roadplanner.RoadPlannerSegmentType sourceType) {
+        public BridgeWindow(int offset, int length, int entryY, int exitY, int waterY) {
+            this(offset, length, entryY, exitY, waterY, null);
+        }
+    }
+
     static RoadTerrainSampler flat(int y) {
         return (x, z) -> y;
     }

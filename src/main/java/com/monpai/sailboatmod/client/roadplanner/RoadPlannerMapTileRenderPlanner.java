@@ -1,6 +1,7 @@
 package com.monpai.sailboatmod.client.roadplanner;
 
 import com.monpai.sailboatmod.roadplanner.map.MapLod;
+import com.monpai.sailboatmod.roadplanner.map.SharedMapTileGrid;
 
 import java.util.ArrayList;
 import java.util.List;
@@ -14,27 +15,30 @@ final class RoadPlannerMapTileRenderPlanner {
             return List.of();
         }
         RoadPlannerMapLayout.Rect mapRect = new RoadPlannerMapLayout.Rect(rect.x(), rect.y(), rect.width(), rect.height());
-        double tileScreenSize = Math.max(16.0D, RoadPlannerTile.TILE_SIZE_BLOCKS * view.scale());
+        int bps = SharedMapTileGrid.forScale(view.scale(), rect.width(), rect.height());
+        long worldSpan = SharedMapTileGrid.span(bps);
+        double tileScreenSize = worldSpan * view.scale();
         int drawSize = (int) Math.ceil(tileScreenSize) + 1;
         int minWorldX = view.screenToWorldX(rect.x(), mapRect);
         int maxWorldX = view.screenToWorldX(rect.right(), mapRect);
         int minWorldZ = view.screenToWorldZ(rect.y(), mapRect);
         int maxWorldZ = view.screenToWorldZ(rect.bottom(), mapRect);
-        int startTileX = Math.floorDiv(Math.min(minWorldX, maxWorldX), RoadPlannerTile.TILE_SIZE_BLOCKS) - 1;
-        int endTileX = Math.floorDiv(Math.max(minWorldX, maxWorldX), RoadPlannerTile.TILE_SIZE_BLOCKS) + 1;
-        int startTileZ = Math.floorDiv(Math.min(minWorldZ, maxWorldZ), RoadPlannerTile.TILE_SIZE_BLOCKS) - 1;
-        int endTileZ = Math.floorDiv(Math.max(minWorldZ, maxWorldZ), RoadPlannerTile.TILE_SIZE_BLOCKS) + 1;
-        List<TileRequest> requests = new ArrayList<>((endTileX - startTileX + 1) * (endTileZ - startTileZ + 1));
+        int startTileX = SharedMapTileGrid.tileAt(Math.min(minWorldX, maxWorldX), bps) - 1;
+        int endTileX = SharedMapTileGrid.tileAt(Math.max(minWorldX, maxWorldX), bps) + 1;
+        int startTileZ = SharedMapTileGrid.tileAt(Math.min(minWorldZ, maxWorldZ), bps) - 1;
+        int endTileZ = SharedMapTileGrid.tileAt(Math.max(minWorldZ, maxWorldZ), bps) + 1;
+        List<TileRequest> requests = new ArrayList<>();
         for (int tileZ = startTileZ; tileZ <= endTileZ; tileZ++) {
             for (int tileX = startTileX; tileX <= endTileX; tileX++) {
-                int screenX = view.worldToScreenX(tileX * RoadPlannerTile.TILE_SIZE_BLOCKS, mapRect);
-                int screenZ = view.worldToScreenZ(tileZ * RoadPlannerTile.TILE_SIZE_BLOCKS, mapRect);
-                requests.add(new TileRequest(tileX, tileZ, MapLod.LOD_1, screenX, screenZ, drawSize));
+                if (!SharedMapTileGrid.validTile(tileX, tileZ, bps)) continue;
+                int screenX = view.worldToScreenX(tileX * (double) worldSpan, mapRect);
+                int screenZ = view.worldToScreenZ(tileZ * (double) worldSpan, mapRect);
+                requests.add(new TileRequest(tileX, tileZ, MapLod.LOD_1, screenX, screenZ, drawSize, bps));
             }
         }
         return List.copyOf(requests);
     }
 
-    record TileRequest(int tileX, int tileZ, MapLod lod, int screenX, int screenZ, int screenSize) {
+    record TileRequest(int tileX, int tileZ, MapLod lod, int screenX, int screenZ, int screenSize, int blocksPerPixel) {
     }
 }

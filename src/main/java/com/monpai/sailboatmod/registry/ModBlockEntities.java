@@ -82,6 +82,10 @@ public final class ModBlockEntities {
             () -> BlockEntityType.Builder.of(BarracksBlockEntity::new, ModBlocks.BARRACKS_BLOCK.get()).build(null)
     );
 
+    public static final DeferredHolder<BlockEntityType<?>, BlockEntityType<com.monpai.sailboatmod.block.entity.RegisteredVehicleControllerBlockEntity>> REGISTERED_VEHICLE_CONTROLLER_BLOCK_ENTITY = BLOCK_ENTITIES.register(
+            "registered_vehicle_controller", () -> BlockEntityType.Builder.of(com.monpai.sailboatmod.block.entity.RegisteredVehicleControllerBlockEntity::new,
+                    ModBlocks.VESSEL_REGISTRATION_CONTROLLER.get(), ModBlocks.LAND_VEHICLE_REGISTRATION_CONTROLLER.get()).build(null));
+
     private ModBlockEntities() {
     }
 }

@@ -11,6 +11,7 @@ import com.monpai.sailboatmod.network.packet.roadplanner.RoadPlannerMapPreloadCa
 import com.monpai.sailboatmod.network.packet.roadplanner.RoadPlannerMapPreloadProgressPacket;
 import com.monpai.sailboatmod.network.packet.roadplanner.RoadPlannerMapPreloadRequestPacket;
 import com.monpai.sailboatmod.network.packet.roadplanner.RoadPlannerMapTileSyncPacket;
+import com.monpai.sailboatmod.network.packet.roadplanner.SharedMapTerrainRequestPacket;
 import com.monpai.sailboatmod.roadplanner.map.MapLod;
 import com.monpai.sailboatmod.roadplanner.map.RoadMapColorizer;
 import com.monpai.sailboatmod.roadplanner.map.RoadMapColumnSampler;
@@ -72,7 +73,32 @@ public final class RoadPlannerMapPreloadService {
             return;
         }
         RoadPlannerMapPreloadRequestPacket.Purpose purpose = packet.purpose();
+        if (purpose == RoadPlannerMapPreloadRequestPacket.Purpose.VIEWPORT) {
+            int minX = Math.floorDiv(Math.min(packet.start().getX(), packet.destination().getX()), 256);
+            int maxX = Math.floorDiv(Math.max(packet.start().getX(), packet.destination().getX()), 256);
+            int minZ = Math.floorDiv(Math.min(packet.start().getZ(), packet.destination().getZ()), 256);
+            int maxZ = Math.floorDiv(Math.max(packet.start().getZ(), packet.destination().getZ()), 256);
+            int requested = 0;
+            for (int z = minZ; z <= maxZ && requested < 64; z++) {
+                for (int x = minX; x <= maxX && requested < 64; x++, requested++) {
+                    SharedMapTerrainService.global().request(player,
+                            new SharedMapTerrainRequestPacket(packet.worldId(), packet.dimensionId(), x, z));
+                }
+            }
+            return;
+        }
+        if (automaticMapPurpose(purpose)) {
+            finishWithoutTerrainWork(player, packet, RoadPlannerMapPreloadProgressPacket.State.COMPLETE,
+                    "地图将随当前视图分段更新");
+            return;
+        }
         RoadMapRoutePreloadPlan plan = resolvePlan(player.serverLevel(), packet);
+        if (purpose == RoadPlannerMapPreloadRequestPacket.Purpose.FORCE_RENDER
+                && plan.rectangleChunkCount() > ROUTE_PLANNER.chunkBudget()) {
+            finishWithoutTerrainWork(player, packet, RoadPlannerMapPreloadProgressPacket.State.FAILED,
+                    "强制渲染选区过大，请缩小选区后重试。");
+            return;
+        }
         JobKey key = new JobKey(packet.sessionId(), purpose);
         ActiveJob activeJob = new ActiveJob(player.getUUID(), packet.sessionId(), packet.requestId(), purpose, packet.worldId(), packet.dimensionId(), new RoadPlannerMapPreloadJob(
                 packet.sessionId(),
@@ -83,6 +109,19 @@ public final class RoadPlannerMapPreloadService {
                 plan));
         replaceJob(key, activeJob);
         sendProgress(player, activeJob.job.progress());
+    }
+
+    private void finishWithoutTerrainWork(ServerPlayer player, RoadPlannerMapPreloadRequestPacket packet,
+                                          RoadPlannerMapPreloadProgressPacket.State state, String message) {
+        ActiveJob previous = jobs.remove(new JobKey(packet.sessionId(), packet.purpose()));
+        if (previous != null) releaseAllForcedChunks(previous);
+        sendProgress(player, new RoadPlannerMapPreloadProgressPacket(packet.sessionId(), packet.requestId(), packet.purpose(),
+                packet.worldId(), packet.dimensionId(), RoadMapRoutePreloadPlan.CoverageMode.PATH_ONLY, 0, 0, state, message));
+    }
+
+    private static boolean automaticMapPurpose(RoadPlannerMapPreloadRequestPacket.Purpose purpose) {
+        return purpose == RoadPlannerMapPreloadRequestPacket.Purpose.ENTER_PLANNER_PRELOAD
+                || purpose == RoadPlannerMapPreloadRequestPacket.Purpose.ROUTE_PRELOAD;
     }
 
     public void enqueueBuiltRoadRefresh(ServerLevel level, Collection<net.minecraft.world.level.ChunkPos> chunks) {
@@ -204,6 +243,9 @@ public final class RoadPlannerMapPreloadService {
     }
 
     private RoadMapRoutePreloadPlan resolvePlan(ServerLevel level, RoadPlannerMapPreloadRequestPacket packet) {
+        if (automaticMapPurpose(packet.purpose())) {
+            return new RoadMapRoutePreloadPlan(RoadMapRoutePreloadPlan.CoverageMode.PATH_ONLY, List.of(), 0, 0);
+        }
         if (packet.purpose() == RoadPlannerMapPreloadRequestPacket.Purpose.FORCE_RENDER) {
             return ROUTE_PLANNER.planSelection(packet.start(), packet.destination());
         }
@@ -345,8 +387,7 @@ public final class RoadPlannerMapPreloadService {
     }
 
     private static boolean forcesMissingChunks(RoadPlannerMapPreloadRequestPacket.Purpose purpose) {
-        return purpose == RoadPlannerMapPreloadRequestPacket.Purpose.FORCE_RENDER
-                || purpose == RoadPlannerMapPreloadRequestPacket.Purpose.ROUTE_PRELOAD;
+        return purpose == RoadPlannerMapPreloadRequestPacket.Purpose.FORCE_RENDER;
     }
 
     static boolean forcesMissingChunksForTest(RoadPlannerMapPreloadRequestPacket.Purpose purpose) {

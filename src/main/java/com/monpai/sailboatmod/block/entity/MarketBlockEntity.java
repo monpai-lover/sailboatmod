@@ -5,7 +5,9 @@ import com.monpai.sailboatmod.dock.PostStationRegistry;
 import com.monpai.sailboatmod.dock.TownWarehouseRegistry;
 import com.monpai.sailboatmod.economy.GoldStandardEconomy;
 import com.monpai.sailboatmod.entity.CarriageEntity;
-import com.monpai.sailboatmod.entity.TransportEntity;
+import com.monpai.sailboatmod.transport.LogisticsCarrier;
+import com.monpai.sailboatmod.transport.CargoLoadReceipt;
+import com.monpai.sailboatmod.transport.TransportRegistry;
 import com.monpai.sailboatmod.market.MarketDispatchPlanner;
 import com.monpai.sailboatmod.market.MarketListing;
 import com.monpai.sailboatmod.market.FulfillmentMode;
@@ -1546,7 +1548,7 @@ public class MarketBlockEntity extends BlockEntity implements MenuProvider {
             if (terminalPlan == null) {
                 continue;
             }
-            for (TransportEntity boat : availableDispatchBoats(terminalPlan.sourceTerminal(), player)) {
+            for (LogisticsCarrier boat : availableDispatchBoats(terminalPlan.sourceTerminal(), player)) {
                 ShipmentPlan shipmentPlan = buildShipmentPlanForWarehouseTarget(
                         market,
                         boat,
@@ -1773,7 +1775,7 @@ public class MarketBlockEntity extends BlockEntity implements MenuProvider {
         if (terminalPlan == null) {
             return false;
         }
-        for (TransportEntity boat : availableDispatchBoats(terminalPlan.sourceTerminal(), player)) {
+        for (LogisticsCarrier boat : availableDispatchBoats(terminalPlan.sourceTerminal(), player)) {
             ShipmentPlan shipmentPlan = buildShipmentPlanForWarehouseTarget(
                     market,
                     boat,
@@ -1816,7 +1818,7 @@ public class MarketBlockEntity extends BlockEntity implements MenuProvider {
         if (terminalPlan == null) {
             return;
         }
-        for (TransportEntity carrier : availableDispatchBoats(terminalPlan.sourceTerminal(), player)) {
+        for (LogisticsCarrier carrier : availableDispatchBoats(terminalPlan.sourceTerminal(), player)) {
             ShipmentPlan shipmentPlan = buildShipmentPlanForWarehouseTarget(
                     market,
                     carrier,
@@ -1880,8 +1882,8 @@ public class MarketBlockEntity extends BlockEntity implements MenuProvider {
             return;
         }
         for (DockBlockEntity terminal : terminalsForTown(sourceWarehouse.getTownId(), terminalKind)) {
-            List<TransportEntity> carriers = availableDispatchBoats(terminal, player);
-            for (TransportEntity carrier : carriers) {
+            List<LogisticsCarrier> carriers = availableDispatchBoats(terminal, player);
+            for (LogisticsCarrier carrier : carriers) {
                 options.add(new MarketOverviewData.DispatchOption(
                         terminalKind.name(),
                         dispatchTerminalPreviewLabel(terminal, terminalKind),
@@ -1978,7 +1980,7 @@ public class MarketBlockEntity extends BlockEntity implements MenuProvider {
 
         DispatchPreviewPlan best = null;
         for (DockBlockEntity sourceTerminal : sourceTerminals) {
-            List<TransportEntity> boats = availableDispatchBoats(sourceTerminal, player);
+            List<LogisticsCarrier> boats = availableDispatchBoats(sourceTerminal, player);
             for (DockBlockEntity targetTerminal : targetTerminals) {
                 RoutePreview preview = resolveRoutePreview(sourceWarehouse, targetWarehouse, sourceTerminal, targetTerminal, terminalKind);
                 if (preview == null) {
@@ -2191,7 +2193,7 @@ public class MarketBlockEntity extends BlockEntity implements MenuProvider {
     }
 
     @Nullable
-    private ShipmentPlan buildShipmentPlanForWarehouseTarget(MarketSavedData market, TransportEntity boat, int routeIndex,
+    private ShipmentPlan buildShipmentPlanForWarehouseTarget(MarketSavedData market, LogisticsCarrier boat, int routeIndex,
                                                              @Nullable RouteDefinition generatedRoute,
                                                              @Nullable LandTransportNetworkService.LandRoutePlan landPlan,
                                                              DockBlockEntity targetTerminal, List<PurchaseOrder> orders) {
@@ -2229,7 +2231,7 @@ public class MarketBlockEntity extends BlockEntity implements MenuProvider {
         return new ShipmentPlan(routeIndex, generatedRoute, landPlan, targetTerminal.getBlockPos(), targetTerminal.getDockName(), cargo, selections);
     }
 
-    private String dispatchChoiceId(TransportTerminalKind terminalKind, BlockPos targetWarehousePos, TransportEntity carrier) {
+    private String dispatchChoiceId(TransportTerminalKind terminalKind, BlockPos targetWarehousePos, LogisticsCarrier carrier) {
         String kind = terminalKind == null ? TransportTerminalKind.AUTO.name() : terminalKind.name();
         String target = targetWarehousePos == null ? "0" : Long.toString(targetWarehousePos.asLong());
         String carrierId = carrier == null || carrier.getTransportUuid() == null ? "" : carrier.getTransportUuid().toString();
@@ -2253,12 +2255,17 @@ public class MarketBlockEntity extends BlockEntity implements MenuProvider {
         return estimateEtaSeconds(terminalKind == null ? TransportTerminalKind.PORT : terminalKind, distanceMeters);
     }
 
-    private boolean dispatchShipmentPlan(String shipperUuid, String shipperName, @Nullable Player player, TransportEntity boat, DockBlockEntity sourceDock,
+    private boolean dispatchShipmentPlan(String shipperUuid, String shipperName, @Nullable Player player, LogisticsCarrier boat, DockBlockEntity sourceDock,
                                          MarketSavedData market, ShipmentPlan plan, TransportTerminalKind terminalKind) {
         if (boat == null || sourceDock == null || market == null || plan == null) {
             return false;
         }
-        if (!boat.canLoadCargo(plan.cargo()) || !boat.loadCargo(plan.cargo())) {
+        for (ShipmentOrderSelection selection : plan.selections()) {
+            PurchaseOrder current = market.getPurchaseOrder(selection.dispatchOrder().orderId());
+            if (current == null || !"WAITING_SHIPMENT".equals(current.status())) return false;
+        }
+        CargoLoadReceipt loadReceipt = boat.loadCargoForDispatch(plan.cargo());
+        if (loadReceipt == null) {
             return false;
         }
 
@@ -2306,6 +2313,8 @@ public class MarketBlockEntity extends BlockEntity implements MenuProvider {
         }
         boat.setPendingShipmentManifest(manifest);
         if (!routeLoadedVehicleToTarget(boat, sourceDock, plan.generatedRoute(), plan.landPlan(), plan.routeIndex(), player)) {
+            loadReceipt.rollback();
+            boat.clearPendingMarketDelivery();
             return false;
         }
 
@@ -2337,6 +2346,7 @@ public class MarketBlockEntity extends BlockEntity implements MenuProvider {
             ShippingTraceService.createOrUpdateTrace(level, shippingOrder, route);
             ProcurementService.markInTransit(level, shippingOrder.purchaseOrderId(), shippingOrder.shippingOrderId());
         }
+        loadReceipt.commit();
         return true;
     }
 
@@ -2349,7 +2359,7 @@ public class MarketBlockEntity extends BlockEntity implements MenuProvider {
      * @param routeIndex     源终端既有航线索引（仅 generatedRoute == null 时使用，港口）
      * @return 是否成功发车
      */
-    private boolean routeLoadedVehicleToTarget(TransportEntity boat, DockBlockEntity sourceDock,
+    private boolean routeLoadedVehicleToTarget(LogisticsCarrier boat, DockBlockEntity sourceDock,
                                                @Nullable RouteDefinition generatedRoute,
                                                @Nullable LandTransportNetworkService.LandRoutePlan landPlan,
                                                int routeIndex, @Nullable Player player) {
@@ -2357,21 +2367,15 @@ public class MarketBlockEntity extends BlockEntity implements MenuProvider {
             return false;
         }
         if (generatedRoute != null) {
-            if (!(boat instanceof CarriageEntity carriage)) {
-                clearTemporaryShipmentCargo(boat);
-                boat.clearPendingMarketDelivery();
+            if (boat.transportKind() != LogisticsCarrier.Kind.LAND) {
                 return false;
             }
             boat.setRouteCatalog(List.of(generatedRoute), 0, sourceDock.getBlockPos());
-            carriage.setLandTransportTask(landPlan, true, CarriageEntity.TransportTaskKind.MARKET_ORDER);
+            boat.setLandTransportTask(landPlan, true, CarriageEntity.TransportTaskKind.MARKET_ORDER);
             if (!boat.startAutopilotFromRouteStart()) {
-                clearTemporaryShipmentCargo(boat);
-                boat.clearPendingMarketDelivery();
                 return false;
             }
         } else if (!sourceDock.assignLoadedBoatToRouteIndex(boat, routeIndex, true, player)) {
-            clearTemporaryShipmentCargo(boat);
-            boat.clearPendingMarketDelivery();
             return false;
         }
         return true;
@@ -2386,7 +2390,7 @@ public class MarketBlockEntity extends BlockEntity implements MenuProvider {
      * @param boat 进入本产地终端 zone 的载具
      * @return 是否装了货（供自动自提判断"装完续发收货仓"，见 Task5）
      */
-    public boolean tryLoadPickupCargo(TransportEntity boat) {
+    public boolean tryLoadPickupCargo(LogisticsCarrier boat) {
         if (level == null || level.isClientSide || boat == null || linkedDockPos == null) {
             return false;
         }
@@ -2438,7 +2442,7 @@ public class MarketBlockEntity extends BlockEntity implements MenuProvider {
      * 真人自提（REAL_PICKUP）不续发——玩家自己把车开走。续发失败不回滚装货（货仍在车上，
      * 玩家可手动驾驶送达），仅记为未自动发车。
      */
-    private void forwardAutoPickupIfNeeded(TransportEntity boat, List<ShipmentOrderSelection> selections) {
+    private void forwardAutoPickupIfNeeded(LogisticsCarrier boat, List<ShipmentOrderSelection> selections) {
         if (level == null || level.isClientSide || boat == null || selections == null || selections.isEmpty()) {
             return;
         }
@@ -2561,7 +2565,7 @@ public class MarketBlockEntity extends BlockEntity implements MenuProvider {
             if (isSourceTerminal) {
                 continue; // 产地终端本身，车若在此由 Task4 就地装货，不算空驶来源
             }
-            List<TransportEntity> vehicles = remote.availableBuyerVehiclesForPickup(buyerUuid);
+            List<LogisticsCarrier> vehicles = remote.availableBuyerVehiclesForPickup(buyerUuid);
             if (vehicles.isEmpty()) {
                 continue;
             }
@@ -2676,7 +2680,7 @@ public class MarketBlockEntity extends BlockEntity implements MenuProvider {
         return manifest;
     }
 
-    private void clearTemporaryShipmentCargo(TransportEntity carrier) {
+    private void clearTemporaryShipmentCargo(LogisticsCarrier carrier) {
         if (carrier != null) {
             carrier.unloadAllCargo();
         }
@@ -2722,7 +2726,7 @@ public class MarketBlockEntity extends BlockEntity implements MenuProvider {
         }
     }
 
-    private int findMaxLoadableQuantity(TransportEntity boat, List<ItemStack> currentCargo, ItemStack template, int maxQuantity) {
+    private int findMaxLoadableQuantity(LogisticsCarrier boat, List<ItemStack> currentCargo, ItemStack template, int maxQuantity) {
         if (boat == null || template == null || template.isEmpty() || maxQuantity <= 0) {
             return 0;
         }
@@ -2819,7 +2823,7 @@ public class MarketBlockEntity extends BlockEntity implements MenuProvider {
 
     private record DispatchCandidate(MarketDispatchPlanner.DispatchChoice choice,
                                      TransportTerminalKind terminalKind,
-                                     TransportEntity carrier,
+                                     LogisticsCarrier carrier,
                                      DockBlockEntity sourceTerminal,
                                      ShipmentPlan shipmentPlan) {
     }
@@ -3001,7 +3005,7 @@ public class MarketBlockEntity extends BlockEntity implements MenuProvider {
         return listing == null ? null : listing.listingId();
     }
 
-    private List<TransportEntity> availableDispatchBoats(DockBlockEntity sourceDock, @Nullable Player player) {
+    private List<LogisticsCarrier> availableDispatchBoats(DockBlockEntity sourceDock, @Nullable Player player) {
         if (sourceDock == null) {
             return List.of();
         }

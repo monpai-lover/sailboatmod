@@ -368,7 +368,9 @@ public final class ShippingTraceService {
         java.util.UUID vehicleUuid = traceVehicleUuid(trace, order);
         if (vehicleUuid != null && level instanceof ServerLevel serverLevel && serverLevel.getServer() != null) {
             for (ServerLevel candidate : serverLevel.getServer().getAllLevels()) {
-                if (candidate.getEntity(vehicleUuid) instanceof com.monpai.sailboatmod.entity.TransportEntity vehicle) {
+                com.monpai.sailboatmod.transport.LogisticsCarrier vehicle =
+                        com.monpai.sailboatmod.transport.TransportRegistry.resolve(candidate, vehicleUuid);
+                if (vehicle != null) {
                     String name = vehicle.getOwnerName();
                     if (name != null && !name.isBlank()) {
                         return name.trim();
@@ -537,11 +539,13 @@ public final class ShippingTraceService {
     /** 跨所有维度查实体是否存活。先查主世界（绝大多数载具在此）快路径，再查其余维度。 */
     private static boolean isEntityAliveAnywhere(net.minecraft.server.MinecraftServer server, java.util.UUID uuid) {
         ServerLevel overworld = server.overworld();
-        if (overworld != null && overworld.getEntity(uuid) != null) {
+        if (overworld != null && (overworld.getEntity(uuid) != null
+                || com.monpai.sailboatmod.transport.TransportRegistry.isKnown(overworld, uuid))) {
             return true;
         }
         for (ServerLevel level : server.getAllLevels()) {
-            if (level != overworld && level.getEntity(uuid) != null) {
+            if (level != overworld && (level.getEntity(uuid) != null
+                    || com.monpai.sailboatmod.transport.TransportRegistry.isKnown(level, uuid))) {
                 return true;
             }
         }

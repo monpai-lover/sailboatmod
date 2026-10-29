@@ -23,6 +23,8 @@ public class RoadPlannerTile implements AutoCloseable {
     private long lastAccessedAt;
     private boolean loadedFromCache;
     private volatile boolean dirty;
+    // This remains separate from image: image and its PNG contain actual terrain only.
+    private int[] predictionPixels;
 
     public RoadPlannerTile(RoadPlannerTileKey key) {
         this.key = key;
@@ -112,7 +114,7 @@ public class RoadPlannerTile implements AutoCloseable {
         }
         writeTilePixels(current);
         if (texture != null) {
-            texture.upload();
+            uploadDisplayTexture();
         }
         loadedFromCache = true;
     }
@@ -159,7 +161,7 @@ public class RoadPlannerTile implements AutoCloseable {
         loadedFromCache = true;
         dirty = true;
         if (texture != null) {
-            texture.upload();
+            uploadDisplayTexture();
             dirty = false;
         }
     }
@@ -188,7 +190,7 @@ public class RoadPlannerTile implements AutoCloseable {
         loadedFromCache = true;
         dirty = true;
         if (texture != null) {
-            texture.upload();
+            uploadDisplayTexture();
             dirty = false;
         }
         return true;
@@ -199,7 +201,7 @@ public class RoadPlannerTile implements AutoCloseable {
             return;
         }
         if (dirty && texture != null) {
-            texture.upload();
+            uploadDisplayTexture();
             dirty = false;
         }
         graphics.blit(textureId, x, y, 0, 0, size, size, size, size);
@@ -216,18 +218,49 @@ public class RoadPlannerTile implements AutoCloseable {
     }
 
     private NativeImage createLoadingImage() {
-        NativeImage loading = new NativeImage(NativeImage.Format.RGBA, TILE_PIXEL_SIZE, TILE_PIXEL_SIZE, false);
-        int lightColor = 0xFF3A3A3A;
-        int darkColor = 0xFF2A2A2A;
-        int checkerSize = 8;
-        for (int y = 0; y < TILE_PIXEL_SIZE; y++) {
-            for (int x = 0; x < TILE_PIXEL_SIZE; x++) {
-                boolean light = ((x / checkerSize) + (y / checkerSize)) % 2 == 0;
-                loading.setPixelRGBA(x, y, light ? lightColor : darkColor);
-            }
-        }
+        NativeImage loading = new NativeImage(NativeImage.Format.RGBA, TILE_PIXEL_SIZE, TILE_PIXEL_SIZE, true);
         loading.untrack();
         return loading;
+    }
+
+    public synchronized boolean setPredictionPixels(int[] pixels) {
+        if (pixels == null || pixels.length != TILE_PIXEL_SIZE * TILE_PIXEL_SIZE) return false;
+        if (predictionPixels == null) predictionPixels = new int[pixels.length];
+        for (int i = 0; i < pixels.length; i++) {
+            if ((pixels[i] >>> 24) != 0) predictionPixels[i] = pixels[i];
+        }
+        dirty = true;
+        return true;
+    }
+
+    public synchronized int[] copyDisplayPixels() {
+        if (image == null) return new int[0];
+        int[] displayed = tilePixels();
+        for (int i = 0; i < displayed.length; i++) {
+            displayed[i] = toNativeAbgr(displayed[i]);
+            if ((displayed[i] >>> 24) == 0 && predictionPixels != null) displayed[i] = predictionPixels[i];
+        }
+        return displayed;
+    }
+
+    public synchronized boolean applyActualPatch(int offsetX, int offsetZ, int width, int height, int[] pixels) {
+        if (image == null || offsetX < 0 || offsetZ < 0 || width <= 0 || height <= 0
+                || offsetX + width > TILE_PIXEL_SIZE || offsetZ + height > TILE_PIXEL_SIZE
+                || pixels == null || pixels.length != width * height) return false;
+        boolean changed = false;
+        for (int z = 0; z < height; z++) {
+            for (int x = 0; x < width; x++) {
+                int color = pixels[z * width + x];
+                if ((color >>> 24) == 0) continue;
+                image.setPixelRGBA(offsetX + x, offsetZ + z, toNativeAbgr(color));
+                changed = true;
+            }
+        }
+        if (changed) {
+            loadedFromCache = true;
+            dirty = true;
+        }
+        return changed;
     }
 
     private int[] tilePixels() {
@@ -285,14 +318,30 @@ public class RoadPlannerTile implements AutoCloseable {
         if (minecraft == null || minecraft.getTextureManager() == null) {
             return;
         }
-        texture = new DynamicTexture(image);
+        NativeImage display = new NativeImage(NativeImage.Format.RGBA, TILE_PIXEL_SIZE, TILE_PIXEL_SIZE, true);
+        display.untrack();
+        texture = new DynamicTexture(display);
+        uploadDisplayTexture();
         textureId = minecraft.getTextureManager().register(textureRegistrationName(key), texture);
+    }
+
+    private void uploadDisplayTexture() {
+        if (texture == null || texture.getPixels() == null) return;
+        int[] displayed = copyDisplayPixels();
+        NativeImage target = texture.getPixels();
+        for (int z = 0; z < TILE_PIXEL_SIZE; z++) {
+            for (int x = 0; x < TILE_PIXEL_SIZE; x++) {
+                target.setPixelRGBA(x, z, toNativeAbgr(displayed[z * TILE_PIXEL_SIZE + x]));
+            }
+        }
+        texture.upload();
     }
 
     static String textureRegistrationName(RoadPlannerTileKey key) {
         return sanitizeTexturePath("road_planner_tile_" + key.worldId()
                 + "_" + key.dimensionId()
                 + "_lod_" + key.lod().blocksPerPixel()
+                + (key.terrainBlocksPerPixel() > 1 ? "_bps_" + key.terrainBlocksPerPixel() : "")
                 + "_" + key.tileX()
                 + "_" + key.tileZ());
     }

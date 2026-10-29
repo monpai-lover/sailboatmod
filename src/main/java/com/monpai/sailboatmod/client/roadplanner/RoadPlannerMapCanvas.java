@@ -75,7 +75,9 @@ public class RoadPlannerMapCanvas {
     public void render(GuiGraphics graphics, Font font) {
         graphics.fill(rect.x(), rect.y(), rect.right(), rect.bottom(), 0xFF111820);
         if (tileManager != null && view != null) {
-            renderTiles(graphics);
+            graphics.enableScissor(rect.x(), rect.y(), rect.right(), rect.bottom());
+            try { renderTiles(graphics); }
+            finally { graphics.disableScissor(); }
         }
     }
 
@@ -90,7 +92,8 @@ public class RoadPlannerMapCanvas {
     private void renderTiles(GuiGraphics graphics) {
         tileManager.refreshWorldContext();
         for (RoadPlannerMapTileRenderPlanner.TileRequest request : tileRequestsForRender()) {
-            RoadPlannerTile tile = tileManager.resolveRenderableTile(request.tileX(), request.tileZ(), request.lod());
+            tileManager.requestTerrain(request.tileX(), request.tileZ(), request.blocksPerPixel());
+            RoadPlannerTile tile = tileManager.getTerrainTile(request.tileX(), request.tileZ(), request.blocksPerPixel());
             tile.render(graphics, request.screenX(), request.screenZ(), request.screenSize());
         }
     }

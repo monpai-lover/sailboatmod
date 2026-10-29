@@ -36,10 +36,10 @@ class RoadPlannerPreviewChunkLimitTest {
     }
 
     @Test
-    void roadsBeyondTheChunkLimitAreRefusedInsteadOfBeingCutShort() {
+    void roadsBeyondTheOldChunkLimitAreAcceptedForStagedPlanning() {
         assertFalse(straightRoad(10_000).tooLongForPreview());
         // The old code loaded the first 6,000 chunks and sampled the rest as world bottom, burying the road.
-        assertTrue(straightRoad(40_000).tooLongForPreview());
+        assertFalse(straightRoad(40_000).tooLongForPreview());
     }
 
     @Test
@@ -50,7 +50,7 @@ class RoadPlannerPreviewChunkLimitTest {
 
         assertTrue(road.pathChunks().size() <= RoadPlannerPreviewRequestPacket.MAX_PREVIEW_CHUNKS + 1,
                 "rejected roads may retain at most one overflow chunk, not the complete remote corridor");
-        assertTrue(road.tooLongForPreview());
+        assertFalse(road.tooLongForPreview(), "remote roads are streamed one window at a time");
     }
 
     @Test
@@ -61,18 +61,17 @@ class RoadPlannerPreviewChunkLimitTest {
 
         assertTrue(diagonal.pathChunks().size() <= RoadPlannerPreviewRequestPacket.MAX_PREVIEW_CHUNKS + 1,
                 "a diagonal corridor must stop collecting chunks immediately at the overflow marker");
-        assertTrue(diagonal.tooLongForPreview());
+        assertFalse(diagonal.tooLongForPreview());
     }
 
     @Test
-    void overlappingSegmentsStillCountAgainstTheCumulativeWorkBudget() {
+    void overlappingSegmentsRemainOrderedWithoutAnEagerCumulativeExpansion() {
         BlockPos start = new BlockPos(0, 64, 0);
         BlockPos end = new BlockPos(10_000, 64, 0);
         RoadPlannerPreviewRequestPacket repeated = new RoadPlannerPreviewRequestPacket("A", "B",
                 List.of(start, end, start, end, start), List.of());
 
-        assertTrue(repeated.tooLongForPreview(),
-                "40,000 blocks of expansion cannot bypass the budget by sharing the same chunks");
+        assertFalse(repeated.tooLongForPreview(), "repeated legs are processed in bounded stages too");
     }
 
     @Test
@@ -82,8 +81,7 @@ class RoadPlannerPreviewChunkLimitTest {
         RoadPlannerPreviewRequestPacket repeated = new RoadPlannerPreviewRequestPacket("A", "B",
                 List.of(start, end, start, end), List.of());
 
-        assertTrue(repeated.tooLongForPreview(),
-                "three diagonal segments interpolate more than 33,000 points, although each axis totals only 24,000");
+        assertFalse(repeated.tooLongForPreview(), "diagonal interpolation is bounded per stage");
     }
 
     @Test
@@ -100,5 +98,12 @@ class RoadPlannerPreviewChunkLimitTest {
         var chunks = straightRoad(30_000).pathChunks();
         assertTrue(chunks.contains(net.minecraft.world.level.ChunkPos.asLong(1_876, 0)),
                 "the accepted road still includes its final neighbouring chunk");
+    }
+
+    @Test
+    void tellusPreviewBeyondThirtyMillionUsesThePackedPositionRange() {
+        RoadPlannerPreviewRequestPacket road = new RoadPlannerPreviewRequestPacket("A", "B",
+                List.of(new BlockPos(33_431_923, 64, 0), new BlockPos(33_471_923, 64, 0)), List.of());
+        assertFalse(road.tooLongForPreview());
     }
 }

@@ -1,0 +1,19 @@
+{
+  "variants": {
+    "facing=north": {
+      "model": "sailboatmod:block/land_vehicle_registration_controller"
+    },
+    "facing=east": {
+      "model": "sailboatmod:block/land_vehicle_registration_controller",
+      "y": 90
+    },
+    "facing=south": {
+      "model": "sailboatmod:block/land_vehicle_registration_controller",
+      "y": 180
+    },
+    "facing=west": {
+      "model": "sailboatmod:block/land_vehicle_registration_controller",
+      "y": 270
+    }
+  }
+}

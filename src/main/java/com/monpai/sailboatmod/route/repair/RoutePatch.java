@@ -15,7 +15,7 @@ import java.util.Optional;
  * 回写时按内容匹配 before,方向无关(反向航线用 {@link #reversed()})。
  */
 public record RoutePatch(List<Vec3> before, List<Vec3> after) {
-    /** 与自动驾驶航点上限一致;超过会在下次发车时被截断,宁可不写回。 */
+    /** A single local replacement stays bounded; the full catalog and true destination are retained. */
     public static final int MAX_WAYPOINTS = 512;
     private static final int NONE = -1;
     private static final int AMBIGUOUS = -2;
@@ -53,7 +53,7 @@ public record RoutePatch(List<Vec3> before, List<Vec3> after) {
             return Optional.empty();
         }
         int end = at + before.size();
-        if (waypoints.size() - before.size() + replacement.size() > MAX_WAYPOINTS) {
+        if (before.size() > MAX_WAYPOINTS || replacement.size() > MAX_WAYPOINTS) {
             return Optional.empty();
         }
         List<Vec3> patched = new ArrayList<>(waypoints.size() - before.size() + replacement.size());

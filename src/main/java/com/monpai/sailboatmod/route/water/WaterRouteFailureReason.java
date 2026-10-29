@@ -17,5 +17,6 @@ public enum WaterRouteFailureReason {
     CHUNK_BUDGET_EXCEEDED,
     NODE_BUDGET_EXCEEDED,
     TIMEOUT,
-    ALREADY_PENDING
+    ALREADY_PENDING,
+    CANCELLED
 }
