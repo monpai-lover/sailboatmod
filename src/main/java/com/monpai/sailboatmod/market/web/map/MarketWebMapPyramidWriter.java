@@ -6,6 +6,7 @@ import java.util.Arrays;
 
 public final class MarketWebMapPyramidWriter {
     public static final int MAX_ZOOM = 4;
+    private static final int UNTOUCHED = Integer.MIN_VALUE;
 
     public boolean mergeChunk(MarketWebMapTileCache cache,
                               String dimensionId,
@@ -25,8 +26,13 @@ public final class MarketWebMapPyramidWriter {
             int originX = squareTileX(chunkX, zoom) * MarketWebMapTileCoordinate.BASE_TILE_SIZE * scale;
             int originZ = squareTileZ(chunkZ, zoom) * MarketWebMapTileCoordinate.BASE_TILE_SIZE * scale;
             boolean changed = false;
-            for (int localZ = 0; localZ < MarketWebMapConstants.CHUNK_SIZE; localZ++) {
-                for (int localX = 0; localX < MarketWebMapConstants.CHUNK_SIZE; localX++) {
+            for (int localZ = 0; localZ < MarketWebMapConstants.CHUNK_SIZE; localZ += scale) {
+                for (int localX = 0; localX < MarketWebMapConstants.CHUNK_SIZE; localX += scale) {
+                    int color = MarketWebMapRegionImage.sampleBlock(chunkPixels, MarketWebMapConstants.CHUNK_SIZE,
+                            localX, localZ, scale);
+                    if (color == UNTOUCHED) {
+                        continue;
+                    }
                     int worldX = chunkX * MarketWebMapConstants.CHUNK_SIZE + localX;
                     int worldZ = chunkZ * MarketWebMapConstants.CHUNK_SIZE + localZ;
                     int pixelX = Math.floorDiv(worldX - originX, scale);
@@ -36,7 +42,6 @@ public final class MarketWebMapPyramidWriter {
                         continue;
                     }
                     int index = pixelZ * MarketWebMapTileCoordinate.BASE_TILE_SIZE + pixelX;
-                    int color = chunkPixels[localZ * MarketWebMapConstants.CHUNK_SIZE + localX];
                     if (tile[index] != color) {
                         tile[index] = color;
                         changed = true;

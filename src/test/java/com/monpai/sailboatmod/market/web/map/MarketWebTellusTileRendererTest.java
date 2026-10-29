@@ -14,9 +14,12 @@ import javax.imageio.ImageIO;
 import java.awt.image.BufferedImage;
 import java.io.ByteArrayInputStream;
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.List;
 import java.util.Optional;
+import java.util.concurrent.atomic.AtomicInteger;
 
+import static org.junit.jupiter.api.Assertions.assertArrayEquals;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
@@ -60,11 +63,17 @@ class MarketWebTellusTileRendererTest {
 
         MarketWebTellusTileRenderer.render(recording, 2, 1, -1);
 
-        assertEquals(PIXELS, calls.size());
-        assertEquals(2048 + 2, calls.get(0)[0]);
-        assertEquals(-2048 + 2, calls.get(0)[1]);
-        assertEquals(4, calls.get(0)[2]);
-        assertEquals(2048 + 4 + 2, calls.get(1)[0], "pixels advance along x first");
+        assertEquals(PIXELS + 512, calls.size(), "one halo row plus the output pixels");
+        List<int[]> firstRow = calls.stream().filter(call -> call[1] == -2048 + 2).toList();
+        assertEquals(512, firstRow.size());
+        assertEquals(2048 + 2, firstRow.get(0)[0]);
+        assertEquals(4, firstRow.get(0)[2]);
+        assertEquals(2048 + 4 + 2, firstRow.get(1)[0], "pixels advance along x first");
+        List<int[]> haloRow = calls.stream().filter(call -> call[1] == -2048 + 2 - 4).toList();
+        assertEquals(512, haloRow.size(), "the halo uses the same pixel-center grid immediately to the north");
+        assertEquals(firstRow.get(0)[0], haloRow.get(0)[0]);
+        assertEquals(firstRow.get(511)[0], haloRow.get(511)[0]);
+        assertEquals(4, haloRow.get(0)[2]);
     }
 
     @Test
@@ -93,8 +102,68 @@ class MarketWebTellusTileRendererTest {
                 (x, z, bps) -> Optional.of(new SurfaceSample(64 + z, Blocks.GRASS_BLOCK.defaultBlockState(), false, 0)), 0, 0, 0);
 
         int grass = MapBlockColors.colorFor(Blocks.GRASS_BLOCK.defaultBlockState(), 0xFF7F7F7F);
-        assertEquals(RoadMapRenderStyle.styleTerrainByDelta(grass, 0), tile.argb()[5], "first row has no north neighbour");
+        assertEquals(RoadMapRenderStyle.styleTerrainByDelta(grass, 1), tile.argb()[5], "first row uses the northern halo");
         assertEquals(RoadMapRenderStyle.styleTerrainByDelta(grass, 1), tile.argb()[512 + 5]);
+    }
+
+    @Test
+    void adjacentTilesKeepContinuousRisingAndFallingSlopesAtDifferentZooms() {
+        int grass = MapBlockColors.colorFor(Blocks.GRASS_BLOCK.defaultBlockState(), 0xFF7F7F7F);
+        for (int zoom : new int[]{0, 2}) {
+            int bps = 1 << zoom;
+            for (int slope : new int[]{1, -2}) {
+                TerrainSurfaceSampler sampler = (x, z, blocksPerSample) -> Optional.of(
+                        new SurfaceSample(10000 + slope * z, Blocks.GRASS_BLOCK.defaultBlockState(), false, 0));
+                for (int northTileY : new int[]{-2, 0}) {
+                    MarketWebTellusTileRenderer.Rendered north = MarketWebTellusTileRenderer.render(sampler, zoom, -1, northTileY);
+                    MarketWebTellusTileRenderer.Rendered south = MarketWebTellusTileRenderer.render(sampler, zoom, -1, northTileY + 1);
+                    int delta = Math.round(slope * bps / (float) Math.max(1, bps / 4));
+                    int[] expected = new int[512];
+                    Arrays.fill(expected, RoadMapRenderStyle.styleTerrainByDelta(grass, delta));
+                    String boundary = "zoom " + zoom + " slope " + slope + " tileY " + northTileY;
+                    assertArrayEquals(expected, Arrays.copyOfRange(north.argb(), PIXELS - 512, PIXELS), boundary);
+                    assertArrayEquals(expected, Arrays.copyOfRange(south.argb(), 0, 512), boundary);
+                    assertArrayEquals(expected, Arrays.copyOfRange(south.argb(), 512, 1024), boundary);
+                }
+            }
+        }
+    }
+
+    @Test
+    void waterInNorthHaloProvidesTheRealHeightForTheFirstLandRow() {
+        MarketWebTellusTileRenderer.Rendered tile = MarketWebTellusTileRenderer.render(
+                (x, z, bps) -> Optional.of(z < 0
+                        ? new SurfaceSample(64, Blocks.WATER.defaultBlockState(), true, 5)
+                        : new SurfaceSample(65, Blocks.GRASS_BLOCK.defaultBlockState(), false, 0)), 0, 0, 0);
+
+        int grass = MapBlockColors.colorFor(Blocks.GRASS_BLOCK.defaultBlockState(), 0xFF7F7F7F);
+        assertEquals(RoadMapRenderStyle.styleTerrainByDelta(grass, 1), tile.argb()[0]);
+        assertEquals(RoadMapRenderStyle.styleTerrainByDelta(grass, 0), tile.argb()[512]);
+        assertEquals(0, tile.failures());
+    }
+
+    @Test
+    void unavailableNorthHaloFallsBackWithoutCountingAsOutputFailure() {
+        int grass = MapBlockColors.colorFor(Blocks.GRASS_BLOCK.defaultBlockState(), 0xFF7F7F7F);
+        for (boolean throwsException : new boolean[]{false, true}) {
+            AtomicInteger haloAttempts = new AtomicInteger();
+            MarketWebTellusTileRenderer.Rendered tile = MarketWebTellusTileRenderer.render((x, z, bps) -> {
+                if (z < 0) {
+                    haloAttempts.incrementAndGet();
+                    if (throwsException) {
+                        throw new IllegalStateException("north sample unavailable");
+                    }
+                    return Optional.empty();
+                }
+                return Optional.of(new SurfaceSample(64 + z, Blocks.GRASS_BLOCK.defaultBlockState(), false, 0));
+            }, 0, 0, 0);
+
+            assertEquals(512, haloAttempts.get());
+            assertEquals(RoadMapRenderStyle.styleTerrainByDelta(grass, 0), tile.argb()[0]);
+            assertEquals(RoadMapRenderStyle.styleTerrainByDelta(grass, 1), tile.argb()[512]);
+            assertEquals(0, tile.failures(), "failed halo samples are outside the output image");
+            assertTrue(tile.worthSaving());
+        }
     }
 
     @Test

@@ -560,7 +560,8 @@
     });
     layer.getTileUrl = (coords) => {
       const zoom = clamp(-Math.round(Number(coords.z) || 0), 0, maxTellusZoom);
-      return `${state.apiBase}/api/map/tellus/tile/${zoom}/${coords.x}_${coords.y}.png`;
+      const revision = Number(state.snapshot?.tellusRenderVersion) || 0;
+      return `${state.apiBase}/api/map/tellus/tile/${zoom}/${coords.x}_${coords.y}.png?v=${revision}`;
     };
     // Tiles not rendered yet answer 404 and are queued on the server. Reload only those tiles later: redrawing the
     // whole layer would blink every tile and, at far zoom, request a huge grid.
@@ -581,7 +582,7 @@
         failed.clear();
         retry.forEach(([tile, coords]) => {
           if (tile.isConnected) {
-            tile.src = `${layer.getTileUrl(coords)}?retry=${Date.now()}`;
+            tile.src = `${layer.getTileUrl(coords)}&retry=${Date.now()}`;
           }
         });
       }, MISSING_TILE_RETRY_MS);
@@ -2296,8 +2297,8 @@
       return;
     }
     const [snapshot, markets, territories, shipments, world] = responses;
-    applyWorldInfo(world);
     state.snapshot = snapshot;
+    applyWorldInfo(world);
     state.markets = markets.markets || [];
     state.territories = territories.territories || [];
     state.shipments = applyShipmentInterpolation(shipments.shipments || []);
@@ -2362,12 +2363,17 @@
       return;
     }
     const prev = state.snapshot || {};
+    const predictionChanged = (next.tellusRenderVersion || 0) !== (prev.tellusRenderVersion || 0);
     const changed = (next.tileEpoch || 0) !== (prev.tileEpoch || 0)
-      || (next.renderVersion || 0) !== (prev.renderVersion || 0);
+      || (next.renderVersion || 0) !== (prev.renderVersion || 0)
+      || predictionChanged;
     if (!changed) {
       return;
     }
     state.snapshot = next;
+    if (predictionChanged) {
+      state.tellusLayer?.redraw();
+    }
     softRefreshTiles(); // 软刷新:只 bump 版本号让可见瓦片按新 ?v 增量取新图,不清空整个缓存
   }
 

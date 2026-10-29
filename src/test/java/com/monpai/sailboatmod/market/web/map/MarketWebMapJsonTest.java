@@ -38,6 +38,16 @@ class MarketWebMapJsonTest {
     }
 
     @Test
+    void snapshotPublishesThePredictionSamplerRevisionForBrowserCaching() {
+        JsonObject json = MarketWebMapJson.snapshot(new MarketWebMapDtos.Snapshot(
+                "minecraft:overworld", "#000000", 256, 1,
+                new MarketWebMapDtos.Point(0, 0), 0L, 0L));
+
+        assertTrue(json.has("tellusRenderVersion"));
+        assertEquals(2, json.get("tellusRenderVersion").getAsInt());
+    }
+
+    @Test
     void territoryFlagUrlEscapesFlagIdAsPathSegment() {
         NationRecord nation = new NationRecord("crimea", "Crimea", "CRM", 0x2255AA, 0xF2C14E,
                 UUID.fromString("00000000-0000-0000-0000-000000000001"), 1L, "port", "minecraft:overworld", 0L, "crimea flag/one");

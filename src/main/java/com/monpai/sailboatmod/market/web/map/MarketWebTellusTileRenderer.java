@@ -65,7 +65,8 @@ public final class MarketWebTellusTileRenderer {
         int[] northY = new int[TILE_PIXELS];
         java.util.Arrays.fill(northY, Integer.MIN_VALUE);
         int failures = 0;
-        for (int py = 0; py < TILE_PIXELS; py++) {
+        // 先取同一格线上的北侧一行,让瓦片顶边也与真正相邻的像素比较高度。
+        for (int py = -1; py < TILE_PIXELS; py++) {
             int z = (int) (minZ + (long) py * blocksPerPixel);
             for (int px = 0; px < TILE_PIXELS; px++) {
                 int x = (int) (minX + (long) px * blocksPerPixel);
@@ -74,6 +75,10 @@ public final class MarketWebTellusTileRenderer {
                     sample = sampler.sample(x, z, blocksPerPixel);
                 } catch (RuntimeException e) {
                     sample = Optional.empty();
+                }
+                if (py < 0) {
+                    northY[px] = sample.map(SurfaceSample::surfaceY).orElse(Integer.MIN_VALUE);
+                    continue; // halo 不属于输出像素,失败不计入保存门槛
                 }
                 int index = py * TILE_PIXELS + px;
                 if (sample.isEmpty()) {

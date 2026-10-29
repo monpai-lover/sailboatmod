@@ -12,10 +12,12 @@ import java.nio.file.StandardCopyOption;
 import java.util.Optional;
 
 /**
- * Tellus 预测层瓦片磁盘缓存:{@code <网页地图快取目录>/tellus/{z}/{x}_{y}.png}。与现有网页地图快取放在一起,
- * 一次删除就能全部重画。预测地形不会变,瓦片不需要失效。
+ * Tellus 预测层瓦片磁盘缓存:{@code <网页地图快取目录>/tellus/v<version>/{z}/{x}_{y}.png}。
+ * 取样与配色口径变动时升级版本,避免复用旧预测数据。
  */
 public final class MarketWebTellusTileStore {
+    public static final int RENDER_VERSION = 2;
+
     private final Path root;
 
     public MarketWebTellusTileStore(Path root) {
@@ -60,6 +62,7 @@ public final class MarketWebTellusTileStore {
     }
 
     private Path file(int zoom, int tileX, int tileY) {
-        return root.resolve("tellus").resolve(Integer.toString(zoom)).resolve(tileX + "_" + tileY + ".png");
+        return root.resolve("tellus").resolve("v" + RENDER_VERSION).resolve(Integer.toString(zoom))
+                .resolve(tileX + "_" + tileY + ".png");
     }
 }

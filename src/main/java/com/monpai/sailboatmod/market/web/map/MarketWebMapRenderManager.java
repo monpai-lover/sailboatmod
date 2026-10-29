@@ -80,9 +80,7 @@ public final class MarketWebMapRenderManager {
     private final Map<Long, RegionState> regionStates = new LinkedHashMap<>();
     private final Map<Long, List<Integer>> expectedRegionChunks = new LinkedHashMap<>();
     private final LinkedHashMap<Long, int[][]> bottomRowCache = new LinkedHashMap<>();
-    // 逐 chunk 底行种子缓存:key=chunk packed 坐标,value=该 chunk 最南行 16 个 surfaceY。
-    // partial-flush 渲染时若某 chunk 的北邻这批不在 RegionState 内,但北邻在更早批次已渲过(fullrender 北→南顺序),
-    // 就从这里拿北邻底行做种子 → 准确(同次渲染刚算,非磁盘旧值)→ 不偏平、不画错误线。内存小(每 chunk 16 int)。
+    // 逐 chunk 实际底行缓存:只记录 snapshot 的最南行,不记录跨缺失格传下来的高度。
     private final LinkedHashMap<Long, int[]> chunkBottomRowCache = new LinkedHashMap<>();
     private static final int MAX_CHUNK_BOTTOM_ROW_CACHE = 200_000;
     private final AtomicInteger renderingRegions = new AtomicInteger();
@@ -315,7 +313,7 @@ public final class MarketWebMapRenderManager {
                 diagProbesStarted.incrementAndGet();
             } catch (RuntimeException ignored) {
                 // 发起失败:当 missing,不卡死。
-                readerState.missing(chunkX, chunkZ, MarketWebMapTileQuality.SERVER_REGION_SCAN);
+                markSnapshotMissing(readerState, chunkX, chunkZ, MarketWebMapTileQuality.SERVER_REGION_SCAN);
                 diagSnapshotsMissing.incrementAndGet();
             }
         }
@@ -344,7 +342,7 @@ public final class MarketWebMapRenderManager {
             }
             diagProbesCompleted.incrementAndGet();
             if (tag.isEmpty() || OfflineChunkNbtReader.classify(tag) != OfflineChunkNbtReader.ChunkStatusClass.FULL) {
-                readerState.missing(chunkX, chunkZ, MarketWebMapTileQuality.SERVER_REGION_SCAN);
+                markSnapshotMissing(readerState, chunkX, chunkZ, MarketWebMapTileQuality.SERVER_REGION_SCAN);
                 diagSnapshotsMissing.incrementAndGet();
                 continue;
             }
@@ -359,7 +357,7 @@ public final class MarketWebMapRenderManager {
                 readerState.put(snapshot.get(), MarketWebMapTileQuality.SERVER_REGION_SCAN);
                 cacheBottomRow(snapshot.get());
             } else {
-                readerState.missing(chunkX, chunkZ, MarketWebMapTileQuality.SERVER_REGION_SCAN);
+                markSnapshotMissing(readerState, chunkX, chunkZ, MarketWebMapTileQuality.SERVER_REGION_SCAN);
                 diagSnapshotsMissing.incrementAndGet();
             }
         }
@@ -376,7 +374,7 @@ public final class MarketWebMapRenderManager {
                     if (!readerState.accounted(
                             chunkX - regionX * CHUNKS_PER_REGION_AXIS,
                             chunkZ - regionZ * CHUNKS_PER_REGION_AXIS)) {
-                        readerState.missing(chunkX, chunkZ, MarketWebMapTileQuality.SERVER_REGION_SCAN);
+                        markSnapshotMissing(readerState, chunkX, chunkZ, MarketWebMapTileQuality.SERVER_REGION_SCAN);
                         diagSnapshotsMissing.incrementAndGet();
                     }
                 }
@@ -1099,6 +1097,7 @@ public final class MarketWebMapRenderManager {
                                 long nowMillis) {
         List<RegionState> readyStates = new ArrayList<>();
         synchronized (this) {
+            cacheBottomRow(snapshot);
             long key = packRegion(regionX(snapshot.chunkX()), regionZ(snapshot.chunkZ()));
             RegionState state = regionStates.computeIfAbsent(key, ignored -> newRegionState(
                     snapshot.dimensionId(),
@@ -1131,7 +1130,7 @@ public final class MarketWebMapRenderManager {
                     dimensionId,
                     regionX(chunkX),
                     regionZ(chunkZ)));
-            state.missing(chunkX, chunkZ, quality == null ? MarketWebMapTileQuality.SERVER_REGION_SCAN : quality);
+            markSnapshotMissing(state, chunkX, chunkZ, quality == null ? MarketWebMapTileQuality.SERVER_REGION_SCAN : quality);
             diagSnapshotsMissing.incrementAndGet();
             int partialFlushChunks = currentPartialFlushChunks();
             if ((state.complete() || state.count() >= partialFlushChunks) && !state.renderScheduled) {
@@ -1171,13 +1170,9 @@ public final class MarketWebMapRenderManager {
                 int[][] northDiskRows = seedDiskRows(cache, state.regionX, state.regionZ);
                 int baseChunkX = state.regionX * CHUNKS_PER_REGION_AXIS;
                 int baseChunkZ = state.regionZ * CHUNKS_PER_REGION_AXIS;
-                // 收集每个 chunk 列渲染到【最南端】时的 lastY(连续传递的真实结果),作为本 region 的 seam 底行种子。
-                // 关键:不再事后从"最南 chunk 的 snapshot"重算 seam —— 那个 chunk 可能 missing(稀疏世界 region 南缘常见)
-                // 导致该列 seam 为空 → 南邻 region 顶行拿不到种子 → 画平 → 横线。用循环末态 lastY 则即使最南 chunk 缺,
-                // 该列也保留"最近已知高度",seam 永不为空。lastY 数组是 16 像素(一个 chunk 宽)。
+                // seam 必须来自 region 的真实最南行;内部 chunk 的高度不能冒充 row 511。
                 int[][] regionBottomSeed = new int[CHUNKS_PER_REGION_AXIS][];
                 for (int localX = 0; localX < CHUNKS_PER_REGION_AXIS; localX++) {
-                    int[] lastY = seedLastY(state.regionX, state.regionZ, localX, northDiskRows);
                     for (int localZ = 0; localZ < CHUNKS_PER_REGION_AXIS; localZ++) {
                         int chunkX = baseChunkX + localX;
                         int chunkZ = baseChunkZ + localZ;
@@ -1186,20 +1181,17 @@ public final class MarketWebMapRenderManager {
                             if (state.accounted(localX, localZ) || !state.expected(localX, localZ)) {
                                 image.markChunkSkipped(chunkX, chunkZ);
                             }
-                            // 该 chunk 这批不在场:若它在更早批次已渲过,用其缓存底行续 lastY,让南边 chunk 有准确种子
-                            // (不偏平);拿不到则保持 lastY 不变(可能上行已传下来)。绝不在此读磁盘像素(不准)。
-                            int[] cachedRow = getChunkBottomRow(chunkX, chunkZ);
-                            if (cachedRow != null) {
-                                lastY = java.util.Arrays.copyOf(cachedRow, cachedRow.length);
+                            if (localZ == CHUNKS_PER_REGION_AXIS - 1 && state.accounted(localX, localZ)) {
+                                regionBottomSeed[localX] = regionRenderer.unknownLastY();
                             }
                             continue;
                         }
+                        int[] lastY = seedChunkLastY(state, localX, localZ, northDiskRows);
                         image.putChunkPixels(chunkX, chunkZ, regionRenderer.renderChunk(snapshot, lastY));
-                        // 渲完缓存本 chunk 底行(lastY 此刻已是本 chunk 最南行高度),供南邻/后续批次做种子。
-                        putChunkBottomRow(chunkX, chunkZ, lastY);
+                        if (localZ == CHUNKS_PER_REGION_AXIS - 1) {
+                            regionBottomSeed[localX] = regionRenderer.lastYFromBottomRow(snapshot);
+                        }
                     }
-                    // 该列渲完:lastY 现在是这一列传到最南端的高度(含跨 missing chunk 的连续续传)。存为 seam 种子。
-                    regionBottomSeed[localX] = java.util.Arrays.copyOf(lastY, lastY.length);
                 }
                 cacheBottomRows(cache, state, regionBottomSeed);
                 diagRegionsScheduled.incrementAndGet();
@@ -1236,6 +1228,26 @@ public final class MarketWebMapRenderManager {
             return null;
         }
         return cache.readBottomRows(regionX, regionZ - 1);
+    }
+
+    private int[] seedChunkLastY(RegionState state, int localX, int localZ, int[][] northDiskRows) {
+        // 本批的正北快照优先于任何旧缓存;其它情况只使用坐标相邻的 chunk 底行。
+        MarketWebMapChunkSnapshot north = state.snapshotOrNull(localX, localZ - 1);
+        if (north != null) {
+            return regionRenderer.lastYFromBottomRow(north);
+        }
+        if (state.accounted(localX, localZ - 1)) {
+            return regionRenderer.unknownLastY();
+        }
+        int chunkX = state.regionX * CHUNKS_PER_REGION_AXIS + localX;
+        int chunkZ = state.regionZ * CHUNKS_PER_REGION_AXIS + localZ;
+        int[] cachedRow = getChunkBottomRow(chunkX, chunkZ - 1);
+        if (cachedRow != null) {
+            return java.util.Arrays.copyOf(cachedRow, cachedRow.length);
+        }
+        return localZ == 0
+                ? seedLastY(state.regionX, state.regionZ, localX, northDiskRows)
+                : regionRenderer.unknownLastY();
     }
 
     private int[] seedLastY(int regionX, int regionZ, int localX, int[][] northDiskRows) {
@@ -1282,15 +1294,29 @@ public final class MarketWebMapRenderManager {
         if (snapshot == null) {
             return;
         }
-        int localZ = Math.floorMod(snapshot.chunkZ(), CHUNKS_PER_REGION_AXIS);
+        cacheBottomRow(snapshot.chunkX(), snapshot.chunkZ(), regionRenderer.lastYFromBottomRow(snapshot));
+    }
+
+    private synchronized void markSnapshotMissing(RegionState state,
+                                                  int chunkX,
+                                                  int chunkZ,
+                                                  MarketWebMapTileQuality quality) {
+        // 明确缺失优先于旧缓存;同时阻止下一批/南邻 region 重新借用这个过期的高度。
+        cacheBottomRow(chunkX, chunkZ, regionRenderer.unknownLastY());
+        state.missing(chunkX, chunkZ, quality);
+    }
+
+    private void cacheBottomRow(int chunkX, int chunkZ, int[] actualBottomRow) {
+        putChunkBottomRow(chunkX, chunkZ, actualBottomRow);
+        int localZ = Math.floorMod(chunkZ, CHUNKS_PER_REGION_AXIS);
         if (localZ != CHUNKS_PER_REGION_AXIS - 1) {
             return;
         }
         synchronized (this) {
             int[][] rows = bottomRowCache.computeIfAbsent(
-                    packRegion(regionX(snapshot.chunkX()), regionZ(snapshot.chunkZ())),
+                    packRegion(regionX(chunkX), regionZ(chunkZ)),
                     ignored -> new int[CHUNKS_PER_REGION_AXIS][]);
-            rows[Math.floorMod(snapshot.chunkX(), CHUNKS_PER_REGION_AXIS)] = regionRenderer.lastYFromBottomRow(snapshot);
+            rows[Math.floorMod(chunkX, CHUNKS_PER_REGION_AXIS)] = actualBottomRow;
             while (bottomRowCache.size() > 512) {
                 Iterator<Long> iterator = bottomRowCache.keySet().iterator();
                 if (!iterator.hasNext()) {
@@ -1304,24 +1330,27 @@ public final class MarketWebMapRenderManager {
 
     /**
      * 持久化本 region 的 seam 底行种子(供南邻 region 顶行做高度阴影北邻参考)。
-     * {@code regionBottomSeed[localX]} = 渲染时第 localX 列传到【最南端】的连续 lastY(scheduleRegionRender 收集),
-     * 比"从最南 chunk snapshot 重算"可靠:最南 chunk 缺数据时该列仍有最近已知高度,seam 不为空 → 无 region 边界横线。
+     * {@code regionBottomSeed[localX]} 只含本批实际采到的最南行;未更新的列保留已有真实接缝。
      */
     private void cacheBottomRows(MarketWebMapTileCache cache, RegionState state, int[][] regionBottomSeed) {
         if (state == null || regionBottomSeed == null) {
             return;
         }
-        int[][] persistRows;
+        int[][] diskRows = cache == null ? null : cache.readBottomRows(state.regionX, state.regionZ);
+        int[][] mergedRows;
         synchronized (this) {
             int[][] rows = bottomRowCache.computeIfAbsent(
                     packRegion(state.regionX, state.regionZ),
                     ignored -> new int[CHUNKS_PER_REGION_AXIS][]);
             for (int localX = 0; localX < CHUNKS_PER_REGION_AXIS; localX++) {
-                if (regionBottomSeed[localX] != null) {
+                // 已接收的真实快照比延迟完成的旧渲染更近;旧任务只能补空列。
+                if (rows[localX] == null && regionBottomSeed[localX] != null) {
                     rows[localX] = regionBottomSeed[localX];
+                } else if (rows[localX] == null && diskRows != null) {
+                    rows[localX] = diskRows[localX];
                 }
             }
-            persistRows = java.util.Arrays.copyOf(rows, rows.length);
+            mergedRows = rows;
             while (bottomRowCache.size() > 512) {
                 Iterator<Long> iterator = bottomRowCache.keySet().iterator();
                 if (!iterator.hasNext()) {
@@ -1332,10 +1361,18 @@ public final class MarketWebMapRenderManager {
             }
         }
         if (cache != null) {
-            final int[][] toWrite = persistRows;
             final int rx = state.regionX;
             final int rz = state.regionZ;
-            imageIO.submit(() -> cache.writeBottomRows(rx, rz, toWrite)); // 异步落盘,不卡渲染线程
+            imageIO.submit(() -> {
+                int[][] toWrite;
+                synchronized (this) {
+                    // 两批 enqueue 可能乱序;在唯一写盘线程执行时再取最新合并结果,不写回较旧的副本。
+                    int[][] latest = bottomRowCache.get(packRegion(rx, rz));
+                    int[][] rows = latest == null ? mergedRows : latest;
+                    toWrite = java.util.Arrays.copyOf(rows, rows.length);
+                }
+                cache.writeBottomRows(rx, rz, toWrite);
+            }); // submit 可能背压等待,必须位于 manager 锁外。
         }
     }
 
@@ -1788,6 +1825,7 @@ public final class MarketWebMapRenderManager {
                 return;
             }
             int index = localZ * CHUNKS_PER_REGION_AXIS + localX;
+            snapshots[index] = null;
             if (!accountedChunks[index]) {
                 accountedChunks[index] = true;
                 count++;

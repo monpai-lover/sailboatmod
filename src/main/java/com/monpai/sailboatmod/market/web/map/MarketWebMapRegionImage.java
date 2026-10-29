@@ -135,11 +135,8 @@ public final class MarketWebMapRegionImage {
         for (int z = 0; z < scaledSize; z++) {
             int dstOffset = (baseZ + z) * SIZE + baseX;
             for (int x = 0; x < scaledSize; x++) {
-                // 块聚合降采样(非点采样):扫描 scale×scale 源块,取第一个有效(非 UNTOUCHED、非透明)像素代表。
-                // 点采样的问题:partial-flush 时 base 大片 UNTOUCHED/透明,采样点恰好命中空洞就跳过 → 缩略层
-                // 行行不连续 → 全图撕成断带(实测)。块聚合只要块里有【任意】有效像素就更新该缩略像素 → 只要
-                // 底图那片渲染过缩略层就有对应内容,不碎裂;整块全无效才跳过(保留缩略层原值)。
-                int color = sampleBlock(regionPixels, x * scale, z * scale, scale);
+                // 与预测层对齐:优先取像素中心。中心尚未渲染时才扫描块内有效像素,避免部分刷新出现透明孔洞。
+                int color = sampleBlock(regionPixels, SIZE, x * scale, z * scale, scale);
                 if (color == UNTOUCHED) {
                     continue; // 整块无有效像素:不动缩略层该像素
                 }
@@ -153,12 +150,16 @@ public final class MarketWebMapRegionImage {
         return changed && cache.writeSquareTilePixels(dimensionId, zoom, tileX, tileZ, tile);
     }
 
-    /** 扫描底图 [srcX,srcZ] 起的 scale×scale 块,返回第一个有效像素(非 UNTOUCHED、非透明);全无效返回 UNTOUCHED。 */
-    private int sampleBlock(int[] regionPixels, int srcX, int srcZ, int scale) {
+    /** 取源块中心;中心缺数据时按行扫描有效像素。两种金字塔写入路径共用同一取样规则。 */
+    static int sampleBlock(int[] source, int width, int srcX, int srcZ, int scale) {
+        int center = source[(srcZ + scale / 2) * width + srcX + scale / 2];
+        if (center != UNTOUCHED && (center & 0xFF000000) != 0) {
+            return center;
+        }
         for (int dz = 0; dz < scale; dz++) {
-            int row = (srcZ + dz) * SIZE + srcX;
+            int row = (srcZ + dz) * width + srcX;
             for (int dx = 0; dx < scale; dx++) {
-                int color = regionPixels[row + dx];
+                int color = source[row + dx];
                 if (color != UNTOUCHED && (color & 0xFF000000) != 0) {
                     return color;
                 }

@@ -3,6 +3,8 @@ package com.monpai.sailboatmod.market.web.map;
 import com.monpai.sailboatmod.market.map.MarketWebMapConstants;
 
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.condition.EnabledOnOs;
+import org.junit.jupiter.api.condition.OS;
 import org.junit.jupiter.api.io.TempDir;
 
 import java.io.ByteArrayInputStream;
@@ -10,6 +12,7 @@ import java.io.IOException;
 import java.awt.image.BufferedImage;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.nio.file.StandardOpenOption;
 import java.nio.file.attribute.FileTime;
 import java.util.Optional;
 
@@ -19,10 +22,25 @@ import static org.junit.jupiter.api.Assertions.assertArrayEquals;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotEquals;
+import static org.junit.jupiter.api.Assertions.assertNotNull;
+import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class MarketWebMapTileCacheTest {
+    @Test
+    void changedSquareTilesAdvanceTheBrowserRefreshEpoch() {
+        MarketWebMapTileCache cache = new MarketWebMapTileCache(tempDir);
+        int[] pixels = new int[512 * 512];
+        java.util.Arrays.fill(pixels, 0xFF123456);
+        long before = MarketWebMapTileCache.tileWriteEpoch();
+        assertTrue(cache.writeSquareTilePixels("minecraft:overworld", 0, 55, -95, pixels));
+        assertTrue(MarketWebMapTileCache.tileWriteEpoch() > before,
+                "a freshly generated square tile must replace the browser's earlier transparent tile");
+        long after = MarketWebMapTileCache.tileWriteEpoch();
+        assertTrue(cache.writeSquareTilePixels("minecraft:overworld", 0, 55, -95, pixels));
+        assertEquals(after, MarketWebMapTileCache.tileWriteEpoch(), "unchanged PNGs do not keep refreshing the browser");
+    }
     @TempDir
     Path tempDir;
 
@@ -198,6 +216,111 @@ class MarketWebMapTileCacheTest {
     }
 
     @Test
+    void regionGapShadingRepairInvalidatesPreviousRendererVersion() {
+        assertTrue(MarketWebMapTileCache.RENDER_VERSION >= 6);
+    }
+
+    @Test
+    void rendererUpgradeClearsSquareTilesAndSeamRowsWithoutLegacyTiles() throws Exception {
+        MarketWebMapTileCache cache = new MarketWebMapTileCache(tempDir);
+        writeDerivedCache(cache);
+        Path marker = tempDir.resolve("renderer-version.txt");
+        Files.writeString(marker, "5");
+        assertFalse(Files.exists(tempDir.resolve("overworld/lod_1")));
+
+        assertEquals(2, cache.clearStaleServerChunksAfterRendererUpgrade());
+
+        assertTrue(cache.readSquareTile("minecraft:overworld", 0, -2, 3).isEmpty());
+        assertTrue(cache.readSquareTile("minecraft:overworld", 2, -1, 0).isEmpty());
+        assertNull(cache.readBottomRows(-2, 3));
+        assertEquals(Integer.toString(MarketWebMapTileCache.RENDER_VERSION), Files.readString(marker));
+        assertEquals(-1, cache.clearStaleServerChunksAfterRendererUpgrade());
+    }
+
+    @Test
+    void rendererUpgradePreservesClientAndLegacySourcesWhileClearingDerivedCache() throws Exception {
+        MarketWebMapTileCache cache = new MarketWebMapTileCache(tempDir);
+        byte[] client = solidPng(0xFF22AA44);
+        byte[] legacy = solidPng(0xFF778899);
+        assertTrue(cache.writePng("minecraft:overworld", 0, 0, client, MarketWebMapTileQuality.CLIENT_UPLOAD, 1L));
+        assertTrue(cache.writePng("minecraft:overworld", 2, 3, legacy));
+        writeDerivedCache(cache);
+        Files.writeString(tempDir.resolve("renderer-version.txt"), "5");
+
+        assertEquals(2, cache.clearStaleServerChunksAfterRendererUpgrade());
+
+        assertArrayEquals(client, cache.readPng("minecraft:overworld", 0, 0).orElseThrow());
+        assertArrayEquals(legacy, cache.readPng("minecraft:overworld", 2, 3).orElseThrow());
+        assertEquals(MarketWebMapTileQuality.CLIENT_UPLOAD,
+                cache.readMetadata("minecraft:overworld", 0, 0).orElseThrow().sourceAt(0, 0));
+        assertEquals(MarketWebMapTileQuality.LEGACY_UNKNOWN,
+                cache.readMetadata("minecraft:overworld", 2, 3).orElseThrow().sourceAt(0, 0));
+        assertTrue(cache.readSquareTile("minecraft:overworld", 0, -2, 3).isEmpty());
+        assertNull(cache.readBottomRows(-2, 3));
+    }
+
+    @Test
+    void currentRendererMarkerKeepsSquareTilesAndSeamRows() throws Exception {
+        MarketWebMapTileCache cache = new MarketWebMapTileCache(tempDir);
+        writeDerivedCache(cache);
+        byte[] base = cache.readSquareTile("minecraft:overworld", 0, -2, 3).orElseThrow();
+        byte[] zoom = cache.readSquareTile("minecraft:overworld", 2, -1, 0).orElseThrow();
+        Files.writeString(tempDir.resolve("renderer-version.txt"), Integer.toString(MarketWebMapTileCache.RENDER_VERSION));
+
+        assertEquals(-1, cache.clearStaleServerChunksAfterRendererUpgrade());
+
+        assertArrayEquals(base, cache.readSquareTile("minecraft:overworld", 0, -2, 3).orElseThrow());
+        assertArrayEquals(zoom, cache.readSquareTile("minecraft:overworld", 2, -1, 0).orElseThrow());
+        assertNotNull(cache.readBottomRows(-2, 3));
+        assertEquals(70, cache.readBottomRows(-2, 3)[0][0]);
+    }
+
+    @Test
+    void failedVersionRecordRetriesSquareAndSeamInvalidation() throws Exception {
+        MarketWebMapTileCache cache = new MarketWebMapTileCache(tempDir);
+        writeDerivedCache(cache);
+        Path marker = tempDir.resolve("renderer-version.txt");
+        Files.createDirectory(marker);
+
+        assertEquals(2, cache.clearStaleServerChunksAfterRendererUpgrade());
+        assertTrue(Files.isDirectory(marker));
+        assertTrue(cache.readSquareTile("minecraft:overworld", 0, -2, 3).isEmpty());
+        assertNull(cache.readBottomRows(-2, 3));
+
+        writeDerivedCache(cache);
+        Files.delete(marker);
+
+        assertEquals(2, cache.clearStaleServerChunksAfterRendererUpgrade());
+        assertTrue(cache.readSquareTile("minecraft:overworld", 0, -2, 3).isEmpty());
+        assertNull(cache.readBottomRows(-2, 3));
+        assertEquals(Integer.toString(MarketWebMapTileCache.RENDER_VERSION), Files.readString(marker));
+    }
+
+    @Test
+    @EnabledOnOs(OS.WINDOWS)
+    void failedSquareInvalidationDoesNotRecordRendererUpgradeAndRetriesAfterUnlock() throws Exception {
+        MarketWebMapTileCache cache = new MarketWebMapTileCache(tempDir);
+        writeDerivedCache(cache);
+        Path marker = tempDir.resolve("renderer-version.txt");
+        Files.writeString(marker, "5");
+        Path lockedTile = tempDir.resolve("overworld/square/0/-2_3.png");
+        try (var lock = Files.newByteChannel(lockedTile, java.util.Set.of(
+                StandardOpenOption.READ, com.sun.nio.file.ExtendedOpenOption.NOSHARE_DELETE))) {
+            cache.clearStaleServerChunksAfterRendererUpgrade();
+
+            assertTrue(Files.exists(lockedTile));
+            assertEquals("5", Files.readString(marker), "an incomplete cleanup must be retried at the next start");
+        }
+
+        cache.clearStaleServerChunksAfterRendererUpgrade();
+
+        assertFalse(Files.exists(lockedTile));
+        assertNull(cache.readBottomRows(-2, 3));
+        assertEquals(Integer.toString(MarketWebMapTileCache.RENDER_VERSION), Files.readString(marker));
+        assertEquals(-1, cache.clearStaleServerChunksAfterRendererUpgrade());
+    }
+
+    @Test
     void noMetadataPngIsLegacyAndCanBeRepairedOrOverwrittenByServerOnly() throws Exception {
         MarketWebMapTileCache cache = new MarketWebMapTileCache(tempDir);
         byte[] legacy = solidPng(0xFFAA0000);
@@ -296,6 +419,31 @@ class MarketWebMapTileCacheTest {
         assertFalse(Files.exists(tempDir.resolve("overworld/lod_1/0_0.json")));
         assertFalse(Files.exists(tempDir.resolve("overworld/lod_1/2_3.png")));
         assertFalse(Files.exists(tempDir.resolve("overworld/lod_1/2_3.json")));
+    }
+
+    @Test
+    void clearAllTilesAlsoClearsSquareTilesAndSeamRowsWithoutLegacyTiles() {
+        MarketWebMapTileCache cache = new MarketWebMapTileCache(tempDir);
+        writeDerivedCache(cache);
+
+        assertEquals(2, cache.clearAllTiles());
+
+        assertTrue(cache.readSquareTile("minecraft:overworld", 0, -2, 3).isEmpty());
+        assertTrue(cache.readSquareTile("minecraft:overworld", 2, -1, 0).isEmpty());
+        assertNull(cache.readBottomRows(-2, 3));
+    }
+
+    private static void writeDerivedCache(MarketWebMapTileCache cache) {
+        int[] pixels = new int[MarketWebMapTileCoordinate.BASE_TILE_SIZE * MarketWebMapTileCoordinate.BASE_TILE_SIZE];
+        java.util.Arrays.fill(pixels, 0xFF597436);
+        assertTrue(cache.writeSquareTilePixels("minecraft:overworld", 0, -2, 3, pixels));
+        assertTrue(cache.writeSquareTilePixels("minecraft:overworld", 2, -1, 0, pixels));
+        int[][] rows = new int[MarketWebMapRegionImage.CHUNKS_PER_REGION_AXIS][MarketWebMapConstants.CHUNK_SIZE];
+        for (int[] row : rows) {
+            java.util.Arrays.fill(row, 70);
+        }
+        cache.writeBottomRows(-2, 3, rows);
+        assertNotNull(cache.readBottomRows(-2, 3));
     }
 
     private static byte[] solidPng(int color) {

@@ -14,6 +14,7 @@ import java.nio.file.Path;
 import java.util.Arrays;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertArrayEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
@@ -104,6 +105,74 @@ class MarketWebMapRegionImageTest {
 
         assertEquals(RoadMapRenderStyle.styleTerrainByDelta(base, 0), pixels[0]);
         assertEquals(70, lastY[0]);
+    }
+
+    @Test
+    void zoomTilesSampleExactPixelCentersAcrossPositiveAndNegativeRegions() {
+        MarketWebMapTileCache cache = new MarketWebMapTileCache(tempDir);
+        for (int[] region : new int[][]{{0, 0}, {-3, -5}}) {
+            int regionX = region[0];
+            int regionZ = region[1];
+            MarketWebMapRegionImage image = new MarketWebMapRegionImage(MarketWebMapConstants.OVERWORLD, regionX, regionZ);
+            for (int localZ = 0; localZ < 32; localZ++) {
+                for (int localX = 0; localX < 32; localX++) {
+                    int chunkX = regionX * 32 + localX;
+                    int chunkZ = regionZ * 32 + localZ;
+                    assertTrue(image.putChunkPixels(chunkX, chunkZ, coordinatePixels(chunkX, chunkZ)));
+                }
+            }
+            assertTrue(image.writeDirty(cache, MarketWebMapTileQuality.SERVER_REGION_SCAN, 1L));
+
+            for (int zoom = 1; zoom <= 4; zoom++) {
+                int scale = 1 << zoom;
+                int size = 512 / scale;
+                int baseX = Math.floorMod(regionX, scale) * size;
+                int baseZ = Math.floorMod(regionZ, scale) * size;
+                int[] tile = cache.readSquareTilePixels(MarketWebMapConstants.OVERWORLD, zoom,
+                        Math.floorDiv(regionX, scale), Math.floorDiv(regionZ, scale));
+                int[] expected = new int[size * size];
+                int[] actual = new int[expected.length];
+                for (int z = 0; z < size; z++) {
+                    for (int x = 0; x < size; x++) {
+                        expected[z * size + x] = coordinateColor(regionX * 512 + x * scale + scale / 2,
+                                regionZ * 512 + z * scale + scale / 2);
+                        actual[z * size + x] = tile[(baseZ + z) * 512 + baseX + x];
+                    }
+                }
+                assertArrayEquals(expected, actual, "pixel centers at zoom " + zoom + " region " + regionX + "," + regionZ);
+            }
+        }
+    }
+
+    @Test
+    void invalidPixelCenterStillUsesAvailablePartialRegionData() {
+        MarketWebMapTileCache cache = new MarketWebMapTileCache(tempDir);
+        MarketWebMapRegionImage image = new MarketWebMapRegionImage(MarketWebMapConstants.OVERWORLD, -1, -1);
+        int[] partial = chunkPixels(Integer.MIN_VALUE);
+        partial[0] = 0xFF3388AA;
+        assertTrue(image.putChunkPixels(-32, -32, partial));
+        assertTrue(image.writeDirty(cache, MarketWebMapTileQuality.SERVER_REGION_SCAN, 1L));
+
+        for (int zoom = 1; zoom <= 4; zoom++) {
+            int scale = 1 << zoom;
+            int offset = Math.floorMod(-1, scale) * (512 / scale);
+            int[] tile = cache.readSquareTilePixels(MarketWebMapConstants.OVERWORLD, zoom, -1, -1);
+            assertEquals(0xFF3388AA, tile[offset * 512 + offset], "fallback must avoid a hole at zoom " + zoom);
+        }
+    }
+
+    private static int[] coordinatePixels(int chunkX, int chunkZ) {
+        int[] pixels = new int[16 * 16];
+        for (int z = 0; z < 16; z++) {
+            for (int x = 0; x < 16; x++) {
+                pixels[z * 16 + x] = coordinateColor(chunkX * 16 + x, chunkZ * 16 + z);
+            }
+        }
+        return pixels;
+    }
+
+    private static int coordinateColor(int x, int z) {
+        return 0xFF000000 | ((x & 1023) << 10) | (z & 1023);
     }
 
     private static int[] chunkPixels(int color) {

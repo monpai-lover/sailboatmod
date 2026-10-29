@@ -36,7 +36,7 @@ import java.util.stream.Stream;
 public final class MarketWebMapTileCache {
     private static final Logger LOGGER = LogUtils.getLogger();
     private static final Gson GSON = new Gson();
-    public static final int RENDER_VERSION = 5;
+    public static final int RENDER_VERSION = 6;
     private static final int METADATA_VERSION = 2;
     /**
      * 运行时瓦片写入计数:每成功写一张瓦片 +1。给前端 snapshot 的 renderVersion 用,让 ?v= 缓存破坏参数
@@ -346,9 +346,9 @@ public final class MarketWebMapTileCache {
     private static final String RENDERER_VERSION_FILE = "renderer-version.txt";
 
     /**
-     * Once per renderer upgrade: clears the chunks an older renderer drew, so they are redrawn instead of staying
-     * (for example as the grey "unknown" cells of old Tellus tiles). Client uploads are kept; they may be the only
-     * picture of an area. Returns the tiles changed, or -1 when this renderer already checked the cache.
+     * Once per renderer upgrade: clears old server chunks and generated square tiles/seam rows for rebuilding.
+     * Legacy client uploads are kept; they may be the only picture of an area. Returns the tiles changed, or -1
+     * when this renderer already checked the cache. Failed cleanup is retried before recording the version.
      */
     public int clearStaleServerChunksAfterRendererUpgrade() {
         Path marker = root.resolve(RENDERER_VERSION_FILE);
@@ -365,14 +365,15 @@ public final class MarketWebMapTileCache {
         }
         long started = System.nanoTime();
         StaleScan scan = scanStaleServerChunks();
-        if (!scan.complete()) {
-            return scan.cleared(); // not recorded: the next start scans again
+        StaleScan generated = clearGeneratedTilesAndSeams();
+        int cleared = scan.cleared() + generated.cleared();
+        if (!scan.complete() || !generated.complete()) {
+            return cleared; // not recorded: the next start retries incomplete cleanup
         }
-        if (scan.cleared() > 0) {
+        if (cleared > 0) {
             LOGGER.info("Market web map: cleared {} tiles drawn by an older renderer in {} ms; they will be repainted",
-                    scan.cleared(), (System.nanoTime() - started) / 1_000_000);
+                    cleared, (System.nanoTime() - started) / 1_000_000);
         }
-        int cleared = scan.cleared();
         try {
             Files.createDirectories(root);
             Files.writeString(marker, Integer.toString(RENDER_VERSION), StandardCharsets.UTF_8);
@@ -396,6 +397,7 @@ public final class MarketWebMapTileCache {
             return new StaleScan(0, true);
         }
         int cleared = 0;
+        boolean complete = true;
         try (DirectoryStream<Path> stream = Files.newDirectoryStream(dir, "*.png")) {
             for (Path png : stream) {
                 TileName tile = parseTileName(png);
@@ -441,22 +443,26 @@ public final class MarketWebMapTileCache {
                             rendererVersions);
                     if (writeTileAndMetadata(MarketWebMapConstants.OVERWORLD, tile.tileX, tile.tileZ, pixels, updated)) {
                         cleared++;
+                    } else {
+                        complete = false;
                     }
                 } else if (deleteTileAndMetadata(MarketWebMapConstants.OVERWORLD, tile.tileX, tile.tileZ)) {
                     cleared++;
+                } else {
+                    complete = false;
                 }
             }
         } catch (IOException | java.io.UncheckedIOException exception) {
             LOGGER.warn("Failed to clear stale market web map server chunks under {}", dir, exception);
             return new StaleScan(cleared, false);
         }
-        return new StaleScan(cleared, true);
+        return new StaleScan(cleared, complete);
     }
 
     public int clearAllTiles() {
         Path dir = root.resolve("overworld").resolve("lod_1").normalize();
         if (!dir.startsWith(root) || !Files.isDirectory(dir)) {
-            return clearSquareTiles();
+            return clearGeneratedTilesAndSeams().cleared();
         }
         int cleared = 0;
         try (DirectoryStream<Path> stream = Files.newDirectoryStream(dir, "*.png")) {
@@ -487,7 +493,7 @@ public final class MarketWebMapTileCache {
         } catch (IOException exception) {
             LOGGER.warn("Failed to clear orphan market web map tile metadata under {}", dir, exception);
         }
-        return cleared + clearSquareTiles();
+        return cleared + clearGeneratedTilesAndSeams().cleared();
     }
 
     public static byte[] encodePng(int pixelWidth, int pixelHeight, int[] argbPixels) {
@@ -702,6 +708,7 @@ public final class MarketWebMapTileCache {
                 return true;
             }
             writeBytesAtomically(pngPath, pngBytes);
+            TILE_WRITE_EPOCH.incrementAndGet();
             return true;
         } catch (IOException exception) {
             LOGGER.warn("Failed to write market web square map tile {}", pngPath, exception);
@@ -915,33 +922,45 @@ public final class MarketWebMapTileCache {
                 .normalize();
     }
 
-    private int clearSquareTiles() {
-        Path dir = root.resolve("overworld").resolve("square").normalize();
+    private StaleScan clearGeneratedTilesAndSeams() {
+        StaleScan square = clearGeneratedCacheDirectory(root.resolve("overworld").resolve("square").normalize());
+        StaleScan seam = clearGeneratedCacheDirectory(root.resolve("overworld").resolve("seam").normalize());
+        return new StaleScan(square.cleared() + seam.cleared(), square.complete() && seam.complete());
+    }
+
+    private StaleScan clearGeneratedCacheDirectory(Path dir) {
         if (!dir.startsWith(root) || !Files.exists(dir)) {
-            return 0;
+            return new StaleScan(0, true);
         }
-        int[] cleared = {0};
+        int cleared = 0;
+        boolean complete = true;
         try (Stream<Path> stream = Files.walk(dir)) {
-            stream.sorted(Comparator.reverseOrder()).forEach(path -> {
+            var paths = stream.sorted(Comparator.reverseOrder()).iterator();
+            while (paths.hasNext()) {
+                Path path = paths.next();
                 if (!path.startsWith(root)) {
-                    return;
+                    complete = false;
+                    continue;
                 }
                 try {
-                    if (Files.isRegularFile(path) && path.getFileName().toString().endsWith(".png")) {
-                        cleared[0]++;
+                    boolean tile = Files.isRegularFile(path) && path.getFileName().toString().endsWith(".png");
+                    if (Files.deleteIfExists(path) && tile) {
+                        cleared++;
                     }
-                    Files.deleteIfExists(path);
                 } catch (java.nio.file.DirectoryNotEmptyException ignored) {
-                    // 删目录瞬间有并发写入的残留文件 → 目录非空。非致命:文件本身会在下次清理/重渲覆盖,降为 debug 不刷屏。
-                    LOGGER.debug("Market web square map dir not empty (concurrent write), skipping {}", path);
+                    // A concurrent write can leave files behind. Keep the old marker so startup retries the cleanup.
+                    complete = false;
+                    LOGGER.debug("Market web generated map dir not empty, retrying next startup: {}", path);
                 } catch (IOException exception) {
-                    LOGGER.warn("Failed to delete market web square map tile {}", path, exception);
+                    complete = false;
+                    LOGGER.warn("Failed to delete market web generated map cache entry {}", path, exception);
                 }
-            });
-        } catch (IOException exception) {
-            LOGGER.warn("Failed to clear market web square map tile cache under {}", dir, exception);
+            }
+        } catch (IOException | java.io.UncheckedIOException exception) {
+            complete = false;
+            LOGGER.warn("Failed to clear market web generated map cache under {}", dir, exception);
         }
-        return cleared[0];
+        return new StaleScan(cleared, complete);
     }
 
     private TileName parseTileName(Path path) {

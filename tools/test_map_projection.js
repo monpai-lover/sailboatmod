@@ -32,18 +32,44 @@ function recordingContext() {
   return context;
 }
 
-function mapHarness({ dpr = 1, width = 1000, height = 600, zoom = 0.85, leaflet = true, mobile = false } = {}) {
+function mapHarness({ dpr = 1, width = 1000, height = 600, zoom = 0.85, leaflet = true, mobile = false, responses = {} } = {}) {
   const filename = path.join(__dirname, "../src/main/resources/marketweb/map.js");
   const source = fs.readFileSync(filename, "utf8");
-  const observed = source.replace(/\}\)\(\);\s*$/, "window.__projectionTest = { state, resizeCanvas, worldToScreen, screenToWorld, syncSquaremapTerrain, updateCoordReadout, screenRectForWorldBounds, drawTerritories, drawMarkets, drawHoverHighlight, bindCanvasEvents, centerOn, zoomAt, ensureStaticLayer, renderOverlayFrame, staticAnchorDriftPx, visibleTileRange, drawPixelAlignedTile, drawRoute, nearestRouteNode, nearestShipment, hitTest, renderTooltip };})();");
+  const observed = source.replace(/\}\)\(\);\s*$/, "window.__projectionTest = { state, resizeCanvas, worldToScreen, screenToWorld, syncSquaremapTerrain, updateCoordReadout, screenRectForWorldBounds, drawTerritories, drawMarkets, drawHoverHighlight, bindCanvasEvents, centerOn, zoomAt, ensureStaticLayer, renderOverlayFrame, staticAnchorDriftPx, visibleTileRange, drawPixelAlignedTile, drawRoute, nearestRouteNode, nearestShipment, hitTest, renderTooltip, createTellusTileLayer, loadAll, pollMapRefresh };})();");
   assert.notEqual(observed, source, "the observer attaches to the real map closure");
   const offscreens = [];
+  const timers = [];
+  const predictionRequests = [];
+  const storage = { getItem() { return null; } };
   const environment = {
     window: {
       devicePixelRatio: dpr, innerWidth: mobile ? 400 : 1400,
       matchMedia: () => ({ matches: false }),
       clearTimeout() {}, clearInterval() {}, SailboatTellusBasemap: basemap,
-      L: { latLng: (lat, lng) => ({ lat, lng }) }
+      localStorage: storage,
+      setTimeout(callback) { timers.push(callback); return timers.length; },
+      L: {
+        latLng: (lat, lng) => ({ lat, lng }),
+        latLngBounds: (north, south) => ({ north, south }),
+        TileLayer: class {
+          constructor() { this.events = new Map(); }
+          on(name, callback) { this.events.set(name, callback); }
+          setZIndex() { return this; }
+          addTo() { this.redraw(); return this; }
+          redraw() {
+            if (this.getTileUrl) predictionRequests.push(this.getTileUrl({ x: 27, y: -48, z: -1 }));
+            return this;
+          }
+        },
+        GridLayer: { extend() {
+          return class {
+            on() {}
+            setZIndex() { return this; }
+            addTo() { return this; }
+          };
+        }
+        }
+      }
     },
     navigator: { maxTouchPoints: mobile ? 1 : 0 },
     document: { createElement(type) {
@@ -54,6 +80,9 @@ function mapHarness({ dpr = 1, width = 1000, height = 600, zoom = 0.85, leaflet 
       return canvas;
     } },
     performance,
+    localStorage: storage,
+    Headers,
+    fetch: async (url) => ({ ok: true, json: async () => responses[url.split("?")[0]] || {} }),
     requestAnimationFrame: () => 1,
     cancelAnimationFrame() {}
   };
@@ -82,13 +111,14 @@ function mapHarness({ dpr = 1, width = 1000, height = 600, zoom = 0.85, leaflet 
   if (leaflet) {
     state.leafletMap = {
       invalidateSize() {}, remove() {},
+      setMinZoom() {},
       setView(center, mapZoom) { view = { center, zoom: mapZoom }; }
     };
   }
   api.resizeCanvas();
   api.bindCanvasEvents();
   return {
-    ...api, context, canvas, rect, offscreens,
+    ...api, context, canvas, rect, offscreens, timers, predictionRequests,
     // Leaflet CRS.Simple works in CSS pixels. This oracle is independent of both Canvas conversion functions.
     terrain(point) {
       assert.ok(view, "the actual Leaflet sync supplies the view");
@@ -413,4 +443,50 @@ test("fallback tile enumeration covers the CSS viewport independently of backing
     assert.equal(actual.minZ, Math.floor((MARKET.z - map.rect.height / (2 * map.state.zoom)) / 512) - 1);
     assert.equal(actual.maxZ, Math.floor((MARKET.z + map.rect.height / (2 * map.state.zoom)) / 512) + 1);
   }
+});
+
+test("prediction URLs and retries keep their sampler revision when bypassing old browser tiles", () => {
+  const map = mapHarness();
+  map.state.apiBase = "";
+  map.state.snapshot = { tellusRenderVersion: 2, tileEpoch: 99 };
+  const layer = map.createTellusTileLayer(4);
+  map.state.tellusLayer = layer;
+  const coords = { x: 27, y: -48, z: -1 };
+  const url = new URL(layer.getTileUrl(coords), "http://localhost");
+  assert.equal(url.pathname, "/api/map/tellus/tile/1/27_-48.png");
+  assert.equal(url.searchParams.get("v"), "2");
+  map.state.snapshot.tileEpoch++;
+  assert.equal(layer.getTileUrl(coords), url.pathname + url.search, "actual chunk writes do not invalidate predictions");
+  const tile = { isConnected: true };
+  layer.events.get("tileerror")({ tile, coords });
+  map.timers.shift()();
+  const retry = new URL(tile.src, "http://localhost");
+  assert.equal(retry.searchParams.get("v"), "2", "retry preserves the prediction revision");
+  assert.ok(retry.searchParams.has("retry"));
+  map.state.snapshot.tellusRenderVersion = 3;
+  assert.equal(new URL(layer.getTileUrl(coords), "http://localhost").searchParams.get("v"), "3");
+});
+
+test("the first prediction request uses the newly fetched sampler revision", async () => {
+  const map = mapHarness({ responses: {
+    "/api/map/snapshot": { tellusRenderVersion: 2, defaultFocus: MARKET },
+    "/api/map/world": { tellus: true, worldScale: 100, tellusTileMaxZoom: 4 }
+  } });
+  await map.loadAll(map.state.mountedToken);
+  assert.ok(map.predictionRequests.length > 0, "adding the layer immediately requests visible tiles");
+  assert.equal(new URL(map.predictionRequests[0], "http://localhost").searchParams.get("v"), "2");
+});
+
+test("a sampler-only revision refreshes prediction tiles without actual terrain changes", async () => {
+  const next = { tellusRenderVersion: 2, renderVersion: 6, tileEpoch: 41 };
+  const map = mapHarness({ responses: { "/api/map/snapshot": next } });
+  map.state.snapshot = { ...next, tellusRenderVersion: 1 };
+  map.state.tellusLayer = map.createTellusTileLayer(4);
+  await map.pollMapRefresh();
+  assert.equal(map.state.snapshot.tellusRenderVersion, 2);
+  assert.equal(map.predictionRequests.length, 1);
+  assert.equal(new URL(map.predictionRequests[0], "http://localhost").searchParams.get("v"), "2");
+  next.tileEpoch++;
+  await map.pollMapRefresh();
+  assert.equal(map.predictionRequests.length, 1, "actual terrain updates leave the prediction cache stable");
 });

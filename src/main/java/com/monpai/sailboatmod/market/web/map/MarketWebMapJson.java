@@ -17,6 +17,7 @@ public final class MarketWebMapJson {
         json.addProperty("tileSize", snapshot.tileSize());
         json.addProperty("lod", snapshot.lod());
         json.addProperty("renderVersion", MarketWebMapTileCache.RENDER_VERSION);
+        json.addProperty("tellusRenderVersion", MarketWebTellusTileStore.RENDER_VERSION);
         // 运行时瓦片写入计数:每渲染一张瓦片 +1。前端 tileRefreshKey 纳入它,使 ?v= 缓存破坏参数随渲染变化,
         // 渲染完网页能拉到新瓦片(renderVersion 是编译期常量,单靠它网页永远显示缓存旧图)。
         json.addProperty("tileEpoch", MarketWebMapTileCache.tileWriteEpoch());
