@@ -1,5 +1,7 @@
 package com.monpai.sailboatmod.nation.data;
 
+import com.monpai.sailboatmod.compat.PersistedBlockPos;
+import net.minecraft.core.BlockPos;
 import com.monpai.sailboatmod.nation.model.NationClaimRecord;
 import com.monpai.sailboatmod.nation.model.NationDiplomacyRecord;
 import com.monpai.sailboatmod.nation.model.NationDiplomacyRequestRecord;
@@ -37,6 +39,8 @@ public class NationSavedData extends SavedData {
 
     private final Map<String, NationRecord> nations = new LinkedHashMap<>();
     private final Map<String, TownRecord> towns = new LinkedHashMap<>();
+    private final Map<String, PersistedBlockPos.Evidence> nationCoreEvidence = new LinkedHashMap<>();
+    private final Map<String, PersistedBlockPos.Evidence> townCoreEvidence = new LinkedHashMap<>();
     private final Map<UUID, NationMemberRecord> members = new LinkedHashMap<>();
     private final Map<String, NationOfficeRecord> offices = new LinkedHashMap<>();
     private final Map<String, NationInviteRecord> invites = new LinkedHashMap<>();
@@ -63,18 +67,26 @@ public class NationSavedData extends SavedData {
             return new NationSavedData();
         }
         ServerLevel root = serverLevel.getServer().overworld();
-        return root.getDataStorage().computeIfAbsent(new SavedData.Factory<>(NationSavedData::new, (tag, provider) -> com.monpai.sailboatmod.compat.ItemStackNbt.withProvider(provider, () -> NationSavedData.load(tag))), DATA_NAME);
+        return root.getDataStorage().computeIfAbsent(new SavedData.Factory<>(NationSavedData::new, (tag, provider) -> com.monpai.sailboatmod.compat.ItemStackNbt.withProvider(provider, () -> NationSavedData.load(tag, root))), DATA_NAME);
     }
 
     public static NationSavedData load(CompoundTag tag) {
+        return load(tag, null);
+    }
+
+    private static NationSavedData load(CompoundTag tag, ServerLevel context) {
         NationSavedData data = new NationSavedData();
 
         ListTag nationTag = tag.getList("Nations", net.minecraft.nbt.Tag.TAG_COMPOUND);
         for (Tag raw : nationTag) {
             if (raw instanceof CompoundTag compound) {
-                NationRecord nation = NationRecord.load(compound);
+                CompoundTag restored = restoreCorePosition(compound, context, "sailboatmod:nation_core", "NationId");
+                NationRecord nation = NationRecord.load(restored);
+                if (!restored.equals(compound)) data.setDirty();
                 if (!nation.nationId().isBlank()) {
                     data.nations.put(nation.nationId(), nation);
+                    if (nation.hasCore()) data.nationCoreEvidence.put(nation.nationId(),
+                            PersistedBlockPos.remember(restored, "CorePos", BlockPos.of(nation.corePos())));
                 }
             }
         }
@@ -82,9 +94,13 @@ public class NationSavedData extends SavedData {
         ListTag townTag = tag.getList("Towns", net.minecraft.nbt.Tag.TAG_COMPOUND);
         for (Tag raw : townTag) {
             if (raw instanceof CompoundTag compound) {
-                TownRecord town = TownRecord.load(compound);
+                CompoundTag restored = restoreCorePosition(compound, context, "sailboatmod:town_core", "TownId");
+                TownRecord town = TownRecord.load(restored);
+                if (!restored.equals(compound)) data.setDirty();
                 if (!town.townId().isBlank()) {
                     data.towns.put(town.townId(), town);
+                    if (town.hasCore()) data.townCoreEvidence.put(town.townId(),
+                            PersistedBlockPos.remember(restored, "CorePos", BlockPos.of(town.corePos())));
                 }
             }
         }
@@ -290,6 +306,19 @@ public class NationSavedData extends SavedData {
         return data;
     }
 
+    private static CompoundTag restoreCorePosition(CompoundTag tag, ServerLevel context, String type, String identityKey) {
+        if (!tag.contains("CorePos") || tag.getLong("CorePos") == Long.MIN_VALUE) {
+            return tag;
+        }
+        var level = PersistedBlockPos.forDimension(context, tag.getString("CoreDimension"));
+        var pos = PersistedBlockPos.readVerified(level, tag, "CorePos", type, identityKey, tag.getString(identityKey));
+        // Adapt the existing long-based model to this runtime, while retaining lossless XYZ as save evidence.
+        if (pos.equals(PersistedBlockPos.read(tag, "CorePos")) && pos.asLong() == tag.getLong("CorePos")) return tag;
+        CompoundTag restored = tag.copy();
+        PersistedBlockPos.write(restored, "CorePos", pos);
+        return restored;
+    }
+
     @Override
     public CompoundTag save(CompoundTag tag, net.minecraft.core.HolderLookup.Provider provider) {
         return com.monpai.sailboatmod.compat.ItemStackNbt.withProvider(provider, () -> save(tag));
@@ -298,13 +327,19 @@ public class NationSavedData extends SavedData {
     public CompoundTag save(CompoundTag tag) {
         ListTag nationTag = new ListTag();
         for (NationRecord nation : nations.values()) {
-            nationTag.add(nation.save());
+            CompoundTag saved = nation.save();
+            if (nation.hasCore()) PersistedBlockPos.writePreservingEvidence(saved, "CorePos",
+                    BlockPos.of(nation.corePos()), nationCoreEvidence.get(nation.nationId()));
+            nationTag.add(saved);
         }
         tag.put("Nations", nationTag);
 
         ListTag townTag = new ListTag();
         for (TownRecord town : towns.values()) {
-            townTag.add(town.save());
+            CompoundTag saved = town.save();
+            if (town.hasCore()) PersistedBlockPos.writePreservingEvidence(saved, "CorePos",
+                    BlockPos.of(town.corePos()), townCoreEvidence.get(town.townId()));
+            townTag.add(saved);
         }
         tag.put("Towns", townTag);
 
@@ -465,6 +500,7 @@ public class NationSavedData extends SavedData {
             return;
         }
         boolean changed = nations.remove(normalized) != null;
+        nationCoreEvidence.remove(normalized);
 
         List<String> townIds = new ArrayList<>();
         for (TownRecord town : towns.values()) {
@@ -622,6 +658,7 @@ public class NationSavedData extends SavedData {
             return;
         }
         boolean changed = towns.remove(normalized) != null;
+        townCoreEvidence.remove(normalized);
         changed |= townMembers.values().removeIf(member -> normalized.equals(member.townId()));
         changed |= townMemberInvites.values().removeIf(invite -> normalized.equals(invite.townId()));
         List<String> claimKeys = new ArrayList<>();

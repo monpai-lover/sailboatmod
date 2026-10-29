@@ -103,6 +103,7 @@ public final class MarketWebMapLayerService {
                                                 String focusedMarketId,
                                                 List<MarketWebMapDtos.MarketMarker> markets) {
         if (focusedMarketId != null && !focusedMarketId.isBlank()) {
+            focusedMarketId = MarketWebService.canonicalMarketId(MarketTerminalSavedData.get(server.overworld()), focusedMarketId);
             for (MarketWebMapDtos.MarketMarker marker : markets) {
                 if (focusedMarketId.equals(marker.marketId())) {
                     return new MarketWebMapDtos.Point(marker.x(), marker.z());

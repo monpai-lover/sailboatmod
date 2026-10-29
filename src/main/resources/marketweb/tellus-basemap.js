@@ -33,7 +33,9 @@
       label: { en: "Streets (AutoNavi)", zh: "高德街道" },
       url: "https://webrd0{s}.is.autonavi.com/appmaptile?lang=zh_cn&size=1&scale=1&style=7&x={x}&y={y}&z={z}",
       subdomains: ["1", "2", "3", "4"],
+      minZoom: 1,
       maxZoom: 18,
+      internationalMaxZoom: 9,
       gcj02: true,
       attribution: "高德地图 / AutoNavi"
     },
@@ -98,6 +100,26 @@
   function chooseXyzZoom(blocksPerPixel, scale, maxZoom) {
     const metersPerPixel = Math.max(1e-9, blocksPerPixel * scale);
     return clamp(Math.round(Math.log2(WORLD_METERS / (TILE_PIXELS * metersPerPixel))), 0, maxZoom);
+  }
+
+  /** Keep provider requests inside their coverage range; AutoNavi returns blank images outside it, with HTTP 200. */
+  function chooseSourceZoom(bounds, scale, source) {
+    let maxZoom = source.maxZoom;
+    if (Number.isFinite(source.internationalMaxZoom) && !boundsInsideChina(bounds, scale)) {
+      maxZoom = Math.min(maxZoom, source.internationalMaxZoom);
+    }
+    const zoom = chooseXyzZoom((bounds.maxX - bounds.minX) / bounds.widthPx, scale, maxZoom);
+    return Math.max(source.minZoom || 0, zoom);
+  }
+
+  function boundsInsideChina(bounds, scale) {
+    const nw = blockToLatLon(bounds.minX, bounds.minZ, scale);
+    const se = blockToLatLon(bounds.maxX, bounds.maxZ, scale);
+    const span = se.lon - nw.lon;
+    const west = ((nw.lon + 180) % 360 + 360) % 360 - 180;
+    // Test the whole unwrapped interval, not just its centre: crossing coverage edges or the date line uses
+    // international tiles. A repeated world may still contain a wholly domestic rectangle after longitude wraps.
+    return span >= 0 && span < 360 && !outOfChina(nw.lat, west) && !outOfChina(se.lat, west + span);
   }
 
   /**
@@ -264,6 +286,7 @@
     blockToLatLon,
     latLonToBlock,
     chooseXyzZoom,
+    chooseSourceZoom,
     xyzCrops,
     tileUrl,
     outOfChina,

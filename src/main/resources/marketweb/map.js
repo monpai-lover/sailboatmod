@@ -19,7 +19,7 @@
   const MOBILE_TILE_PADDING = 0;
   const DESKTOP_HOVER_THROTTLE_MS = 32;
   const MISSING_TILE_RETRY_MS = 10_000;
-  const TRANSPARENT_TILE_URL = "data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///ywAAAAAAQABAAACAUwAOw==";
+  const TRANSPARENT_TILE_URL = "data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7";
 
   const LABELS = {
     "en-US": {
@@ -33,6 +33,7 @@
       zoomOut: "Zoom out",
       basemap: "Basemap",
       basemapUnavailable: "Basemap source unreachable — try another source.",
+      basemapOutsideProjection: "Map coordinates are outside the Earth's projection range. Check the server coordinate encoding / world scale.",
       loading: "Loading map data...",
       loginRequired: "Sign in to view the world map.",
       loadFailed: "Map data unavailable.",
@@ -97,6 +98,7 @@
       zoomOut: "缩小",
       basemap: "底图",
       basemapUnavailable: "底图来源无法连线，可切换来源。",
+      basemapOutsideProjection: "地图坐标超出地球投影范围，请检查服务端坐标编码／世界比例。",
       loading: "正在加载地图数据...",
       loginRequired: "登录后才能查看世界地图。",
       loadFailed: "地图数据暂不可用。",
@@ -214,7 +216,7 @@
     basemapLayer: null,
     tellusLayer: null,
     basemapSourceId: "esri",
-    basemapFailures: 0,
+    basemapTiles: new Map(),
     basemapImages: new Map(),
     basemapAttribution: null,
     tellusRetryTimer: 0,
@@ -388,7 +390,6 @@
   // ---- Tellus world map: real-world basemap (A) and Tellus prediction tiles (B) under the terrain tiles ----
   const TELLUS_MIN_ZOOM = 1 / 2048; // whole Earth (~1.34M blocks wide at scale 30) fits on screen
   const BASEMAP_IMAGE_LIMIT = 256;
-  const BASEMAP_FAILURE_NOTICE = 8;
 
   function tellusBasemap() {
     return typeof window !== "undefined" ? window.SailboatTellusBasemap || null : null;
@@ -447,7 +448,7 @@
         return tile;
       }
     });
-    return new BasemapLayer({
+    const layer = new BasemapLayer({
       tileSize: TILE_SIZE,
       minZoom: Math.log2(TELLUS_MIN_ZOOM),
       maxZoom: 4,
@@ -456,6 +457,14 @@
       keepBuffer: 1,
       className: "tellus-basemap-tile"
     });
+    layer.on("tileunload", (event) => {
+      if (state.basemapLayer !== layer) {
+        return;
+      }
+      state.basemapTiles.delete(event.tile);
+      renderBasemapAttribution();
+    });
+    return layer;
   }
 
   async function drawBasemapTile(canvas, coords) {
@@ -475,7 +484,7 @@
       widthPx: canvas.width,
       heightPx: canvas.height
     };
-    const zoom = api.chooseXyzZoom(blocksPerTile / canvas.width, scale, source.maxZoom);
+    const zoom = api.chooseSourceZoom(bounds, scale, source);
     let offset = { dx: 0, dy: 0 };
     if (source.gcj02) {
       const centre = api.blockToLatLon((bounds.minX + bounds.maxX) / 2, (bounds.minZ + bounds.maxZ) / 2, scale);
@@ -483,42 +492,49 @@
     }
     const ctx = canvas.getContext("2d");
     const crops = api.xyzCrops(bounds, scale, zoom, offset);
+    const tiles = state.basemapTiles;
+    const tile = { bounds, requested: crops.length > 0, pending: crops.length > 0, drawn: 0 };
+    const diagnostics = canvas.dataset ??= {};
+    diagnostics.basemapSource = source.id;
+    diagnostics.basemapZoom = String(zoom);
+    diagnostics.basemapRequested = String(crops.length);
+    diagnostics.basemapDrawn = "0";
+    tiles.set(canvas, tile);
+    renderBasemapAttribution();
     await Promise.all(crops.map(async (crop, index) => {
       const image = await loadBasemapImage(api.tileUrl(source, crop.x, crop.y, crop.z, crop.x + crop.y + index));
       if (image) {
         ctx.drawImage(image, crop.sx, crop.sy, crop.sw, crop.sh, crop.dx, crop.dy, crop.dw, crop.dh);
+        tile.drawn += 1;
       }
     }));
+    tile.pending = false;
+    diagnostics.basemapDrawn = String(tile.drawn);
+    if (state.basemapTiles === tiles && tiles.has(canvas)) {
+      renderBasemapAttribution();
+    }
   }
 
   function loadBasemapImage(url) {
-    const cached = state.basemapImages.get(url);
+    const cache = state.basemapImages;
+    const cached = cache.get(url);
     if (cached) {
       return cached;
     }
     const promise = new Promise((resolve) => {
       const image = new Image();
       image.onload = () => {
-        if (state.basemapFailures >= BASEMAP_FAILURE_NOTICE) {
-          state.basemapFailures = 0;
-          renderBasemapAttribution();
-        }
-        state.basemapFailures = 0;
         resolve(image);
       };
       image.onerror = () => {
-        state.basemapImages.delete(url);
-        state.basemapFailures += 1;
-        if (state.basemapFailures === BASEMAP_FAILURE_NOTICE) {
-          renderBasemapAttribution();
-        }
+        cache.delete(url);
         resolve(null);
       };
       image.src = url;
     });
-    state.basemapImages.set(url, promise);
-    if (state.basemapImages.size > BASEMAP_IMAGE_LIMIT) {
-      state.basemapImages.delete(state.basemapImages.keys().next().value);
+    cache.set(url, promise);
+    if (cache.size > BASEMAP_IMAGE_LIMIT) {
+      cache.delete(cache.keys().next().value);
     }
     return promise;
   }
@@ -578,7 +594,7 @@
     state.basemapSourceId = api.sourceById(id).id;
     api.saveBasemapSource(safeLocalStorage(), state.basemapSourceId);
     state.basemapImages = new Map();
-    state.basemapFailures = 0;
+    state.basemapTiles = new Map();
     state.basemapLayer.redraw();
     renderBasemapAttribution();
   }
@@ -603,9 +619,29 @@
       state.mapElement.parentElement?.appendChild(state.basemapAttribution);
     }
     const source = api.sourceById(state.basemapSourceId);
-    const notice = state.basemapFailures >= BASEMAP_FAILURE_NOTICE ? ` · ${label("basemapUnavailable")}` : "";
+    const centerZ = Number(state.center.z);
+    const outsideProjection = !Number.isFinite(centerZ) || Math.abs(centerZ) > api.earthHalfWidthBlocks(Number(state.world.worldScale));
+    const problem = outsideProjection ? "basemapOutsideProjection" : basemapConnectionFailed() ? "basemapUnavailable" : "";
+    const notice = problem ? ` · ${label(problem)}` : "";
     state.basemapAttribution.textContent = `${source.attribution} · Tellus${notice}`;
     state.basemapAttribution.classList.toggle("is-warning", notice !== "");
+  }
+
+  function basemapConnectionFailed() {
+    // Ignore buffered/offscreen tiles and empty tiles beyond Earth's north/south edges. A source warning means
+    // every requested tile in this viewport has finished without drawing an image, rather than a global error count.
+    const view = state.leafletMap?.getBounds?.();
+    const zoom = Math.max(TELLUS_MIN_ZOOM, Number(state.zoom) || 1);
+    const halfWidth = (state.mapElement.clientWidth || state.canvas?.width || TILE_SIZE) / (2 * zoom);
+    const halfHeight = (state.mapElement.clientHeight || state.canvas?.height || TILE_SIZE) / (2 * zoom);
+    const minX = view ? view.getWest() : state.center.x - halfWidth;
+    const maxX = view ? view.getEast() : state.center.x + halfWidth;
+    const minZ = view ? -view.getNorth() : state.center.z - halfHeight;
+    const maxZ = view ? -view.getSouth() : state.center.z + halfHeight;
+    const visible = [...state.basemapTiles.values()].filter((tile) => tile.requested
+      && tile.bounds.minX < maxX && tile.bounds.maxX > minX
+      && tile.bounds.minZ < maxZ && tile.bounds.maxZ > minZ);
+    return visible.length > 0 && visible.every((tile) => !tile.pending && !tile.drawn);
   }
 
   function tileZoomFromLeafletZoom(leafletZoom) {
@@ -719,6 +755,7 @@
 
   function syncSquaremapTerrain(force) {
     if (!state.leafletMap) {
+      renderBasemapAttribution();
       return;
     }
     const leafletZoom = Math.log2(Math.max(minLeafletScale(), Number(state.zoom) || 1));
@@ -733,6 +770,7 @@
     state.lastTerrainSync = { x: cx, z: cz, zoom: leafletZoom };
     state.leafletMap.invalidateSize(false);
     state.leafletMap.setView(window.L.latLng(-cz, cx), leafletZoom, { animate: false });
+    renderBasemapAttribution();
   }
 
   function destroySquaremapTerrain() {
@@ -747,7 +785,7 @@
     state.basemapLayer = null;
     state.tellusLayer = null;
     state.basemapImages = new Map();
-    state.basemapFailures = 0;
+    state.basemapTiles = new Map();
     if (state.basemapAttribution) {
       state.basemapAttribution.remove();
       state.basemapAttribution = null;

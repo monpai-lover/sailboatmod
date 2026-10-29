@@ -1154,6 +1154,20 @@ public final class MarketWebService {
         return Base64.getUrlEncoder().withoutPadding().encodeToString(raw.getBytes(java.nio.charset.StandardCharsets.UTF_8));
     }
 
+    public static String canonicalMarketId(MarketTerminalSavedData terminals, String marketId) {
+        if (terminals == null || marketId == null || marketId.isBlank()) return marketId;
+        try {
+            String[] parts = new String(Base64.getUrlDecoder().decode(marketId), java.nio.charset.StandardCharsets.UTF_8).split("\\|");
+            if (parts.length != 4) return marketId;
+            BlockPos original = new BlockPos(Integer.parseInt(parts[1]), Integer.parseInt(parts[2]), Integer.parseInt(parts[3]));
+            BlockPos canonical = terminals.canonicalPosition(parts[0], original);
+            if (!canonical.equals(original)) return encodeMarketId(parts[0], canonical);
+        } catch (IllegalArgumentException ignored) {
+            // Invalid or unknown links retain the normal not-found behavior.
+        }
+        return marketId;
+    }
+
     public ResolvedMarket resolveMarket(MinecraftServer server, String marketId) {
         if (server == null || marketId == null || marketId.isBlank()) {
             return null;
@@ -1178,15 +1192,37 @@ public final class MarketWebService {
         if (server == null || dimensionId == null || dimensionId.isBlank() || pos == null) {
             return null;
         }
+        MarketTerminalSavedData terminals = MarketTerminalSavedData.get(server.overworld());
+        pos = terminals.canonicalPosition(dimensionId, pos);
+        if (!terminals.containsPosition(dimensionId, pos)) {
+            return null;
+        }
         ResourceLocation resourceLocation = ResourceLocation.tryParse(dimensionId);
         if (resourceLocation == null) {
             return null;
         }
         ResourceKey<Level> key = ResourceKey.create(net.minecraft.core.registries.Registries.DIMENSION, resourceLocation);
         ServerLevel level = server.getLevel(key);
-        if (level == null) {
+        if (level == null || level.isOutsideBuildHeight(pos)) {
             return null;
         }
+        if (level.getChunkSource().getChunkNow(pos.getX() >> 4, pos.getZ() >> 4) == null) {
+            var saved = com.monpai.sailboatmod.util.OfflineChunkNbtReader.readSafeOnMainThread(
+                    level, new net.minecraft.world.level.ChunkPos(pos), 250L, false);
+            if (saved.isEmpty()) return null;
+            boolean found = false;
+            for (net.minecraft.nbt.Tag raw : saved.get().getList("block_entities", net.minecraft.nbt.Tag.TAG_COMPOUND)) {
+                if (raw instanceof net.minecraft.nbt.CompoundTag entity
+                        && "sailboatmod:market".equals(entity.getString("id"))
+                        && entity.getInt("x") == pos.getX() && entity.getInt("y") == pos.getY()
+                        && entity.getInt("z") == pos.getZ()) {
+                    found = true;
+                    break;
+                }
+            }
+            if (!found) return null;
+        }
+        // Only load an existing, verified market chunk. A stale URL must never generate remote Earth terrain.
         level.getChunkAt(pos);
         if (!(level.getBlockEntity(pos) instanceof MarketBlockEntity market)) {
             return null;
