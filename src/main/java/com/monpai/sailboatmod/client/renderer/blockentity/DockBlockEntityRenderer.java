@@ -1,5 +1,6 @@
 package com.monpai.sailboatmod.client.renderer.blockentity;
 
+import com.monpai.sailboatmod.client.renderer.HologramBillboard;
 import com.monpai.sailboatmod.block.entity.DockBlockEntity;
 import com.mojang.blaze3d.vertex.PoseStack;
 import org.joml.Matrix4f;
@@ -23,8 +24,7 @@ public class DockBlockEntityRenderer implements BlockEntityRenderer<DockBlockEnt
         if (mc == null || mc.player == null) return;
         ps.pushPose();
         ps.translate(0.5D, 1.35D, 0.5D);
-        ps.mulPose(mc.getEntityRenderDispatcher().cameraOrientation());
-        ps.scale(-0.025F, -0.025F, 0.025F);
+        HologramBillboard.faceCamera(ps, mc.getEntityRenderDispatcher().cameraOrientation(), 0.025F);
         String line = "[" + name + "]" + facilityLabel();
         float x = -this.font.width(line) / 2.0F;
         Matrix4f m = ps.last().pose();

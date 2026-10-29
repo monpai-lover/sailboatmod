@@ -1800,6 +1800,7 @@
   "screen.sailboatmod.ui.route_mode.noise": "快速",
   "screen.sailboatmod.ui.route_mode.nbt": "精确",
   "screen.sailboatmod.ui.route_mode.hybrid": "混合（推荐）",
+  "screen.sailboatmod.ui.route_mode.tellus_hint": "在 Tellus 地球世界中，服务器会自动使用真实地形＋既有方块规划。",
   "screen.sailboatmod.ui.owner_nation": "%s · %s",
   "screen.sailboatmod.ui.autopilot": "自动驾驶",
   "screen.sailboatmod.ui.seats": "座位",

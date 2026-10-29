@@ -20,6 +20,9 @@ public final class MarketWebAuthManager {
     private static final SecureRandom RANDOM = new SecureRandom();
     private static final int PASSWORD_ITERATIONS = 120_000;
     private static final int PASSWORD_KEY_LENGTH = 256;
+    /** The longest password binding accepts; anything longer cannot match and is refused before hashing. */
+    static final int MAX_PASSWORD_LENGTH = 72;
+    private static final byte[] DUMMY_SALT = new byte[16];
 
     private final MinecraftServer minecraftServer;
     private final Map<String, SessionToken> sessions = new ConcurrentHashMap<>();
@@ -109,9 +112,15 @@ public final class MarketWebAuthManager {
         if (password == null || password.isBlank()) {
             return AuthResult.invalid("invalid_password", "Password is required");
         }
+        if (password.length() > MAX_PASSWORD_LENGTH) {
+            return AuthResult.invalid("invalid_credentials", "Invalid username or password");
+        }
         MarketWebAccountSavedData.AccountEntry account = MarketWebAccountSavedData.get(minecraftServer.overworld()).getByUsername(normalizedUsername);
         if (account == null) {
-            return AuthResult.invalid("account_not_found", "Account not found");
+            // Same answer, and about the same time, as a wrong password: the login form must not reveal which
+            // usernames exist, so the password is hashed anyway.
+            hashPassword(password, DUMMY_SALT);
+            return AuthResult.invalid("invalid_credentials", "Invalid username or password");
         }
         if (!matchesPassword(password, account.salt(), account.passwordHash())) {
             return AuthResult.invalid("invalid_credentials", "Invalid username or password");
@@ -225,7 +234,7 @@ public final class MarketWebAuthManager {
     }
 
     private static boolean isValidPassword(String password) {
-        return password != null && password.length() >= 6 && password.length() <= 72;
+        return password != null && password.length() >= 6 && password.length() <= MAX_PASSWORD_LENGTH;
     }
 
     private static String hashPassword(String password, byte[] saltBytes) {

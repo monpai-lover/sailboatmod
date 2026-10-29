@@ -121,18 +121,6 @@ public final class NbtChunkWaterReader {
         if (entry != null && entry.contains("Properties", Tag.TAG_COMPOUND)) {
             waterlogged = "true".equalsIgnoreCase(entry.getCompound("Properties").getString("waterlogged"));
         }
-        return waterlogged || isWaterBlock(blockId) || isAquaticPlantBlock(blockId);
-    }
-
-    private static boolean isWaterBlock(String blockId) {
-        return "minecraft:water".equals(blockId)
-                || "minecraft:bubble_column".equals(blockId);
-    }
-
-    private static boolean isAquaticPlantBlock(String blockId) {
-        return "minecraft:seagrass".equals(blockId)
-                || "minecraft:tall_seagrass".equals(blockId)
-                || "minecraft:kelp".equals(blockId)
-                || "minecraft:kelp_plant".equals(blockId);
+        return WaterSurfaceRules.isNavigableSurface(blockId, waterlogged);
     }
 }

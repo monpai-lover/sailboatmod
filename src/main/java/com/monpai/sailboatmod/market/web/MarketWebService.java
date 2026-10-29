@@ -139,7 +139,32 @@ public final class MarketWebService {
     }
 
     public JsonArray mapShipments(MinecraftServer server, MarketPlayerIdentity identity) {
-        return MarketWebMapJson.shipments(mapLayers.shipments(server, identity));
+        JsonArray shipments = MarketWebMapJson.shipments(mapLayers.shipments(server, identity));
+        for (com.google.gson.JsonElement element : shipments) {
+            JsonObject shipment = element.getAsJsonObject();
+            shipment.add("events", MarketWebMapJson.events(com.monpai.sailboatmod.market.logistics.ShippingTraceService.eventsFor(
+                    server, shipment.get("shippingOrderId").getAsString())));
+        }
+        return shipments;
+    }
+
+    /** Finished shipments for the map's history list, each with its timeline and when it ended. */
+    public JsonArray mapShipmentHistory(MinecraftServer server, MarketPlayerIdentity identity) {
+        JsonArray out = new JsonArray();
+        if (server == null) {
+            return out;
+        }
+        var overworld = server.overworld();
+        var nationData = com.monpai.sailboatmod.nation.data.NationSavedData.get(overworld);
+        var marketData = com.monpai.sailboatmod.market.MarketSavedData.get(overworld);
+        for (var archived : com.monpai.sailboatmod.market.logistics.ShippingTraceService.historyVisibleFor(server, identity)) {
+            JsonObject shipment = MarketWebMapJson.shipment(com.monpai.sailboatmod.market.logistics.ShippingTraceService.toDto(
+                    archived.trace(), nationData, marketData, overworld));
+            shipment.add("events", MarketWebMapJson.events(archived.events()));
+            shipment.addProperty("endedGameTime", archived.endedGameTime());
+            out.add(shipment);
+        }
+        return out;
     }
 
     public byte[] mapTile(MinecraftServer server, String lod, int tileX, int tileZ) {
@@ -164,6 +189,65 @@ public final class MarketWebService {
         return MarketWebMapTileCache.forServer(server)
                 .readSquareTile(dimensionId, zoom, tileX, tileZ)
                 .orElse(null);
+    }
+
+    // Tellus 预测层取样器按主世界缓存:同一取样器跨瓦片共用地表方块子网格缓存。
+    private volatile com.monpai.sailboatmod.route.terrain.TerrainSurfaceSampler tellusSampler;
+    private volatile net.minecraft.server.level.ServerLevel tellusSamplerLevel;
+
+    /** 网页地图启动时询问:是否 Tellus 世界、世界比例、预测层最远层级(-1 = 不可用)。主线程调用。 */
+    public JsonObject worldInfo(MinecraftServer server) {
+        net.minecraft.server.level.ServerLevel level = server == null ? null : server.overworld();
+        boolean tellus = com.monpai.sailboatmod.route.terrain.TellusWorlds.isTellusLevel(level);
+        JsonObject json = new JsonObject();
+        json.addProperty("tellus", tellus);
+        json.addProperty("worldScale", tellus
+                ? com.monpai.sailboatmod.route.terrain.TellusSurfaceSamplers.worldScale(level).orElse(0.0D) : 0.0D);
+        json.addProperty("tellusTileMaxZoom", tellus && tellusSampler(level) != null
+                ? com.monpai.sailboatmod.route.terrain.TellusSurfaceSamplers.MAX_TILE_ZOOM : -1);
+        return json;
+    }
+
+    /**
+     * Tellus 预测层瓦片:有快取就回传;没有就排入专用渲染队列并回 null(前端 404 后重试)。主线程只取取样器与快取,
+     * 渲染在队列线程。失败超过一半的瓦片不存档,下次请求会重画。
+     */
+    public byte[] tellusTile(MinecraftServer server, int zoom, int tileX, int tileY) {
+        net.minecraft.server.level.ServerLevel level = server == null ? null : server.overworld();
+        if (zoom < 0 || zoom > com.monpai.sailboatmod.route.terrain.TellusSurfaceSamplers.MAX_TILE_ZOOM
+                || !com.monpai.sailboatmod.route.terrain.TellusWorlds.isTellusLevel(level)) {
+            return null;
+        }
+        double worldScale = com.monpai.sailboatmod.route.terrain.TellusSurfaceSamplers.worldScale(level).orElse(0.0D);
+        if (!com.monpai.sailboatmod.market.web.map.MarketWebTellusTileRenderer.overlapsEarth(zoom, tileX, tileY, worldScale)) {
+            return null;
+        }
+        com.monpai.sailboatmod.route.terrain.TerrainSurfaceSampler sampler = tellusSampler(level);
+        if (sampler == null) {
+            return null;
+        }
+        com.monpai.sailboatmod.market.web.map.MarketWebTellusTileStore store =
+                com.monpai.sailboatmod.market.web.map.MarketWebTellusTileStore.forServer(server);
+        java.util.Optional<byte[]> cached = store.read(zoom, tileX, tileY);
+        if (cached.isPresent()) {
+            return cached.get();
+        }
+        com.monpai.sailboatmod.market.web.map.MarketWebTellusTileQueue.global().request(zoom, tileX, tileY, () -> {
+            com.monpai.sailboatmod.market.web.map.MarketWebTellusTileRenderer.Rendered rendered =
+                    com.monpai.sailboatmod.market.web.map.MarketWebTellusTileRenderer.render(sampler, zoom, tileX, tileY);
+            if (rendered.worthSaving()) {
+                store.write(zoom, tileX, tileY, com.monpai.sailboatmod.market.web.map.MarketWebTellusTileRenderer.png(rendered));
+            }
+        });
+        return null;
+    }
+
+    private com.monpai.sailboatmod.route.terrain.TerrainSurfaceSampler tellusSampler(net.minecraft.server.level.ServerLevel level) {
+        if (level != tellusSamplerLevel) {
+            tellusSampler = com.monpai.sailboatmod.route.terrain.TellusSurfaceSamplers.forLevel(level).orElse(null);
+            tellusSamplerLevel = level;
+        }
+        return tellusSampler;
     }
 
     public JsonObject mapRenderStatus(MinecraftServer server) {

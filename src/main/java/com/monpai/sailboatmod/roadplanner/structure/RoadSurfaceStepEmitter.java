@@ -27,7 +27,8 @@ public final class RoadSurfaceStepEmitter {
             return List.of();
         }
         RoadPlannerBuildSettings safeSettings = settings == null ? RoadPlannerBuildSettings.DEFAULTS : settings;
-        List<List<BlockPos>> footprints = roadFootprintsByIndex(centerline, spans, safeSettings.width());
+        CenterlineSegmentLocator locator = new CenterlineSegmentLocator(centerline);
+        List<List<BlockPos>> footprints = roadFootprintsByIndex(centerline, spans, safeSettings.width(), locator);
         List<BuildStep> steps = new ArrayList<>();
         int order = startOrder;
         for (int index = 0; index < centerline.size(); index++) {
@@ -43,14 +44,14 @@ public final class RoadSurfaceStepEmitter {
             BuildPhase surfacePhase = ramp ? BuildPhase.RAMP : BuildPhase.SURFACE;
             List<BlockPos> footprint = index < footprints.size()
                     ? footprints.get(index)
-                    : RoadFootprintPlanner.surfacePositions(centerline, index, safeSettings.width());
+                    : RoadFootprintPlanner.surfacePositions(centerline, index, safeSettings.width(), locator);
             for (BlockPos surfacePos : footprint) {
                 // 过渡半砖抬高 1 格放在 surfacePos(targetY 层);其余路面照旧 surfacePos.below()。
                 BlockPos placementPos = transitionSlab ? surfacePos : roadSurfacePlacementPos(surfacePos, ramp);
                 for (int dy = 1; dy <= CLEARANCE_HEIGHT; dy++) {
                     steps.add(new BuildStep(order++, placementPos.above(dy), Blocks.AIR.defaultBlockState(), BuildPhase.FOUNDATION));
                 }
-                int terrainY = RoadFootprintPlanner.interpolateTerrainY(surfacePos.getX(), surfacePos.getZ(), centerline);
+                int terrainY = RoadFootprintPlanner.interpolateTerrainY(surfacePos.getX(), surfacePos.getZ(), centerline, locator);
                 int terrainSurfaceY = terrainY - 1;
                 int bottomY = Math.min(ramp ? terrainY : terrainSurfaceY, placementPos.getY()) - 3;
                 for (int y = placementPos.getY() - 1; y >= bottomY; y--) {
@@ -79,7 +80,8 @@ public final class RoadSurfaceStepEmitter {
         return ((long) x & 0xFFFFFFFFL) | (((long) z & 0xFFFFFFFFL) << 32);
     }
 
-    private static List<List<BlockPos>> roadFootprintsByIndex(List<RoadCenterlinePoint> centerline, List<RoadSpan> spans, int width) {
+    private static List<List<BlockPos>> roadFootprintsByIndex(List<RoadCenterlinePoint> centerline, List<RoadSpan> spans, int width,
+                                                              CenterlineSegmentLocator locator) {
         ArrayList<List<BlockPos>> footprints = new ArrayList<>(centerline.size());
         for (int index = 0; index < centerline.size(); index++) {
             footprints.add(List.of());
@@ -91,7 +93,7 @@ public final class RoadSurfaceStepEmitter {
             int start = Math.max(0, Math.min(centerline.size() - 1, span.startIndex()));
             int end = Math.max(start, Math.min(centerline.size() - 1, span.endIndex()));
             if (start == end) {
-                footprints.set(start, RoadFootprintPlanner.surfacePositions(centerline, start, width));
+                footprints.set(start, RoadFootprintPlanner.surfacePositions(centerline, start, width, locator));
                 continue;
             }
             List<RoadCenterlinePoint> spanPoints = centerline.subList(start, end + 1);

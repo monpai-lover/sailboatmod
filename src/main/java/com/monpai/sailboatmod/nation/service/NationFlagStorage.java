@@ -135,8 +135,13 @@ public final class NationFlagStorage {
         return legacyFlagPath(flagsDirectory(level), flagId);
     }
 
+    /** {@code <flagId>.png} in the flag folder; an id that would climb out of it (such as "../x") names no file. */
     private static Path legacyFlagPath(Path directory, String flagId) {
-        return directory.resolve((flagId == null ? "" : flagId.trim().toLowerCase(Locale.ROOT)) + ".png");
+        Path folder = directory.toAbsolutePath().normalize();
+        Path path = folder.resolve((flagId == null ? "" : flagId.trim().toLowerCase(Locale.ROOT)) + ".png").normalize();
+        return path.startsWith(folder) && path.getParent() != null && path.getParent().equals(folder)
+                ? path
+                : folder.resolve("invalid-flag-id.png");
     }
 
     static Path resolveFlagPathForTest(Path directory, String flagId) throws IOException {

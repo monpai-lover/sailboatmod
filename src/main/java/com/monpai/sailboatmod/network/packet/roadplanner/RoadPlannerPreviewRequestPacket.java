@@ -8,7 +8,10 @@ import com.monpai.sailboatmod.network.packet.SyncRoadPlannerPreviewPacket;
 import com.monpai.sailboatmod.roadplanner.model.RoadPlannerMergeScope;
 import com.monpai.sailboatmod.roadplanner.model.RoadPlannerMergeSelection;
 import com.monpai.sailboatmod.roadplanner.model.RoadPlannerSharedRoadSpan;
+import com.monpai.sailboatmod.roadplanner.service.RoadChunkWarmup;
 import com.monpai.sailboatmod.roadplanner.service.RoadPlannerBuildControlService;
+import com.monpai.sailboatmod.roadplanner.service.RoadPlannerChunkTickets;
+import com.monpai.sailboatmod.roadplanner.service.RoadPlannerPreviewJobService;
 import com.monpai.sailboatmod.roadplanner.structure.RoadCenterlinePoint;
 import com.monpai.sailboatmod.roadplanner.structure.RoadNodeExpansionResult;
 import com.monpai.sailboatmod.roadplanner.structure.RoadNodeStructureExpander;
@@ -24,8 +27,11 @@ import net.minecraft.server.level.ServerPlayer;
 import com.monpai.sailboatmod.network.NetworkEvent;
 
 import java.util.ArrayList;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Optional;
+import java.util.Set;
+import java.util.UUID;
 import java.util.function.Supplier;
 
 public record RoadPlannerPreviewRequestPacket(String startTownName,
@@ -36,6 +42,11 @@ public record RoadPlannerPreviewRequestPacket(String startTownName,
                                               RoadPlannerMergeSelection mergeSelection,
                                               List<BlockPos> logicalNodes,
                                               List<RoadPlannerSharedRoadSpan> sharedSpans) {
+    /** About 30,000 blocks of straight road; the chunks are all held loaded while the preview is computed. */
+    public static final int MAX_PREVIEW_CHUNKS = 6000;
+    /** Bounds interpolation work as well as distinct chunks: travelling over the same road again still costs work. */
+    private static final int MAX_PREVIEW_PATH_SAMPLES = 32_000;
+
     public RoadPlannerPreviewRequestPacket {
         startTownName = startTownName == null ? "" : startTownName;
         destinationTownName = destinationTownName == null ? "" : destinationTownName;
@@ -159,19 +170,47 @@ public record RoadPlannerPreviewRequestPacket(String startTownName,
                 return;
             }
             RoadPlannerPreviewRequestPacket safePacket = packet.withServerValidatedMerge(player);
-            RoadPlannerBuildControlService.global().startPreview(
+            PreviewBounds bounds = safePacket.previewBounds();
+            if (bounds.tooLong()) {
+                String detail = bounds.overWorkBudget()
+                        ? "道路过长或节点过多：累计路程上限约 " + MAX_PREVIEW_PATH_SAMPLES + " 格，重复路段也计入。"
+                        : "道路过长：沿线需要加载超过 " + MAX_PREVIEW_CHUNKS + " 个区块（约 3 万格直线）。";
+                player.sendSystemMessage(net.minecraft.network.chat.Component.literal(
+                        detail + "请分段规划。"));
+                return;
+            }
+            ServerLevel level = player.serverLevel();
+            // The old preview goes now, so it cannot be confirmed while the new one loads.
+            RoadPlannerBuildControlService.global().cancelPreview(player.getUUID(), new UUID(0L, 0L));
+            // The chunks load over several ticks; the preview is computed once they are all there.
+            RoadPlannerPreviewJobService.global().submit(
                     player.getUUID(),
-                    safePacket.startTownName(),
-                    safePacket.destinationTownName(),
-                    safePacket.nodes(),
-                    safePacket.segmentTypes(),
-                    safePacket.settings(),
-                    safePacket.mergeSelection(),
-                    safePacket.logicalNodes(),
-                    safePacket.sharedSpans());
-            ModNetwork.CHANNEL.send(player, safePacket.toSafePreview(player.serverLevel()));
+                    level.dimension(),
+                    new RoadChunkWarmup(bounds.chunks(), new RoadPlannerChunkTickets(level),
+                            RoadPlannerChunkTickets.REQUESTS_PER_TICK, RoadPlannerChunkTickets.MAX_IN_FLIGHT),
+                    () -> safePacket.completePreview(player, level),
+                    message -> player.displayClientMessage(net.minecraft.network.chat.Component.literal(message), true));
         });
         context.setPacketHandled(true);
+    }
+
+    private void completePreview(ServerPlayer player, ServerLevel level) {
+        if (player.isRemoved() || player.serverLevel() != level) {
+            return; // left, died or changed dimension while loading: the steps would be built in the wrong place
+        }
+        PreviewComputation computed = computePreview(RoadTerrainSampler.fromLevel(level));
+        UUID previewId = RoadPlannerBuildControlService.global().startPreview(
+                player.getUUID(),
+                startTownName,
+                destinationTownName,
+                nodes,
+                segmentTypes,
+                settings,
+                mergeSelection,
+                logicalNodes,
+                sharedSpans);
+        RoadPlannerBuildControlService.global().attachCompiledSteps(previewId, computed.buildSteps());
+        ModNetwork.CHANNEL.send(player, computed.packet());
     }
 
     RoadPlannerPreviewRequestPacket withServerValidatedMerge(ServerPlayer player) {
@@ -286,67 +325,107 @@ public record RoadPlannerPreviewRequestPacket(String startTownName,
         return toSafePreview(terrainSampler);
     }
 
-    private SyncRoadPlannerPreviewPacket toSafePreview(ServerLevel level) {
-        // 预览前确保沿途区块已加载：未加载区块的 heightmap 返回世界底部，会让整段路面采样到地底「钻地」。
-        forceLoadPathChunks(level);
-        return toSafePreview(RoadTerrainSampler.fromLevel(level));
+    /**
+     * Chunks the preview samples: every chunk along the node lines plus its neighbours.
+     * Unloaded chunks report the world bottom as their height, which would bury the road, so all of them
+     * must be loaded first (see {@link RoadChunkWarmup}). Rejected requests return an empty corridor or at most
+     * one chunk beyond the cap, rather than allocating the complete corridor just to refuse it.
+     */
+    Set<Long> pathChunks() {
+        return previewBounds().chunks();
     }
 
-    /** 沿相邻 node 连线按区块步进同步加载，保证地形采样读到真实高度。主线程调用。 */
-    private void forceLoadPathChunks(ServerLevel level) {
-        if (level == null || nodes == null || nodes.size() < 1) {
-            return;
+    private PreviewBounds previewBounds() {
+        if (exceedsWorkBudget()) {
+            return new PreviewBounds(Set.of(), true);
         }
-        java.util.Set<Long> chunks = new java.util.HashSet<>();
+        Set<Long> chunks = new LinkedHashSet<>();
         for (int i = 0; i < nodes.size(); i++) {
             BlockPos a = nodes.get(i);
-            collectChunkAround(chunks, a.getX() >> 4, a.getZ() >> 4);
-            if (i + 1 < nodes.size()) {
-                collectLineChunks(chunks, a, nodes.get(i + 1));
-            }
-        }
-        // 上限保护：极长路径不一次性加载海量区块拖垮服务器。
-        int limit = 6000;
-        int loaded = 0;
-        for (long key : chunks) {
-            if (loaded++ >= limit) {
+            if (!collectChunkAround(chunks, a.getX() >> 4, a.getZ() >> 4)
+                    || (i + 1 < nodes.size() && !collectLineChunks(chunks, a, nodes.get(i + 1)))) {
                 break;
             }
-            level.getChunk(net.minecraft.world.level.ChunkPos.getX(key), net.minecraft.world.level.ChunkPos.getZ(key));
+        }
+        return new PreviewBounds(chunks, false);
+    }
+
+    /** Roads exceeding either the loaded-chunk budget or the cumulative interpolation budget must be split. */
+    boolean tooLongForPreview() {
+        return previewBounds().tooLong();
+    }
+
+    private boolean exceedsWorkBudget() {
+        if (nodes.size() > MAX_PREVIEW_PATH_SAMPLES) {
+            return true;
+        }
+        long remaining = MAX_PREVIEW_PATH_SAMPLES - 1L;
+        for (int i = 1; i < nodes.size(); i++) {
+            BlockPos a = nodes.get(i - 1);
+            BlockPos b = nodes.get(i);
+            // Match the centerline's Euclidean interpolation count without overflowing integer coordinate math.
+            double dx = (double) b.getX() - a.getX();
+            double dz = (double) b.getZ() - a.getZ();
+            long samples = Math.max(1L, (long) Math.ceil(Math.hypot(dx, dz)));
+            if (samples > remaining) {
+                return true;
+            }
+            remaining -= samples;
+        }
+        return false;
+    }
+
+    private record PreviewBounds(Set<Long> chunks, boolean overWorkBudget) {
+        boolean tooLong() {
+            return overWorkBudget || chunks.size() > MAX_PREVIEW_CHUNKS;
         }
     }
 
-    private static void collectChunkAround(java.util.Set<Long> out, int chunkX, int chunkZ) {
+    private static boolean collectChunkAround(Set<Long> out, int chunkX, int chunkZ) {
         for (int dx = -1; dx <= 1; dx++) {
             for (int dz = -1; dz <= 1; dz++) {
                 out.add(net.minecraft.world.level.ChunkPos.asLong(chunkX + dx, chunkZ + dz));
+                if (out.size() > MAX_PREVIEW_CHUNKS) {
+                    return false;
+                }
             }
         }
+        return true;
     }
 
-    private static void collectLineChunks(java.util.Set<Long> out, BlockPos a, BlockPos b) {
+    private static boolean collectLineChunks(Set<Long> out, BlockPos a, BlockPos b) {
         int x0 = a.getX();
         int z0 = a.getZ();
         int x1 = b.getX();
         int z1 = b.getZ();
-        int steps = Math.max(Math.abs(x1 - x0), Math.abs(z1 - z0));
+        long dx = (long) x1 - x0;
+        long dz = (long) z1 - z0;
+        long steps = Math.max(Math.abs(dx), Math.abs(dz));
         if (steps <= 0) {
-            collectChunkAround(out, x0 >> 4, z0 >> 4);
-            return;
+            return collectChunkAround(out, x0 >> 4, z0 >> 4);
         }
         // 每 8 格采一点（< 16 即可覆盖每个区块），按区块去重。
-        for (int s = 0; s <= steps; s += 8) {
+        for (long s = 0; s <= steps; s += 8) {
             double t = (double) s / steps;
-            int x = (int) Math.round(x0 + (x1 - x0) * t);
-            int z = (int) Math.round(z0 + (z1 - z0) * t);
-            collectChunkAround(out, x >> 4, z >> 4);
+            int x = (int) Math.round(x0 + dx * t);
+            int z = (int) Math.round(z0 + dz * t);
+            if (!collectChunkAround(out, x >> 4, z >> 4)) {
+                return false;
+            }
         }
-        collectChunkAround(out, x1 >> 4, z1 >> 4);
+        return collectChunkAround(out, x1 >> 4, z1 >> 4);
     }
 
     private SyncRoadPlannerPreviewPacket toSafePreview(RoadTerrainSampler terrainSampler) {
+        return computePreview(terrainSampler).packet();
+    }
+
+    private record PreviewComputation(SyncRoadPlannerPreviewPacket packet, List<com.monpai.sailboatmod.road.model.BuildStep> buildSteps) {
+    }
+
+    private PreviewComputation computePreview(RoadTerrainSampler terrainSampler) {
         if (nodes.size() < 2) {
-            return new SyncRoadPlannerPreviewPacket(startTownName, destinationTownName, List.of(), List.of(), 0, null, null, null, false, List.of(), "", List.of());
+            return new PreviewComputation(new SyncRoadPlannerPreviewPacket(startTownName, destinationTownName, List.of(), List.of(), 0, null, null, null, false, List.of(), "", List.of()), List.of());
         }
         RoadNodeExpansionResult expansion = RoadNodeStructureExpander.expand(
                 nodes,
@@ -360,7 +439,7 @@ public record RoadPlannerPreviewRequestPacket(String startTownName,
         List<BlockPos> previewPathNodes = previewPath.nodes();
         BlockPos startHighlight = previewPathNodes.isEmpty() ? nodes.get(0) : previewPathNodes.get(0);
         BlockPos endHighlight = previewPathNodes.isEmpty() ? nodes.get(nodes.size() - 1) : previewPathNodes.get(previewPathNodes.size() - 1);
-        return new SyncRoadPlannerPreviewPacket(
+        return new PreviewComputation(new SyncRoadPlannerPreviewPacket(
                 startTownName,
                 destinationTownName,
                 ghostBlocks,
@@ -373,7 +452,7 @@ public record RoadPlannerPreviewRequestPacket(String startTownName,
                 List.of(),
                 "",
                 bridgeRangesFromSpans(expansion, previewPath)
-        );
+        ), expansion.buildSteps());
     }
 
     private List<SyncRoadPlannerPreviewPacket.GhostBlock> ghostBlocksFromBuildSteps(RoadNodeExpansionResult expansion) {

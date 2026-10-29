@@ -103,6 +103,7 @@ public final class MarketWebMapJson {
         json.addProperty("shippingOrderId", shipment.shippingOrderId());
         json.addProperty("label", shipment.label());
         json.addProperty("transportMode", shipment.transportMode());
+        json.addProperty("vehicleKind", com.monpai.sailboatmod.market.logistics.TransportModes.vehicleKind(shipment.transportMode()));
         json.addProperty("status", shipment.status());
         json.addProperty("sourceName", shipment.sourceName());
         json.addProperty("targetName", shipment.targetName());
@@ -122,6 +123,9 @@ public final class MarketWebMapJson {
         }
         json.add("cargo", cargo);
         json.add("points", points(shipment.points()));
+        // The waypoint the vehicle is heading to (its autopilot target), not a count of passed points.
+        json.addProperty("targetPointIndex", shipment.completedPointCount());
+        // Old name for the same value, kept for pages and tools written against it.
         json.addProperty("completedPointCount", shipment.completedPointCount());
         json.addProperty("progressRatio", shipment.progressRatio());
         json.addProperty("manual", shipment.manual());
@@ -132,6 +136,21 @@ public final class MarketWebMapJson {
             json.add("current", current);
         }
         return json;
+    }
+
+    /** A shipment timeline: [{kind, gameTime, x, z}], oldest first. */
+    public static JsonArray events(List<com.monpai.sailboatmod.market.logistics.ShippingTraceEvent> events) {
+        JsonArray out = new JsonArray();
+        for (com.monpai.sailboatmod.market.logistics.ShippingTraceEvent event
+                : events == null ? List.<com.monpai.sailboatmod.market.logistics.ShippingTraceEvent>of() : events) {
+            JsonObject json = new JsonObject();
+            json.addProperty("kind", event.kind());
+            json.addProperty("gameTime", event.gameTime());
+            json.addProperty("x", event.x());
+            json.addProperty("z", event.z());
+            out.add(json);
+        }
+        return out;
     }
 
     public static JsonArray shipments(List<MarketWebMapDtos.ShipmentTrace> shipments) {

@@ -7,6 +7,8 @@
   const MAX_ZOOM = 8;
   const MAX_TILE_ZOOM = 4;
   const SHIPMENT_REFRESH_MS = 2000;
+  /** Finished shipments change rarely; the history list is refetched this often while it is shown. */
+  const HISTORY_REFRESH_MS = 30000;
   const MAP_REFRESH_MS = 30000;
   const DESKTOP_TILE_CACHE_LIMIT = 320;
   const MOBILE_TILE_CACHE_LIMIT = 96;
@@ -29,6 +31,8 @@
       reset: "Reset view",
       zoomIn: "Zoom in",
       zoomOut: "Zoom out",
+      basemap: "Basemap",
+      basemapUnavailable: "Basemap source unreachable — try another source.",
       loading: "Loading map data...",
       loginRequired: "Sign in to view the world map.",
       loadFailed: "Map data unavailable.",
@@ -39,6 +43,23 @@
       warehouse: "Warehouse",
       unknown: "Unknown terrain",
       activeShipments: "Active logistics",
+      liveShipments: "In progress",
+      historyShipments: "History",
+      shipmentViews: "Shipments to show",
+      noHistory: "No finished shipments yet.",
+      timeline: "Timeline",
+      eventDeparted: "Departed",
+      eventStuck: "Stuck",
+      eventResumed: "Back on the way",
+      eventDelivered: "Delivered",
+      eventArrived: "Arrived",
+      eventClaimed: "Collected",
+      eventFailed: "Failed",
+      eventEnded: "Ended",
+      justNow: "just now",
+      minutesAgo: "{n} min ago",
+      hoursAgo: "{n} h ago",
+      daysAgo: "{n} d ago",
       route: "Route",
       status: "Status",
       statusStuck: "Stuck · needs rescue",
@@ -49,6 +70,19 @@
       vehicle: "Vehicle",
       owner: "Owner",
       emptySelection: "Hover or click a market, territory, or shipment.",
+      modeAll: "All",
+      modeFilter: "Transport mode",
+      searchShipments: "Search route, vehicle or cargo",
+      sortLabel: "Sort",
+      sortEta: "Arriving soonest",
+      sortProgress: "Most progress",
+      sortName: "Origin A–Z",
+      noMatches: "No shipments match these filters.",
+      follow: "Follow vehicle",
+      unfollow: "Stop following",
+      progress: "Progress",
+      statusMoving: "On the way",
+      statusArrived: "Arrived",
       flag: "Flag",
       coords: "Coords"
     },
@@ -61,6 +95,8 @@
       reset: "重置视图",
       zoomIn: "放大",
       zoomOut: "缩小",
+      basemap: "底图",
+      basemapUnavailable: "底图来源无法连线，可切换来源。",
       loading: "正在加载地图数据...",
       loginRequired: "登录后才能查看世界地图。",
       loadFailed: "地图数据暂不可用。",
@@ -71,6 +107,23 @@
       warehouse: "仓库",
       unknown: "未知地形",
       activeShipments: "进行中物流",
+      liveShipments: "进行中",
+      historyShipments: "历史",
+      shipmentViews: "显示的物流",
+      noHistory: "还没有已结束的物流。",
+      timeline: "时间线",
+      eventDeparted: "出发",
+      eventStuck: "受阻",
+      eventResumed: "恢复行驶",
+      eventDelivered: "已送达",
+      eventArrived: "已抵达",
+      eventClaimed: "已领取",
+      eventFailed: "失败",
+      eventEnded: "已结束",
+      justNow: "刚刚",
+      minutesAgo: "{n} 分钟前",
+      hoursAgo: "{n} 小时前",
+      daysAgo: "{n} 天前",
       route: "线路",
       status: "状态",
       statusStuck: "阻塞 · 需救援",
@@ -81,6 +134,19 @@
       vehicle: "载具",
       owner: "拥有者",
       emptySelection: "悬停或点击市场、领地、物流线路。",
+      modeAll: "全部",
+      modeFilter: "运输方式",
+      searchShipments: "搜索路线、载具或货物",
+      sortLabel: "排序",
+      sortEta: "最快到达",
+      sortProgress: "进度最多",
+      sortName: "起点名称",
+      noMatches: "没有符合筛选的物流。",
+      follow: "跟随载具",
+      unfollow: "停止跟随",
+      progress: "进度",
+      statusMoving: "运输中",
+      statusArrived: "已到达",
       flag: "国旗",
       coords: "坐标"
     }
@@ -133,8 +199,25 @@
       rightCollapsed: true
     },
     mountedToken: 0,
+    sessionToken: null,
     localTileRevision: 0,
     lastTerrainSync: null,
+    shipmentFilter: { kind: "all", query: "", sort: "eta" },
+    followShipmentId: "",
+    logisticsEffects: null,
+    shipmentView: "live",
+    shipmentHistory: [],
+    serverGameTime: 0,
+    serverGameTimeAt: 0,
+    historyFetchedAt: 0,
+    world: null,
+    basemapLayer: null,
+    tellusLayer: null,
+    basemapSourceId: "esri",
+    basemapFailures: 0,
+    basemapImages: new Map(),
+    basemapAttribution: null,
+    tellusRetryTimer: 0,
     shipmentLoop: 0,
     lastShipmentFrameMs: 0,
     staticCanvas: null,
@@ -146,6 +229,15 @@
   // 只按 (anchor - center) 像素偏移 drawImage 平移位图(Safari/Retina 上把每帧 O(n) 路径重画降为一次贴图)。
   // 仅当 zoom/数据/图层变,或 center 拖出 padding 缓冲区时才重建。
   const STATIC_LAYER_PAD = 256;
+
+  // Traditional Chinese labels come from the generated table in zh-tw.js.
+  LABELS["zh-TW"] = typeof window !== "undefined" && window.SailboatZhTw ? window.SailboatZhTw.convertAll(LABELS["zh-CN"]) : LABELS["zh-CN"];
+
+  /** Picks the en/zh text of a {en, zh} label, in Traditional characters for zh-TW. */
+  function localeText(labels) {
+    const text = labels ? labels[localeKey()] : "";
+    return state.locale === "zh-TW" && typeof window !== "undefined" && window.SailboatZhTw ? window.SailboatZhTw.convert(text) : text;
+  }
 
   function label(key) {
     return (LABELS[state.locale] || LABELS["zh-CN"] || LABELS["en-US"])[key] || LABELS["en-US"][key] || key;
@@ -198,9 +290,47 @@
     state.root.classList.toggle("map-performance-lite", isMobileMapDevice());
   }
 
+  function currentSessionToken() {
+    return localStorage.getItem("marketWebSessionToken") || "";
+  }
+
+  function clearPrivateShipmentData() {
+    state.shipments = [];
+    state.shipmentHistory = [];
+    state.shipmentView = "live";
+    state.historyFetchedAt = 0;
+    state.serverGameTime = 0;
+    state.serverGameTimeAt = 0;
+    state.followShipmentId = "";
+    state.logisticsEffects = null;
+    state.selected = null;
+    state.hover = null;
+  }
+
+  // Both the view and the login may change while a request is in flight, including without replacing the root.
+  function captureRequestContext() {
+    const sessionToken = currentSessionToken();
+    if (state.sessionToken !== sessionToken) {
+      clearPrivateShipmentData();
+      state.sessionToken = sessionToken;
+      renderShipments();
+      renderSelection();
+      if (state.root) {
+        scheduleRender();
+      }
+    }
+    return { mountedToken: state.mountedToken, sessionToken };
+  }
+
+  function requestContextCurrent(context) {
+    return context.mountedToken === state.mountedToken
+      && context.sessionToken === state.sessionToken
+      && context.sessionToken === currentSessionToken();
+  }
+
   function authHeaders() {
     const headers = new Headers();
-    const token = localStorage.getItem("marketWebSessionToken") || "";
+    const token = currentSessionToken();
     if (token) {
       headers.set("Authorization", `Bearer ${token}`);
     }
@@ -255,6 +385,229 @@
     });
   }
 
+  // ---- Tellus world map: real-world basemap (A) and Tellus prediction tiles (B) under the terrain tiles ----
+  const TELLUS_MIN_ZOOM = 1 / 2048; // whole Earth (~1.34M blocks wide at scale 30) fits on screen
+  const BASEMAP_IMAGE_LIMIT = 256;
+  const BASEMAP_FAILURE_NOTICE = 8;
+
+  function tellusBasemap() {
+    return typeof window !== "undefined" ? window.SailboatTellusBasemap || null : null;
+  }
+
+  function tellusWorld() {
+    const api = tellusBasemap();
+    return api && api.shouldShowBasemap(state.world) ? state.world : null;
+  }
+
+  function minZoom() {
+    return tellusWorld() ? TELLUS_MIN_ZOOM : MIN_ZOOM;
+  }
+
+  function minLeafletScale() {
+    return tellusWorld() ? TELLUS_MIN_ZOOM : 1 / (1 << MAX_TILE_ZOOM);
+  }
+
+  function applyWorldInfo(world) {
+    state.world = world || { tellus: false };
+    if (!tellusWorld() || !state.leafletMap || state.basemapLayer) {
+      return;
+    }
+    const api = window.SailboatTellusBasemap;
+    state.basemapSourceId = api.basemapSourceFromStorage(safeLocalStorage());
+    state.leafletMap.setMinZoom(Math.log2(TELLUS_MIN_ZOOM));
+    state.basemapLayer = createBasemapLayer();
+    state.basemapLayer.setZIndex(-2).addTo(state.leafletMap);
+    const maxTellusZoom = Number(state.world.tellusTileMaxZoom);
+    if (Number.isInteger(maxTellusZoom) && maxTellusZoom >= 0) {
+      state.tellusLayer = createTellusTileLayer(maxTellusZoom);
+      state.tellusLayer.setZIndex(-1).addTo(state.leafletMap);
+    }
+    renderBasemapAttribution();
+    renderToolbar();
+    syncSquaremapTerrain(true);
+  }
+
+  function safeLocalStorage() {
+    try {
+      return window.localStorage;
+    } catch (_) {
+      return null;
+    }
+  }
+
+  function createBasemapLayer() {
+    const L = window.L;
+    const BasemapLayer = L.GridLayer.extend({
+      createTile(coords, done) {
+        const tile = document.createElement("canvas");
+        const size = this.getTileSize();
+        tile.width = size.x;
+        tile.height = size.y;
+        drawBasemapTile(tile, coords).then(() => done(null, tile), () => done(null, tile));
+        return tile;
+      }
+    });
+    return new BasemapLayer({
+      tileSize: TILE_SIZE,
+      minZoom: Math.log2(TELLUS_MIN_ZOOM),
+      maxZoom: 4,
+      noWrap: true,
+      updateWhenIdle: true,
+      keepBuffer: 1,
+      className: "tellus-basemap-tile"
+    });
+  }
+
+  async function drawBasemapTile(canvas, coords) {
+    const api = window.SailboatTellusBasemap;
+    const world = tellusWorld();
+    if (!world) {
+      return;
+    }
+    const scale = Number(world.worldScale);
+    const source = api.sourceById(state.basemapSourceId);
+    const blocksPerTile = TILE_SIZE / Math.pow(2, coords.z);
+    const bounds = {
+      minX: coords.x * blocksPerTile,
+      minZ: coords.y * blocksPerTile,
+      maxX: (coords.x + 1) * blocksPerTile,
+      maxZ: (coords.y + 1) * blocksPerTile,
+      widthPx: canvas.width,
+      heightPx: canvas.height
+    };
+    const zoom = api.chooseXyzZoom(blocksPerTile / canvas.width, scale, source.maxZoom);
+    let offset = { dx: 0, dy: 0 };
+    if (source.gcj02) {
+      const centre = api.blockToLatLon((bounds.minX + bounds.maxX) / 2, (bounds.minZ + bounds.maxZ) / 2, scale);
+      offset = api.gcjOffsetMeters(centre.lat, centre.lon);
+    }
+    const ctx = canvas.getContext("2d");
+    const crops = api.xyzCrops(bounds, scale, zoom, offset);
+    await Promise.all(crops.map(async (crop, index) => {
+      const image = await loadBasemapImage(api.tileUrl(source, crop.x, crop.y, crop.z, crop.x + crop.y + index));
+      if (image) {
+        ctx.drawImage(image, crop.sx, crop.sy, crop.sw, crop.sh, crop.dx, crop.dy, crop.dw, crop.dh);
+      }
+    }));
+  }
+
+  function loadBasemapImage(url) {
+    const cached = state.basemapImages.get(url);
+    if (cached) {
+      return cached;
+    }
+    const promise = new Promise((resolve) => {
+      const image = new Image();
+      image.onload = () => {
+        if (state.basemapFailures >= BASEMAP_FAILURE_NOTICE) {
+          state.basemapFailures = 0;
+          renderBasemapAttribution();
+        }
+        state.basemapFailures = 0;
+        resolve(image);
+      };
+      image.onerror = () => {
+        state.basemapImages.delete(url);
+        state.basemapFailures += 1;
+        if (state.basemapFailures === BASEMAP_FAILURE_NOTICE) {
+          renderBasemapAttribution();
+        }
+        resolve(null);
+      };
+      image.src = url;
+    });
+    state.basemapImages.set(url, promise);
+    if (state.basemapImages.size > BASEMAP_IMAGE_LIMIT) {
+      state.basemapImages.delete(state.basemapImages.keys().next().value);
+    }
+    return promise;
+  }
+
+  function createTellusTileLayer(maxTellusZoom) {
+    const L = window.L;
+    const half = window.SailboatTellusBasemap.earthHalfWidthBlocks(Number(state.world.worldScale));
+    const layer = new L.TileLayer("", {
+      tileSize: TILE_SIZE,
+      bounds: L.latLngBounds(L.latLng(-half, -half), L.latLng(half, half)),
+      minZoom: -maxTellusZoom,
+      maxZoom: 4,
+      minNativeZoom: -maxTellusZoom,
+      maxNativeZoom: 0,
+      errorTileUrl: TRANSPARENT_TILE_URL,
+      noWrap: true,
+      updateWhenIdle: true,
+      keepBuffer: isMobileMapDevice() ? 1 : 2,
+      className: "tellus-prediction-tile"
+    });
+    layer.getTileUrl = (coords) => {
+      const zoom = clamp(-Math.round(Number(coords.z) || 0), 0, maxTellusZoom);
+      return `${state.apiBase}/api/map/tellus/tile/${zoom}/${coords.x}_${coords.y}.png`;
+    };
+    // Tiles not rendered yet answer 404 and are queued on the server. Reload only those tiles later: redrawing the
+    // whole layer would blink every tile and, at far zoom, request a huge grid.
+    const failed = new Map();
+    layer.on("tileerror", (event) => {
+      if (event.tile && event.coords) {
+        failed.set(event.tile, event.coords);
+      }
+      if (state.tellusRetryTimer) {
+        return;
+      }
+      state.tellusRetryTimer = window.setTimeout(() => {
+        state.tellusRetryTimer = 0;
+        if (state.tellusLayer !== layer) {
+          return;
+        }
+        const retry = [...failed.entries()];
+        failed.clear();
+        retry.forEach(([tile, coords]) => {
+          if (tile.isConnected) {
+            tile.src = `${layer.getTileUrl(coords)}?retry=${Date.now()}`;
+          }
+        });
+      }, MISSING_TILE_RETRY_MS);
+    });
+    return layer;
+  }
+
+  function setBasemapSource(id) {
+    const api = tellusBasemap();
+    if (!api || !state.basemapLayer) {
+      return;
+    }
+    state.basemapSourceId = api.sourceById(id).id;
+    api.saveBasemapSource(safeLocalStorage(), state.basemapSourceId);
+    state.basemapImages = new Map();
+    state.basemapFailures = 0;
+    state.basemapLayer.redraw();
+    renderBasemapAttribution();
+  }
+
+  function basemapPickerHtml() {
+    const api = tellusBasemap();
+    if (!api || !tellusWorld()) {
+      return "";
+    }
+    const options = api.SOURCES.map((source) => `<option value="${escapeHtml(source.id)}"${source.id === state.basemapSourceId ? " selected" : ""}>${escapeHtml(localeText(source.label))}</option>`).join("");
+    return `<label class="map-basemap-picker">${escapeHtml(label("basemap"))} <select data-map-basemap>${options}</select></label>`;
+  }
+
+  function renderBasemapAttribution() {
+    const api = tellusBasemap();
+    if (!api || !tellusWorld() || !state.mapElement) {
+      return;
+    }
+    if (!state.basemapAttribution) {
+      state.basemapAttribution = document.createElement("div");
+      state.basemapAttribution.className = "map-basemap-attribution";
+      state.mapElement.parentElement?.appendChild(state.basemapAttribution);
+    }
+    const source = api.sourceById(state.basemapSourceId);
+    const notice = state.basemapFailures >= BASEMAP_FAILURE_NOTICE ? ` · ${label("basemapUnavailable")}` : "";
+    state.basemapAttribution.textContent = `${source.attribution} · Tellus${notice}`;
+    state.basemapAttribution.classList.toggle("is-warning", notice !== "");
+  }
+
   function tileZoomFromLeafletZoom(leafletZoom) {
     return clamp(-Math.floor(Number(leafletZoom) || 0), 0, MAX_TILE_ZOOM);
   }
@@ -298,6 +651,12 @@
 
   function redrawSquaremapTerrain() {
     if (!state.leafletMap || !state.leafletLayers.length) {
+      return;
+    }
+    // Below the layer's zoom range Leaflet's redraw() would clamp to the native zoom and request a huge tile grid
+    // (reachable only with the Tellus global zoom); the layer reloads normally once the view zooms back in.
+    const api = tellusBasemap();
+    if (api && !api.tileLayerActiveAt(state.leafletMap.getZoom(), -MAX_TILE_ZOOM, 4)) {
       return;
     }
     if (state.leafletLayers.length < 2) {
@@ -362,7 +721,7 @@
     if (!state.leafletMap) {
       return;
     }
-    const leafletZoom = Math.log2(Math.max(1 / (1 << MAX_TILE_ZOOM), Number(state.zoom) || 1));
+    const leafletZoom = Math.log2(Math.max(minLeafletScale(), Number(state.zoom) || 1));
     const cx = state.center.x;
     const cz = state.center.z;
     const last = state.lastTerrainSync;
@@ -380,6 +739,18 @@
     if (state.leafletRetryTimer) {
       window.clearTimeout(state.leafletRetryTimer);
       state.leafletRetryTimer = 0;
+    }
+    if (state.tellusRetryTimer) {
+      window.clearTimeout(state.tellusRetryTimer);
+      state.tellusRetryTimer = 0;
+    }
+    state.basemapLayer = null;
+    state.tellusLayer = null;
+    state.basemapImages = new Map();
+    state.basemapFailures = 0;
+    if (state.basemapAttribution) {
+      state.basemapAttribution.remove();
+      state.basemapAttribution = null;
     }
     if (state.leafletMap) {
       state.leafletMap.remove();
@@ -582,7 +953,12 @@
       <span class="map-coord-readout" data-map-coord title="${escapeHtml(label("coords"))}">X: — &nbsp; Z: —</span>
       <button type="button" data-map-action="focus">${escapeHtml(label("focus"))}</button>
       <button type="button" data-map-action="reset">${escapeHtml(label("reset"))}</button>
+      ${basemapPickerHtml()}
     `;
+    const picker = state.toolbar.querySelector("[data-map-basemap]");
+    if (picker) {
+      picker.addEventListener("change", () => setBasemapSource(picker.value));
+    }
     state.toolbar.querySelectorAll("[data-map-action]").forEach((button) => {
       button.addEventListener("click", () => {
         const action = button.getAttribute("data-map-action");
@@ -688,39 +1064,181 @@
     });
   }
 
+  function logistics() {
+    return typeof window !== "undefined" ? window.SailboatLogistics || null : null;
+  }
+
+  function shipmentTargetIndex(shipment) {
+    const api = logistics();
+    if (api) {
+      return api.targetIndexOf(shipment);
+    }
+    const value = shipment && shipment.targetPointIndex != null ? shipment.targetPointIndex : shipment && shipment.completedPointCount;
+    return Math.max(0, Math.floor(Number(value) || 0));
+  }
+
+  const REDUCED_MOTION = typeof window !== "undefined" && typeof window.matchMedia === "function"
+    && window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+
+  function shipmentIsStuck(shipment) {
+    return String(shipment.status || "").toUpperCase() === "STUCK";
+  }
+
+  function shipmentKind(shipment) {
+    const api = logistics();
+    return api ? api.vehicleKindOf(shipment) : "carriage";
+  }
+
+  function shipmentStyle(shipment) {
+    const api = logistics();
+    return api ? api.MODE_STYLES[shipmentKind(shipment)] : { color: "#0ea5e9", trail: "rgba(14, 165, 233, ", label: { en: "", zh: "" } };
+  }
+
+  function localeKey() {
+    return state.locale && state.locale.startsWith("zh") ? "zh" : "en";
+  }
+
+  function logisticsPanel() {
+    return typeof window !== "undefined" ? window.SailboatLogisticsPanel || null : null;
+  }
+
+  /** Server game time now, from the last response's gameTime plus the time since (20 ticks a second). */
+  function nowGameTime() {
+    return state.serverGameTimeAt ? state.serverGameTime + (performance.now() - state.serverGameTimeAt) / 50 : 0;
+  }
+
+  function noteGameTime(data) {
+    if (data && Number.isFinite(Number(data.gameTime))) {
+      state.serverGameTime = Number(data.gameTime);
+      state.serverGameTimeAt = performance.now();
+    }
+  }
+
   function renderShipments() {
     if (!state.shipmentList) {
       return;
     }
-    const shipments = state.shipments || [];
-    if (!shipments.length) {
+    const api = logistics();
+    const panel = logisticsPanel();
+    if (!api || !panel) {
       state.shipmentList.innerHTML = `<div class="map-empty-note">${escapeHtml(label("noShipments"))}</div>`;
       return;
     }
-    state.shipmentList.innerHTML = `
-      <div class="map-list-heading">${escapeHtml(label("activeShipments"))}</div>
-      ${shipments.map((shipment) => {
-        const stuck = String(shipment.status || "").toUpperCase() === "STUCK";
-        return `
-        <button type="button" class="map-shipment-row" data-shipment-id="${escapeHtml(shipment.shippingOrderId || "")}"${stuck ? ' style="color:#dc2626;font-weight:600;"' : ""}>
-          <span>${escapeHtml(`${shipment.sourceTownName || shipment.sourceName || "-"} → ${shipment.targetTownName || shipment.targetName || "-"}`)}</span>
-          <small>${escapeHtml(shipment.transportMode || "-")} · ${Math.round((Number(shipment.progressRatio) || 0) * 100)}%${stuck ? ` · ${escapeHtml(label("statusStuck"))}` : ""}</small>
-        </button>
-      `;
-      }).join("")}
-    `;
-    state.shipmentList.querySelectorAll("[data-shipment-id]").forEach((button) => {
+    // The toolbar is built once and kept: the list refreshes every few seconds and must not steal focus from
+    // the search box or close the sort menu. Only the counts and the cards are updated.
+    if (!state.shipmentList.querySelector("[data-shipment-cards]")) {
+      buildShipmentToolbar(api);
+    }
+    const history = state.shipmentView === "history";
+    const all = (history ? state.shipmentHistory : state.shipments) || [];
+    const filter = state.shipmentFilter;
+    state.shipmentList.querySelectorAll("[data-shipment-view]").forEach((button) => {
+      button.setAttribute("aria-pressed", String(button.getAttribute("data-shipment-view") === state.shipmentView));
+    });
+    const sort = state.shipmentList.querySelector("[data-shipment-sort]");
+    if (sort) {
+      sort.disabled = history; // history is always newest first
+    }
+    const counts = { all: all.length };
+    for (const shipment of all) {
+      const kind = shipmentKind(shipment);
+      counts[kind] = (counts[kind] || 0) + 1;
+    }
+    state.shipmentList.querySelectorAll("[data-shipment-kind]").forEach((button) => {
+      const kind = button.getAttribute("data-shipment-kind");
+      button.setAttribute("aria-pressed", String(filter.kind === kind));
+      button.disabled = kind !== "all" && !counts[kind] && filter.kind !== kind;
+      const count = button.querySelector("[data-shipment-count]");
+      if (count) {
+        count.textContent = String(counts[kind] || 0);
+      }
+    });
+    const filtered = api.filterShipments(all, filter);
+    const shown = history ? filtered : api.sortShipments(filtered, filter.sort);
+    const now = nowGameTime();
+    const idAttr = history ? "data-history-id" : "data-shipment-id";
+    const isSelected = (shipment) => state.selected?.type === (history ? "history" : "shipment")
+      && state.selected.data?.shippingOrderId === shipment.shippingOrderId;
+    const cards = shown.map((shipment) => history
+      ? panel.historyCardHtml(shipment, now, { label, modeLabel: localeText, selected: isSelected(shipment) })
+      : panel.cardHtml(shipment, { label, modeLabel: localeText, selected: isSelected(shipment) })).join("");
+    const container = state.shipmentList.querySelector("[data-shipment-cards]");
+    const active = document.activeElement;
+    const focusedId = active && container.contains(active) ? active.getAttribute(idAttr) : null;
+    const empty = all.length ? label("noMatches") : label(history ? "noHistory" : "noShipments");
+    container.innerHTML = cards || `<div class="map-empty-note">${escapeHtml(empty)}</div>`;
+    container.querySelectorAll(`[${idAttr}]`).forEach((button) => {
       button.addEventListener("click", () => {
-        const shipment = state.shipments.find((entry) => entry.shippingOrderId === button.getAttribute("data-shipment-id"));
-        if (shipment) {
-          state.selected = { type: "shipment", data: shipment };
-          const points = (shipment.points || []).map(normalizePoint);
-          if (points.length) {
-            centerOn(points[Math.min(points.length - 1, Math.max(0, Number(shipment.completedPointCount) || 0))], Math.max(state.zoom, 1));
-          }
-          renderSelection();
+        const shipment = all.find((entry) => entry.shippingOrderId === button.getAttribute(idAttr));
+        if (!shipment) {
+          return;
         }
+        if (state.followShipmentId && state.followShipmentId !== shipment.shippingOrderId) {
+          state.followShipmentId = ""; // a different shipment was chosen: stop following the old one
+        }
+        state.selected = { type: history ? "history" : "shipment", data: shipment };
+        const points = (shipment.points || []).map(normalizePoint);
+        if (points.length) {
+          const index = history ? points.length - 1 : Math.min(points.length - 1, shipmentTargetIndex(shipment));
+          centerOn(points[index], Math.max(state.zoom, 1));
+        }
+        renderSelection();
+        renderShipments();
+        scheduleRender();
       });
+    });
+    if (focusedId) {
+      // the list refreshes every few seconds; keyboard and screen-reader users keep their place
+      [...container.querySelectorAll(`[${idAttr}]`)].find((card) => card.getAttribute(idAttr) === focusedId)?.focus();
+    }
+  }
+
+  function buildShipmentToolbar(api) {
+    const filter = state.shipmentFilter;
+    const kinds = api ? api.KINDS : [];
+    const kindButtons = [`<button type="button" data-shipment-kind="all">${escapeHtml(label("modeAll"))} <span data-shipment-count></span></button>`]
+      .concat(kinds.map((kind) => `<button type="button" data-shipment-kind="${kind}" data-kind="${kind}" style="--mode:${api.MODE_STYLES[kind].color}">${api.LIST_ICONS[kind]}${escapeHtml(localeText(api.MODE_STYLES[kind].label))} <span data-shipment-count></span></button>`))
+      .join("");
+    state.shipmentList.innerHTML = `
+      <div class="map-shipment-views" role="group" aria-label="${escapeHtml(label("shipmentViews"))}">
+        <button type="button" data-shipment-view="live">${escapeHtml(label("liveShipments"))}</button>
+        <button type="button" data-shipment-view="history">${escapeHtml(label("historyShipments"))}</button>
+      </div>
+      <div class="map-shipment-tools">
+        <div class="map-shipment-kinds" role="group" aria-label="${escapeHtml(label("modeFilter"))}">${kindButtons}</div>
+        <div class="map-shipment-search">
+          <input type="search" data-shipment-query value="${escapeHtml(filter.query)}" placeholder="${escapeHtml(label("searchShipments"))}" aria-label="${escapeHtml(label("searchShipments"))}">
+          <select data-shipment-sort aria-label="${escapeHtml(label("sortLabel"))}">
+            <option value="eta"${filter.sort === "eta" ? " selected" : ""}>${escapeHtml(label("sortEta"))}</option>
+            <option value="progress"${filter.sort === "progress" ? " selected" : ""}>${escapeHtml(label("sortProgress"))}</option>
+            <option value="name"${filter.sort === "name" ? " selected" : ""}>${escapeHtml(label("sortName"))}</option>
+          </select>
+        </div>
+      </div>
+      <div class="map-shipment-cards" data-shipment-cards></div>
+    `;
+    state.shipmentList.querySelectorAll("[data-shipment-view]").forEach((button) => {
+      button.addEventListener("click", () => {
+        state.shipmentView = button.getAttribute("data-shipment-view");
+        if (state.shipmentView === "history") {
+          loadShipmentHistory();
+        }
+        renderShipments();
+      });
+    });
+    state.shipmentList.querySelectorAll("[data-shipment-kind]").forEach((button) => {
+      button.addEventListener("click", () => {
+        state.shipmentFilter.kind = button.getAttribute("data-shipment-kind");
+        renderShipments();
+      });
+    });
+    state.shipmentList.querySelector("[data-shipment-query]")?.addEventListener("input", (event) => {
+      state.shipmentFilter.query = event.target.value;
+      renderShipments();
+    });
+    state.shipmentList.querySelector("[data-shipment-sort]")?.addEventListener("change", (event) => {
+      state.shipmentFilter.sort = event.target.value;
+      renderShipments();
     });
   }
 
@@ -728,6 +1246,7 @@
     if (!state.detailPanel) {
       return;
     }
+    const followFocused = !!document.activeElement?.matches?.("[data-shipment-follow]");
     const item = state.selected || state.hover;
     if (!item) {
       state.detailPanel.innerHTML = `<div class="map-empty-note">${escapeHtml(label("emptySelection"))}</div>`;
@@ -773,45 +1292,38 @@
       return;
     }
     const shipment = item.data;
-    const shipmentStuck = String(shipment.status || "").toUpperCase() === "STUCK";
-    const statusText = shipmentStuck ? label("statusStuck") : (shipment.status || "-");
-    const townLine = `${shipment.sourceTownName || shipment.sourceName || "-"} → ${shipment.targetTownName || shipment.targetName || "-"}`;
-    const etaSec = Number(shipment.etaSeconds) || 0;
-    const speed = Number(shipment.currentSpeed) || 0;
-    const cargo = Array.isArray(shipment.cargo) ? shipment.cargo : [];
-    const cargoHtml = cargo.length
-      ? cargo.map((c) => `${Number(c.quantity) || 0}× ${escapeHtml(c.name || "-")}${c.recipient ? ` → ${escapeHtml(c.recipient)}` : ""}`).join("<br>")
-      : "-";
-    state.detailPanel.innerHTML = `
-      <div class="map-detail-card">
-        <p class="section-kicker">${escapeHtml(label("route"))}</p>
-        <h3>${escapeHtml(townLine)}</h3>
-        <dl>
-          ${shipment.vehicleName ? `<dt>${escapeHtml(label("vehicle"))}</dt><dd>${escapeHtml(shipment.vehicleName)}</dd>` : ""}
-          ${shipment.ownerName ? `<dt>${escapeHtml(label("owner"))}</dt><dd>${escapeHtml(shipment.ownerName)}</dd>` : ""}
-          <dt>${escapeHtml(label("mode"))}</dt><dd>${escapeHtml(shipment.transportMode || "-")}</dd>
-          <dt>${escapeHtml(label("status"))}</dt><dd${shipmentStuck ? ' style="color:#dc2626;font-weight:600;"' : ""}>${escapeHtml(statusText)}</dd>
-          ${etaSec > 0 ? `<dt>${escapeHtml(label("eta"))}</dt><dd>${escapeHtml(formatEta(etaSec))}</dd>` : ""}
-          ${speed > 0 ? `<dt>${escapeHtml(label("speed"))}</dt><dd>${escapeHtml(formatSpeed(speed))}</dd>` : ""}
-          <dt>${escapeHtml(label("route"))}</dt><dd>${escapeHtml(shipment.sourceName || "-")} → ${escapeHtml(shipment.targetName || "-")}</dd>
-          <dt>${escapeHtml(label("cargo"))}</dt><dd>${cargoHtml}</dd>
-        </dl>
-      </div>
-    `;
+    const panel = logisticsPanel();
+    if (!panel) {
+      state.detailPanel.innerHTML = "";
+      return;
+    }
+    const history = item.type === "history";
+    const following = !history && !!state.followShipmentId && state.followShipmentId === shipment.shippingOrderId;
+    state.detailPanel.innerHTML = panel.detailHtml(shipment, { label, modeLabel: localeText, following, history, nowGameTime: nowGameTime() });
+    state.detailPanel.querySelectorAll("[data-event-x]").forEach((button) => {
+      button.addEventListener("click", () => {
+        // show where this happened
+        centerOn({ x: Number(button.getAttribute("data-event-x")) || 0, z: Number(button.getAttribute("data-event-z")) || 0 }, Math.max(state.zoom, 2));
+      });
+    });
+    if (followFocused) {
+      state.detailPanel.querySelector("[data-shipment-follow]")?.focus();
+    }
+    state.detailPanel.querySelector("[data-shipment-follow]")?.addEventListener("click", () => {
+      state.followShipmentId = following ? "" : (shipment.shippingOrderId || "");
+      renderSelection();
+      scheduleRender();
+    });
   }
 
   function formatEta(seconds) {
-    const s = Math.max(0, Math.round(Number(seconds) || 0));
-    if (s < 60) return `${s}s`;
-    const m = Math.floor(s / 60);
-    if (m < 60) return `${m}m ${s % 60}s`;
-    const h = Math.floor(m / 60);
-    return `${h}h ${m % 60}m`;
+    const panel = logisticsPanel();
+    return panel ? panel.formatEta(seconds) : `${Math.round(Number(seconds) || 0)}s`;
   }
 
   function formatSpeed(blocksPerTick) {
-    // 服务端 currentSpeed 单位为 方块/tick；换算成 方块/秒（×20）便于阅读。
-    return `${((Number(blocksPerTick) || 0) * 20).toFixed(1)} m/s`;
+    const panel = logisticsPanel();
+    return panel ? panel.formatSpeed(blocksPerTick) : "";
   }
 
   function setPanelMessage(message) {
@@ -842,14 +1354,14 @@
 
   function centerOn(point, zoom) {
     state.center = { x: Number(point.x) || 0, z: Number(point.z) || 0 };
-    state.zoom = clamp(Number(zoom) || state.zoom, MIN_ZOOM, MAX_ZOOM);
+    state.zoom = clamp(Number(zoom) || state.zoom, minZoom(), MAX_ZOOM);
     renderToolbar();
     scheduleRender();
   }
 
   function zoomAt(screenX, screenY, ratio) {
     const before = screenToWorld(screenX, screenY);
-    state.zoom = clamp(state.zoom * ratio, MIN_ZOOM, MAX_ZOOM);
+    state.zoom = clamp(state.zoom * ratio, minZoom(), MAX_ZOOM);
     const after = screenToWorld(screenX, screenY);
     state.center.x += before.x - after.x;
     state.center.z += before.z - after.z;
@@ -1014,7 +1526,7 @@
       const prev = prevById[s.shippingOrderId];
       const cur = s.current
         || (s.points && s.points.length
-            ? s.points[Math.min(Number(s.completedPointCount) || 0, s.points.length - 1)]
+            ? s.points[Math.min(shipmentTargetIndex(s), s.points.length - 1)]
             : null);
       const from = (prev && prev._toX !== undefined) ? { x: prev._toX, z: prev._toZ } : cur;
       s._fromX = from ? from.x : (cur ? cur.x : 0);
@@ -1030,22 +1542,57 @@
     if (!state.layers.shipments) {
       return;
     }
+    const api = logistics();
+    if (!api) {
+      return;
+    }
+    if (!state.logisticsEffects) {
+      state.logisticsEffects = api.createEffects();
+    }
+    const now = performance.now();
+    // Dashes flow and particles drift only while motion is allowed; vehicle positions always update.
+    const phase = REDUCED_MOTION ? 0 : now / 1000;
+    const pulse = REDUCED_MOTION ? 0.5 : (now % 1800) / 1800;
     for (const shipment of state.shipments || []) {
       const points = (shipment.points || []).map(normalizePoint);
       if (points.length < 2) {
         continue;
       }
-      const completed = clamp(Number(shipment.completedPointCount) || 0, 0, points.length - 1);
-      const isManual = !!shipment.manual;
-      const isStuck = String(shipment.status || "").toUpperCase() === "STUCK";
-      const doneColor = isManual ? "#f59e0b" : "#0ea5e9";
-      const pendColor = isStuck ? "#dc2626" : (isManual ? "#b45309" : "#2563eb");
-      drawRoute(ctx, points.slice(0, completed + 1), false, doneColor, 4);
-      drawRoute(ctx, points.slice(completed), true, pendColor, isStuck ? 5 : 3);
-      // debugroute 调试航线:在金线上叠加航点节点层(原始=大圆/插值=小圆,水=蓝描边/陆=红描边)。
+      const kind = api.vehicleKindOf(shipment);
+      const style = api.MODE_STYLES[kind];
+      const stuck = shipmentIsStuck(shipment);
+      const selected = state.selected?.type === "shipment" && state.selected.data?.shippingOrderId === shipment.shippingOrderId;
+      const completed = clamp(api.targetIndexOf(shipment), 0, points.length - 1);
+      const live = shipmentLivePoint(shipment);
+      const split = api.splitPath(points, completed, live ? normalizePoint(live) : null);
+      const toScreen = (list) => list.map((point) => worldToScreen(point));
+      if (kind === "train") {
+        api.drawRailBed(ctx, toScreen(points), style.color);
+      }
+      const width = selected ? 5 : 3.5;
+      api.drawDoneTrail(ctx, toScreen(split.done), style, stuck, width);
+      api.drawRemainingTrail(ctx, toScreen(split.remaining), style, stuck, Math.max(2, width - 1.5), phase);
+      api.drawEndpoints(ctx, worldToScreen(points[0]), worldToScreen(points[points.length - 1]), style, pulse);
+      // debugroute 调试航线:航点节点层(原始=大圆/插值=小圆,水=蓝描边/陆=红描边)。
       drawRouteNodes(ctx, points);
-      drawShipmentVehicleIcon(ctx, shipment, points, completed, isStuck);
+      drawShipmentVehicleIcon(ctx, shipment, points, completed, stuck);
     }
+    if (state.selected?.type === "history") {
+      // the whole route a finished shipment travelled
+      const entry = state.selected.data;
+      const points = (entry.points || []).map(normalizePoint);
+      if (points.length >= 2) {
+        const kind = api.vehicleKindOf(entry);
+        const style = api.MODE_STYLES[kind];
+        const screen = points.map((point) => worldToScreen(point));
+        if (kind === "train") {
+          api.drawRailBed(ctx, screen, style.color);
+        }
+        api.drawDoneTrail(ctx, screen, style, false, 4);
+        api.drawEndpoints(ctx, screen[0], screen[screen.length - 1], style, 0.5);
+      }
+    }
+    api.pruneEffects(state.logisticsEffects, now);
   }
 
   // 调试航点节点层:仅 debugroute 投放、Point 带 origin 标记的航点才画圆点。
@@ -1114,11 +1661,19 @@
     if (screen.x < -40 || screen.y < -40 || screen.x > state.canvas.width + 40 || screen.y > state.canvas.height + 40) {
       return;
     }
-    const size = clamp(18 + state.zoom * 2, 18, 28);
-    const mode = String(shipment.transportMode || "").toUpperCase();
+    const size = clamp(20 + state.zoom * 2, 20, 32);
+    const api = logistics();
+    const kind = shipmentKind(shipment);
+    const style = shipmentStyle(shipment);
+    const now = performance.now();
+    if (api && state.logisticsEffects && !REDUCED_MOTION) {
+      const moving = !isStuck && String(shipment.status || "").toUpperCase() !== "ARRIVED";
+      api.stepEffects(state.logisticsEffects, shipment.shippingOrderId || "", kind, screen.x, screen.y, angle, now, moving);
+      api.drawEffects(ctx, state.logisticsEffects, shipment.shippingOrderId || "", kind, style, now);
+    }
     // 脉动光晕：随时间正弦呼吸，卡死告警用红色、手动车暖色、调度车冷色。
     const pulse = 0.5 + 0.5 * Math.sin(performance.now() / 350);
-    const haloColor = isStuck ? "#dc2626" : (shipment.manual ? "#f59e0b" : "#0ea5e9");
+    const haloColor = isStuck ? "#dc2626" : (shipment.manual ? "#f59e0b" : style.color);
     ctx.save();
     ctx.translate(screen.x, screen.y);
     ctx.globalAlpha = isStuck ? (0.30 + 0.30 * pulse) : (0.18 + 0.16 * pulse);
@@ -1128,10 +1683,8 @@
     ctx.fill();
     ctx.globalAlpha = 1;
     ctx.rotate(angle);
-    if (mode.includes("PORT") || mode.includes("WATER") || mode.includes("SEA") || mode.includes("SAIL") || mode.includes("BOAT")) {
-      drawSailboatIcon(ctx, size);
-    } else {
-      drawCarriageIcon(ctx, size);
+    if (api) {
+      api.drawVehicle(ctx, kind, size, style, REDUCED_MOTION ? 0 : now / 1000);
     }
     ctx.restore();
     // 卡死告警角标：图标右上角红圈白感叹号（不随船头旋转）。
@@ -1156,53 +1709,6 @@
     }
   }
 
-  function drawSailboatIcon(ctx, size) {
-    const half = size / 2;
-    ctx.save();
-    ctx.lineJoin = "round";
-    ctx.lineCap = "round";
-    ctx.shadowColor = "rgba(15, 23, 42, 0.36)";
-    ctx.shadowBlur = 8;
-    ctx.shadowOffsetY = 2;
-    ctx.fillStyle = "rgba(255, 255, 255, 0.94)";
-    ctx.strokeStyle = "rgba(15, 23, 42, 0.78)";
-    ctx.lineWidth = 1.3;
-    ctx.beginPath();
-    ctx.moveTo(half, 0);
-    ctx.lineTo(half * 0.34, -half * 0.3);
-    ctx.lineTo(-half * 0.48, -half * 0.3);
-    ctx.lineTo(-half * 0.64, half * 0.2);
-    ctx.lineTo(half * 0.26, half * 0.32);
-    ctx.closePath();
-    ctx.fill();
-    ctx.stroke();
-    ctx.shadowColor = "transparent";
-    ctx.beginPath();
-    ctx.moveTo(-half * 0.1, -half * 0.75);
-    ctx.lineTo(-half * 0.1, half * 0.42);
-    ctx.strokeStyle = "rgba(15, 23, 42, 0.8)";
-    ctx.lineWidth = 1.2;
-    ctx.stroke();
-    ctx.fillStyle = "rgba(37, 99, 235, 0.95)";
-    ctx.strokeStyle = "rgba(255, 255, 255, 0.9)";
-    ctx.lineWidth = 1;
-    ctx.beginPath();
-    ctx.moveTo(-half * 0.04, -half * 0.68);
-    ctx.lineTo(half * 0.44, -half * 0.08);
-    ctx.lineTo(-half * 0.04, half * 0.08);
-    ctx.closePath();
-    ctx.fill();
-    ctx.stroke();
-    ctx.fillStyle = "#0ea5e9";
-    ctx.beginPath();
-    ctx.moveTo(half * 0.84, 0);
-    ctx.lineTo(half * 0.45, -half * 0.16);
-    ctx.lineTo(half * 0.45, half * 0.16);
-    ctx.closePath();
-    ctx.fill();
-    ctx.restore();
-  }
-
   function roundedRectPath(ctx, x, y, width, height, radius) {
     const r = Math.min(radius, Math.abs(width) / 2, Math.abs(height) / 2);
     ctx.moveTo(x + r, y);
@@ -1214,46 +1720,6 @@
     ctx.quadraticCurveTo(x, y + height, x, y + height - r);
     ctx.lineTo(x, y + r);
     ctx.quadraticCurveTo(x, y, x + r, y);
-  }
-
-  function drawCarriageIcon(ctx, size) {
-    const half = size / 2;
-    ctx.save();
-    ctx.lineJoin = "round";
-    ctx.lineCap = "round";
-    ctx.shadowColor = "rgba(15, 23, 42, 0.36)";
-    ctx.shadowBlur = 8;
-    ctx.shadowOffsetY = 2;
-    ctx.fillStyle = "rgba(217, 154, 0, 0.96)";
-    ctx.strokeStyle = "rgba(75, 46, 10, 0.9)";
-    ctx.lineWidth = 1.3;
-    ctx.beginPath();
-    roundedRectPath(ctx, -half * 0.58, -half * 0.34, half * 1.1, half * 0.68, 3);
-    ctx.fill();
-    ctx.stroke();
-    ctx.shadowColor = "transparent";
-    ctx.strokeStyle = "rgba(75, 46, 10, 0.82)";
-    ctx.lineWidth = 1.2;
-    ctx.beginPath();
-    ctx.moveTo(half * 0.52, 0);
-    ctx.lineTo(half * 0.84, 0);
-    ctx.stroke();
-    ctx.fillStyle = "#111827";
-    ctx.strokeStyle = "rgba(255, 255, 255, 0.86)";
-    ctx.lineWidth = 1;
-    ctx.beginPath();
-    ctx.arc(-half * 0.32, half * 0.4, half * 0.18, 0, Math.PI * 2);
-    ctx.arc(half * 0.26, half * 0.4, half * 0.18, 0, Math.PI * 2);
-    ctx.fill();
-    ctx.stroke();
-    ctx.fillStyle = "#f59e0b";
-    ctx.beginPath();
-    ctx.moveTo(half * 0.9, 0);
-    ctx.lineTo(half * 0.52, -half * 0.18);
-    ctx.lineTo(half * 0.52, half * 0.18);
-    ctx.closePath();
-    ctx.fill();
-    ctx.restore();
   }
 
   function drawRoute(ctx, points, dashed, color, width) {
@@ -1427,6 +1893,7 @@
 
   // 物流动画:限频(移动端 ~20fps,桌面 ~30fps),只重绘覆盖层(不碰 Leaflet);物流排空后自动停止回空闲。
   const SHIPMENT_FRAME_MS = isMobileMapDevice() ? 50 : 33;
+  const FOLLOW_TERRAIN_SYNC_MS = 200;
 
   function shipmentsActive() {
     return !!state.layers.shipments && (state.shipments || []).length > 0;
@@ -1446,9 +1913,41 @@
     }
     if (!state.lastShipmentFrameMs || ts - state.lastShipmentFrameMs >= SHIPMENT_FRAME_MS) {
       state.lastShipmentFrameMs = ts;
-      renderOverlayFrame();
+      if (followSelectedShipment()) {
+        renderOverlayFrame();
+        // Leaflet's setView is the expensive part (Safari stutter), so the terrain catches up a few times a second.
+        if (!state.lastFollowSyncMs || ts - state.lastFollowSyncMs >= FOLLOW_TERRAIN_SYNC_MS) {
+          state.lastFollowSyncMs = ts;
+          syncSquaremapTerrain();
+        }
+      } else {
+        renderOverlayFrame();
+      }
     }
     state.shipmentLoop = requestAnimationFrame(stepShipmentLoop);
+  }
+
+  /** Keeps the view centred on the followed vehicle; returns true when the centre moved. */
+  function followSelectedShipment() {
+    if (!state.followShipmentId) {
+      return false;
+    }
+    const shipment = (state.shipments || []).find((entry) => entry.shippingOrderId === state.followShipmentId);
+    if (!shipment) {
+      state.followShipmentId = "";
+      renderSelection(); // the vehicle arrived or vanished: the button goes back to "Follow vehicle"
+      return false;
+    }
+    const live = shipmentLivePoint(shipment);
+    if (!live) {
+      return false;
+    }
+    const point = normalizePoint(live);
+    if (Math.abs(point.x - state.center.x) < 1e-3 && Math.abs(point.z - state.center.z) < 1e-3) {
+      return false;
+    }
+    state.center = { x: point.x, z: point.z };
+    return true;
   }
 
   function nearestShipment(world, maxScreenDistance) {
@@ -1632,6 +2131,10 @@
 
   function bindCanvasEvents() {
     state.canvas.addEventListener("pointerdown", (event) => {
+      if (state.followShipmentId) {
+        state.followShipmentId = ""; // dragging the map takes the camera back
+        renderSelection();
+      }
       state.dragging = true;
       state.dragStart = {
         pointerId: event.pointerId,
@@ -1712,17 +2215,26 @@
   }
 
   async function loadAll(token) {
+    const context = captureRequestContext();
     setPanelMessage(label("loading"));
     const focused = encodeURIComponent(state.focusedMarketId || "");
-    const [snapshot, markets, territories, shipments] = await Promise.all([
+    const responses = await Promise.all([
       fetchJson(`/api/map/snapshot${focused ? `?focusedMarketId=${focused}` : ""}`),
       fetchJson("/api/map/markets"),
       fetchJson("/api/map/territories"),
-      fetchOptionalJson("/api/map/shipments", { shipments: [] })
-    ]);
-    if (token !== state.mountedToken) {
+      fetchOptionalJson("/api/map/shipments", { shipments: [] }),
+      fetchOptionalJson("/api/map/world", { tellus: false })
+    ]).catch((error) => {
+      if (token !== state.mountedToken || !requestContextCurrent(context)) {
+        return null;
+      }
+      throw error;
+    });
+    if (!responses || token !== state.mountedToken || !requestContextCurrent(context)) {
       return;
     }
+    const [snapshot, markets, territories, shipments, world] = responses;
+    applyWorldInfo(world);
     state.snapshot = snapshot;
     state.markets = markets.markets || [];
     state.territories = territories.territories || [];
@@ -1736,9 +2248,43 @@
     scheduleRender();
   }
 
+  async function loadShipmentHistory() {
+    const context = captureRequestContext();
+    state.historyFetchedAt = performance.now();
+    const data = await fetchOptionalJson("/api/map/shipments/history", { history: state.shipmentHistory || [] });
+    if (!requestContextCurrent(context)) {
+      return;
+    }
+    noteGameTime(data);
+    state.shipmentHistory = data.history || [];
+    if (state.selected?.type === "history") {
+      const fresh = state.shipmentHistory.find((entry) => entry.shippingOrderId === state.selected.data?.shippingOrderId);
+      if (fresh) {
+        state.selected = { type: "history", data: fresh };
+      }
+    }
+    renderShipments();
+    renderSelection();
+  }
+
   async function loadShipments() {
+    const context = captureRequestContext();
     const data = await fetchOptionalJson("/api/map/shipments", { shipments: state.shipments || [] });
+    if (!requestContextCurrent(context)) {
+      return;
+    }
+    noteGameTime(data);
     state.shipments = applyShipmentInterpolation(data.shipments || []);
+    if (state.shipmentView === "history" && performance.now() - state.historyFetchedAt > HISTORY_REFRESH_MS) {
+      loadShipmentHistory();
+    }
+    if (state.selected?.type === "shipment") {
+      // keep the detail card on the latest data for the same shipment (progress, ETA, status)
+      const fresh = state.shipments.find((entry) => entry.shippingOrderId === state.selected.data?.shippingOrderId);
+      if (fresh) {
+        state.selected = { type: "shipment", data: fresh };
+      }
+    }
     renderShipments();
     renderSelection();
     scheduleRender();
@@ -1747,9 +2293,10 @@
   // 轻量轮询 snapshot:服务端每渲染一张瓦片 tileEpoch +1。检测到变化就清本地瓦片缓存重绘,
   // 这样 render 指令渲染完(radius/full/area)网页能自动拉到新瓦片,无需手动刷新页面。
   async function pollMapRefresh() {
+    const context = captureRequestContext();
     const focused = encodeURIComponent(state.focusedMarketId || "");
     const next = await fetchOptionalJson(`/api/map/snapshot${focused ? `?focusedMarketId=${focused}` : ""}`, null);
-    if (!next) {
+    if (!next || !requestContextCurrent(context)) {
       return;
     }
     const prev = state.snapshot || {};
@@ -1763,6 +2310,7 @@
   }
 
   function mount(root, options = {}) {
+    captureRequestContext();
     if (state.root === root) {
       state.locale = options.locale || state.locale;
       state.focusedMarketId = options.focusedMarketId || state.focusedMarketId;
@@ -1823,6 +2371,8 @@
   }
 
   function unmount() {
+    clearPrivateShipmentData();
+    state.sessionToken = null;
     destroySquaremapTerrain();
     if (state.shipmentTimer) {
       window.clearInterval(state.shipmentTimer);

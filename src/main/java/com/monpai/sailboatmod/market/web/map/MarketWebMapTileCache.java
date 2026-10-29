@@ -342,10 +342,58 @@ public final class MarketWebMapTileCache {
         return cleared;
     }
 
+    /** Records which renderer last checked this cache (see {@link #clearStaleServerChunksAfterRendererUpgrade()}). */
+    private static final String RENDERER_VERSION_FILE = "renderer-version.txt";
+
+    /**
+     * Once per renderer upgrade: clears the chunks an older renderer drew, so they are redrawn instead of staying
+     * (for example as the grey "unknown" cells of old Tellus tiles). Client uploads are kept; they may be the only
+     * picture of an area. Returns the tiles changed, or -1 when this renderer already checked the cache.
+     */
+    public int clearStaleServerChunksAfterRendererUpgrade() {
+        Path marker = root.resolve(RENDERER_VERSION_FILE);
+        int recorded = 0;
+        try {
+            if (Files.isRegularFile(marker)) {
+                recorded = Integer.parseInt(Files.readString(marker, StandardCharsets.UTF_8).trim());
+            }
+        } catch (IOException | NumberFormatException exception) {
+            LOGGER.warn("Unreadable market web map renderer marker {}, checking the cache again", marker, exception);
+        }
+        if (recorded >= RENDER_VERSION) {
+            return -1;
+        }
+        long started = System.nanoTime();
+        StaleScan scan = scanStaleServerChunks();
+        if (!scan.complete()) {
+            return scan.cleared(); // not recorded: the next start scans again
+        }
+        if (scan.cleared() > 0) {
+            LOGGER.info("Market web map: cleared {} tiles drawn by an older renderer in {} ms; they will be repainted",
+                    scan.cleared(), (System.nanoTime() - started) / 1_000_000);
+        }
+        int cleared = scan.cleared();
+        try {
+            Files.createDirectories(root);
+            Files.writeString(marker, Integer.toString(RENDER_VERSION), StandardCharsets.UTF_8);
+        } catch (IOException exception) {
+            LOGGER.warn("Failed to record market web map renderer version in {}", marker, exception);
+        }
+        return cleared;
+    }
+
     public int clearStaleServerChunks() {
+        return scanStaleServerChunks().cleared();
+    }
+
+    /** Tiles changed, and whether every tile could be checked. */
+    private record StaleScan(int cleared, boolean complete) {
+    }
+
+    private StaleScan scanStaleServerChunks() {
         Path dir = root.resolve("overworld").resolve("lod_1").normalize();
         if (!dir.startsWith(root) || !Files.isDirectory(dir)) {
-            return 0;
+            return new StaleScan(0, true);
         }
         int cleared = 0;
         try (DirectoryStream<Path> stream = Files.newDirectoryStream(dir, "*.png")) {
@@ -360,6 +408,9 @@ public final class MarketWebMapTileCache {
                 }
                 MarketWebMapTileQuality[] sources = metadata.copySources();
                 int[] rendererVersions = metadata.copyRendererVersions();
+                if (!hasStaleServerSource(sources, rendererVersions)) {
+                    continue; // nothing to clear: skip decoding the PNG
+                }
                 boolean hasStaleServer = false;
                 boolean hasPreservedSource = false;
                 int[] pixels = readCurrentTilePixels(MarketWebMapConstants.OVERWORLD, tile.tileX, tile.tileZ);
@@ -395,10 +446,11 @@ public final class MarketWebMapTileCache {
                     cleared++;
                 }
             }
-        } catch (IOException exception) {
+        } catch (IOException | java.io.UncheckedIOException exception) {
             LOGGER.warn("Failed to clear stale market web map server chunks under {}", dir, exception);
+            return new StaleScan(cleared, false);
         }
-        return cleared;
+        return new StaleScan(cleared, true);
     }
 
     public int clearAllTiles() {
@@ -798,6 +850,15 @@ public final class MarketWebMapTileCache {
         return (safeIncoming == MarketWebMapTileQuality.SERVER_LOADED_CHUNK
                 || safeIncoming == MarketWebMapTileQuality.SERVER_REGION_SCAN)
                 && incomingRendererVersion > Math.max(0, existingRendererVersion);
+    }
+
+    private static boolean hasStaleServerSource(MarketWebMapTileQuality[] sources, int[] rendererVersions) {
+        for (int i = 0; i < sources.length; i++) {
+            if (isStaleServerSource(sources[i], rendererVersions[i])) {
+                return true;
+            }
+        }
+        return false;
     }
 
     private static boolean isStaleServerSource(MarketWebMapTileQuality source, int rendererVersion) {

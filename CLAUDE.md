@@ -13,7 +13,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 ./gradlew releaseMod         # Main mod plus server market web addon
 ```
 
-Output JARs land in `build/libs/`. The `sailboatmod-<version>-neoforge-1.21.1.jar` is the production artifact and includes library dependencies via JarJar. GeckoLib 4.9.3 is an external mod dependency. `releaseMod` also builds the optional `sailboatmod-marketweb-<version>-neoforge-1.21.1.jar`.
+Output JARs land in `build/libs/`. The `sailboatmod-<version>-neoforge-1.21.1.jar` is the production artifact and includes library dependencies via JarJar. GeckoLib 4.9.3 and LDLib2 2.2.42 are required external mod dependencies. Tellus 0.8.3 and Create 6.0.10 are optional integrations; their pinned compile-only JARs are in libs/compile-only/. `releaseMod` also builds the optional `sailboatmod-marketweb-<version>-neoforge-1.21.1.jar`.
 
 A `fixIndex` property can be passed to append a `-fix_N` suffix: `./gradlew build -PfixIndex=1`
 
@@ -27,7 +27,11 @@ Minecraft NeoForge 1.21.1 mod (Java 21) implementing a multiplayer system with s
 **Package:** `com.monpai.sailboatmod`
 **Entry point:** `SailboatMod.java` — initializes GeckoLib and registers all DeferredRegister instances on the mod event bus.
 
-**Key dependencies:** GeckoLib 4.9.3 (entity animation), gdx-ai 1.8.2 (AI behaviors), SQLite JDBC 3.46.1.3 (commodity market persistence), BlockUI (UI framework), webp-imageio (JarJar bundled), Vault (optional economy), BlueMap (optional map rendering).
+**Key dependencies:** GeckoLib 4.9.3 (entity animation), gdx-ai 1.8.2 (AI behaviors), SQLite JDBC 3.46.1.3 (commodity market persistence), LDLib2 2.2.42 (required external UI mod), webp-imageio (JarJar bundled), Vault (optional economy), BlueMap (optional map rendering).
+
+## Tellus and Create update
+
+See `docs/handoff/TELLUS_ADAPTATION_RETURN.md` for the returned implementation and its original validation limits. The integration keeps protocol 12, server authority, market escrow and native inventory behavior. `HologramBillboard` follows the Minecraft 1.21.1 name-tag transform.
 
 ## Architecture
 
@@ -40,7 +44,7 @@ All content uses NeoForge's `DeferredRegister` pattern. Registries initialized i
 - `ModCreativeTabs` — single creative tab
 
 ### Network (`network/`)
-`ModNetwork` registers 106 directional custom payloads through `PayloadChannel` (protocol version "11"). Every packet class follows the same static-method pattern: `encode`, `decode`, `handle`. Add new packets at the end of `ModNetwork.register()` with `packetId++`. `PacketStringCodec` provides safe UTF encoding helpers.
+`ModNetwork` registers 106 directional custom payloads through `PayloadChannel` (protocol version "12"). Every packet class follows the same static-method pattern: `encode`, `decode`, `handle`. Add new packets at the end of `ModNetwork.register()` with `packetId++`. `PacketStringCodec` provides safe UTF encoding helpers.
 
 ### Entity System (`entity/`)
 - **SailboatEntity** — extends `Boat`, implements GeckoLib's `GeoEntity`. Features: 5-seat passengers, 27-slot inventory, sail/engine/autopilot mechanics, rental pricing, route waypoint following. Physics uses knot-based speed with drag coefficients. Autopilot has stall detection and dock parking logic with chunk loading.

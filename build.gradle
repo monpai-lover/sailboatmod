@@ -58,6 +58,10 @@ dependencies {
     // public layout API, so they are compile-only here and come from LDLib2's own JarJar at runtime.
     implementation files('libs/ldlib2-neoforge-1.21.1-2.2.42-all.jar')
     compileOnly files('libs/ldlib2-compile/taffy-1.1.5.jar', 'libs/ldlib2-compile/yoga-1.0.0.jar')
+    // Tellus 0.8.3 is an optional mod: compile the compat/tellus package against it, never bundle it.
+    compileOnly files('libs/compile-only/Tellus-neoforge-1.21.1-0.8.3.jar')
+    // Create 6.0.10 is an optional mod: only compat/create compiles against it (trains on the web map), never bundled.
+    compileOnly files('libs/compile-only/create-1.21.1-6.0.10.jar')
     testCompileOnly files('libs/ldlib2-compile/taffy-1.1.5.jar', 'libs/ldlib2-compile/yoga-1.0.0.jar')
     runtimeOnly 'org.xerial:sqlite-jdbc:3.46.1.3'
     sqliteEmbeddedLibrary("org.xerial:sqlite-jdbc:3.46.1.3")

@@ -40,6 +40,8 @@ public class RoadPlannerBuildControlService {
     private final ConcurrentMap<UUID, UUID> activePreviews = new ConcurrentHashMap<>();
     private final ConcurrentMap<UUID, UUID> activeBuilds = new ConcurrentHashMap<>();
     private final ConcurrentMap<UUID, PreviewSnapshot> previews = new ConcurrentHashMap<>();
+    /** Build steps computed together with the preview, so confirming does not load chunks and compile again. */
+    private final ConcurrentMap<UUID, List<BuildStep>> previewSteps = new ConcurrentHashMap<>();
     private static final int STEPS_PER_TICK = 8;
 
     private final ConcurrentMap<UUID, ConstructionQueue> buildQueues = new ConcurrentHashMap<>();
@@ -130,10 +132,41 @@ public class RoadPlannerBuildControlService {
                              List<RoadPlannerSharedRoadSpan> sharedSpans,
                              RoadReusePlan reusePlan) {
         UUID previewId = UUID.randomUUID();
-        activePreviews.put(playerId, previewId);
+        UUID replaced = activePreviews.put(playerId, previewId);
+        if (replaced != null) {
+            previews.remove(replaced);
+            previewSteps.remove(replaced);
+        }
         previews.put(previewId, new PreviewSnapshot(nodes, segmentTypes, settings, mergeSelection,
                 logicalNodes, sharedSpans, sourceTownName, targetTownName, "", "", reusePlan));
         return previewId;
+    }
+
+    /** Keeps the steps the preview was computed from; {@link #confirmPreview} builds exactly these. */
+    public void attachCompiledSteps(UUID previewId, List<BuildStep> steps) {
+        if (previewId != null && steps != null && previews.containsKey(previewId)) {
+            previewSteps.put(previewId, List.copyOf(steps));
+        }
+    }
+
+    /** Drops the player's unconfirmed preview and its cached build steps (logout), which can be millions of steps. */
+    public void forgetPlayer(UUID playerId) {
+        UUID previewId = activePreviews.remove(playerId);
+        if (previewId != null) {
+            previews.remove(previewId);
+            previewSteps.remove(previewId);
+        }
+    }
+
+    /** Forgets every unconfirmed preview (server stop). Running builds are kept as before. */
+    public void clearPreviews() {
+        activePreviews.clear();
+        previews.clear();
+        previewSteps.clear();
+    }
+
+    int cachedPreviewStepsForTest() {
+        return previewSteps.size();
     }
 
     public Optional<UUID> previewFor(UUID playerId) {
@@ -170,7 +203,11 @@ public class RoadPlannerBuildControlService {
         activePreviews.remove(playerId);
         UUID jobId = UUID.randomUUID();
         PreviewSnapshot snapshot = revalidatedSnapshot(level, playerId, previews.remove(previewId));
-        ConstructionQueue queue = new ConstructionQueue(jobId.toString(), buildSteps(snapshot, level));
+        List<BuildStep> computed = previewSteps.remove(previewId);
+        List<BuildStep> steps = computed != null && snapshot != null
+                ? filterOwnedBuildSteps(computed, snapshot.reusePlan())
+                : buildSteps(snapshot, level);
+        ConstructionQueue queue = new ConstructionQueue(jobId.toString(), steps);
         buildQueues.put(jobId, queue);
         ResourceKey<Level> dim = level != null ? level.dimension() : Level.OVERWORLD;
         buildMetadata.put(jobId, BuildMetadata.from(playerId, jobId, snapshot, queue, dim));
@@ -189,6 +226,7 @@ public class RoadPlannerBuildControlService {
         }
         activePreviews.remove(playerId);
         previews.remove(previewId);
+        previewSteps.remove(previewId);
         return true;
     }
 

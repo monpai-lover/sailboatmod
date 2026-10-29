@@ -1,5 +1,6 @@
 package com.monpai.sailboatmod.client.renderer.blockentity;
 
+import com.monpai.sailboatmod.client.renderer.HologramBillboard;
 import com.monpai.sailboatmod.block.entity.TownWarehouseBlockEntity;
 import com.mojang.blaze3d.vertex.PoseStack;
 import net.minecraft.client.Minecraft;
@@ -32,8 +33,7 @@ public class TownWarehouseBlockEntityRenderer implements BlockEntityRenderer<Tow
         }
         poseStack.pushPose();
         poseStack.translate(0.5D, 1.35D, 0.5D);
-        poseStack.mulPose(minecraft.getEntityRenderDispatcher().cameraOrientation());
-        poseStack.scale(-0.025F, -0.025F, 0.025F);
+        HologramBillboard.faceCamera(poseStack, minecraft.getEntityRenderDispatcher().cameraOrientation(), 0.025F);
         String line = "[" + townName + "]" + Component.translatable("block.sailboatmod.town_warehouse").getString();
         float x = -this.font.width(line) / 2.0F;
         Matrix4f matrix = poseStack.last().pose();

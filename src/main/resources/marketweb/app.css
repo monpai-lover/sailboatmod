@@ -4065,3 +4065,524 @@ td input {
         display: none;
     }
 }
+
+/* Tellus world map: basemap source picker and attribution. */
+.map-basemap-picker {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    font-size: 12px;
+}
+
+.map-basemap-picker select {
+    font: inherit;
+    max-width: 11em;
+}
+
+.map-basemap-attribution {
+    position: absolute;
+    right: 8px;
+    bottom: 6px;
+    z-index: 5;
+    max-width: 70%;
+    padding: 2px 6px;
+    border-radius: 4px;
+    background: rgba(0, 0, 0, 0.45);
+    color: #e8e8e8;
+    font-size: 11px;
+    pointer-events: none;
+}
+
+.map-basemap-attribution.is-warning {
+    color: #ffd479;
+}
+
+/* Logistics: one colour per transport mode (--mode) runs through the list, the detail card and the map trails.
+   The card's progress bar is its bottom edge; red is reserved for stuck shipments. */
+.map-shipment-tools {
+    display: grid;
+    gap: 6px;
+    margin: 6px 0 8px;
+}
+
+.map-shipment-kinds {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 4px;
+}
+
+.map-shipment-kinds button {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    min-height: 26px;
+    padding: 2px 8px;
+    border: 1px solid var(--line);
+    border-radius: var(--r-control);
+    background: transparent;
+    color: var(--text-2);
+    font-size: 12px;
+    font-weight: 600;
+}
+
+.map-shipment-kinds button svg {
+    width: 14px;
+    height: 14px;
+    color: var(--mode, var(--text-2));
+}
+
+.map-shipment-kinds button span {
+    color: var(--text-3);
+    font-family: var(--font-num);
+    font-variant-numeric: tabular-nums;
+}
+
+.map-shipment-kinds button[aria-pressed="true"] {
+    border-color: var(--mode-ink, var(--accent-line));
+    background: var(--surface-3);
+    color: var(--text);
+}
+
+.map-shipment-kinds button:disabled {
+    opacity: 0.45;
+}
+
+.map-shipment-search {
+    display: grid;
+    gap: 4px;
+}
+
+.map-shipment-search input,
+.map-shipment-search select {
+    width: 100%;
+    min-width: 0;
+}
+
+.map-shipment-cards {
+    display: grid;
+    gap: 6px;
+}
+
+.map-shipment-card {
+    position: relative;
+    display: grid;
+    grid-template-columns: 22px minmax(0, 1fr) auto;
+    grid-template-areas:
+        "glyph route pct"
+        "glyph vehicle eta"
+        ". cargo cargo";
+    align-items: center;
+    gap: 1px 8px;
+    width: 100%;
+    padding: 9px 10px 12px;
+    overflow: hidden;
+    border: 1px solid var(--line);
+    border-radius: var(--r-card);
+    background: var(--bg-2);
+    color: var(--text);
+    text-align: left;
+    white-space: normal;
+}
+
+.map-shipment-card::before,
+.map-shipment-card::after {
+    content: "";
+    position: absolute;
+    left: 0;
+    bottom: 0;
+    height: 3px;
+}
+
+.map-shipment-card::before {
+    right: 0;
+    background: var(--line);
+}
+
+.map-shipment-card::after {
+    width: var(--progress, 0%);
+    background: var(--mode, var(--accent));
+}
+
+/* Mode colours are bright enough on the dark theme; the light theme gets darker inks for text and outlines. */
+.map-shipment-card,
+.map-shipment-detail,
+.map-shipment-kinds button {
+    --mode-ink: var(--mode);
+}
+
+:root[data-theme="light"] [data-kind="sailboat"] {
+    --mode-ink: #1d6f9a;
+}
+
+:root[data-theme="light"] [data-kind="carriage"] {
+    --mode-ink: #8a5a14;
+}
+
+:root[data-theme="light"] [data-kind="train"] {
+    --mode-ink: #5b3fc4;
+}
+
+.map-shipment-card[data-stuck]::after {
+    background: var(--trade-down);
+}
+
+.map-shipment-card:hover:not(:disabled) {
+    border-color: var(--line-2);
+    background: var(--surface-2);
+    color: var(--text);
+}
+
+.map-shipment-card[aria-current="true"] {
+    border-color: var(--mode-ink, var(--accent));
+    background: var(--surface-2);
+}
+
+.map-shipment-card:focus-visible,
+.map-shipment-kinds button:focus-visible,
+.map-shipment-follow:focus-visible {
+    outline: 2px solid var(--mode-ink, var(--accent));
+    outline-offset: 2px;
+}
+
+.map-shipment-glyph {
+    grid-area: glyph;
+    display: inline-flex;
+    width: 22px;
+    height: 22px;
+    color: var(--mode-ink, var(--text-2));
+}
+
+.map-shipment-glyph svg {
+    width: 100%;
+    height: 100%;
+}
+
+.map-shipment-route {
+    grid-area: route;
+    min-width: 0;
+    overflow: hidden;
+    font-size: 13px;
+    font-weight: 600;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.map-shipment-pct {
+    grid-area: pct;
+    color: var(--mode-ink, var(--text));
+    font-family: var(--font-num);
+    font-size: 15px;
+    font-weight: 600;
+    font-variant-numeric: tabular-nums;
+}
+
+.map-shipment-vehicle {
+    grid-area: vehicle;
+    min-width: 0;
+    overflow: hidden;
+    color: var(--text-2);
+    font-size: 12px;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.map-shipment-vehicle b {
+    color: var(--trade-down);
+    font-weight: 600;
+}
+
+.map-shipment-eta {
+    grid-area: eta;
+    color: var(--text-2);
+    font-family: var(--font-num);
+    font-size: 12px;
+    font-variant-numeric: tabular-nums;
+}
+
+.map-shipment-cargo {
+    grid-area: cargo;
+    min-width: 0;
+    overflow: hidden;
+    color: var(--text-3);
+    font-size: 12px;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.map-shipment-detail {
+    display: grid;
+    gap: 12px;
+}
+
+.map-shipment-detail-head {
+    display: grid;
+    grid-template-columns: 34px minmax(0, 1fr);
+    align-items: center;
+    gap: 10px;
+}
+
+.map-shipment-detail-head .map-shipment-glyph {
+    grid-area: auto;
+    width: 34px;
+    height: 34px;
+}
+
+.map-shipment-detail-head h3 {
+    margin: 0;
+    overflow-wrap: anywhere;
+}
+
+.map-shipment-detail-head p {
+    margin: 2px 0 0;
+    color: var(--text-2);
+    font-size: 12px;
+}
+
+.map-shipment-journey {
+    display: grid;
+    grid-template-columns: auto minmax(40px, 1fr) auto;
+    align-items: center;
+    gap: 8px;
+    color: var(--text-2);
+    font-size: 12px;
+}
+
+.map-shipment-journey > span {
+    max-width: 9em;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.map-shipment-track {
+    position: relative;
+    height: 6px;
+    border-radius: 3px;
+    background: var(--line);
+}
+
+.map-shipment-track i {
+    position: absolute;
+    inset: 0 auto 0 0;
+    width: var(--progress, 0%);
+    border-radius: 3px;
+    background: var(--mode, var(--accent));
+}
+
+.map-shipment-track b {
+    position: absolute;
+    top: 50%;
+    left: var(--progress, 0%);
+    width: 12px;
+    height: 12px;
+    border: 2px solid var(--surface);
+    border-radius: 50%;
+    background: var(--mode, var(--accent));
+    transform: translate(-50%, -50%);
+}
+
+.map-shipment-detail[data-stuck] .map-shipment-track i,
+.map-shipment-detail[data-stuck] .map-shipment-track b {
+    background: var(--trade-down);
+}
+
+.map-shipment-stats {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 8px;
+    margin: 0;
+}
+
+.map-shipment-stats div {
+    padding: 6px 8px;
+    border: 1px solid var(--line);
+    border-radius: var(--r-control);
+}
+
+.map-shipment-stats dt {
+    color: var(--text-3);
+    font-size: 11px;
+}
+
+.map-shipment-stats dd {
+    margin: 2px 0 0;
+    color: var(--text);
+    font-family: var(--font-num);
+    font-size: 15px;
+    font-variant-numeric: tabular-nums;
+}
+
+.map-shipment-detail[data-stuck] .map-shipment-status {
+    color: var(--trade-down);
+    font-family: var(--font-text);
+    font-size: 13px;
+    font-weight: 600;
+}
+
+.map-shipment-cargo-list h4 {
+    margin: 0 0 4px;
+    color: var(--text-3);
+    font-size: 12px;
+    font-weight: 600;
+}
+
+.map-shipment-cargo-list ul {
+    display: grid;
+    gap: 3px;
+    margin: 0;
+    padding: 0;
+    list-style: none;
+    font-size: 13px;
+}
+
+.map-shipment-cargo-list li span {
+    display: inline-block;
+    min-width: 3.2em;
+    color: var(--mode-ink, var(--text-2));
+    font-family: var(--font-num);
+    font-variant-numeric: tabular-nums;
+}
+
+.map-shipment-cargo-list li small {
+    color: var(--text-3);
+}
+
+/* In progress / History switch above the shipment list */
+.map-shipment-views {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 2px;
+    padding: 2px;
+    margin-bottom: 6px;
+    border: 1px solid var(--line);
+    border-radius: var(--r-control);
+    background: var(--surface-2);
+}
+
+.map-shipment-views button {
+    min-height: 28px;
+    border: 0;
+    border-radius: calc(var(--r-control) - 2px);
+    background: transparent;
+    color: var(--text-2);
+    font-size: 12px;
+    font-weight: 700;
+}
+
+.map-shipment-views button[aria-pressed="true"] {
+    background: var(--surface-3);
+    color: var(--text);
+    box-shadow: inset 0 0 0 1px var(--line);
+}
+
+.map-shipment-views button:focus-visible,
+.map-shipment-timeline button:focus-visible {
+    outline: 2px solid var(--accent);
+    outline-offset: 1px;
+}
+
+/* Finished shipments: the outcome takes the place of the percentage */
+.map-shipment-history .map-shipment-pct {
+    font-size: 11px;
+    font-weight: 700;
+}
+
+.map-shipment-history[data-tone="good"] .map-shipment-pct {
+    color: var(--trade-up, var(--text));
+}
+
+.map-shipment-history[data-tone="bad"] .map-shipment-pct {
+    color: var(--trade-down, var(--text));
+}
+
+/* Timeline: newest first, a dot per event on a thin rail; each entry centres the map on where it happened */
+.map-shipment-timeline h4 {
+    margin: 0 0 4px;
+    color: var(--text-3);
+    font-size: 12px;
+    font-weight: 600;
+}
+
+.map-shipment-timeline ol {
+    position: relative;
+    display: grid;
+    gap: 1px;
+    margin: 0;
+    padding: 0 0 0 14px;
+    list-style: none;
+}
+
+.map-shipment-timeline ol::before {
+    content: "";
+    position: absolute;
+    top: 8px;
+    bottom: 8px;
+    left: 4px;
+    width: 1px;
+    background: var(--line);
+}
+
+.map-shipment-timeline li {
+    position: relative;
+}
+
+.map-shipment-timeline li::before {
+    content: "";
+    position: absolute;
+    top: 9px;
+    left: -13px;
+    width: 7px;
+    height: 7px;
+    border-radius: 50%;
+    background: var(--text-3);
+}
+
+.map-shipment-timeline li:first-child::before {
+    background: var(--mode-ink, var(--accent));
+}
+
+.map-shipment-timeline li[data-tone="bad"]::before {
+    background: var(--trade-down, #d64545);
+}
+
+.map-shipment-timeline li[data-tone="good"]::before {
+    background: var(--trade-up, #2f9e6b);
+}
+
+.map-shipment-timeline button {
+    display: flex;
+    justify-content: space-between;
+    gap: 8px;
+    width: 100%;
+    padding: 3px 4px;
+    border: 0;
+    border-radius: 4px;
+    background: transparent;
+    color: var(--text);
+    font-size: 13px;
+    text-align: left;
+}
+
+.map-shipment-timeline button:hover {
+    background: var(--surface-3);
+}
+
+.map-shipment-timeline time {
+    color: var(--text-3);
+    font-size: 12px;
+    white-space: nowrap;
+}
+
+.map-shipment-follow {
+    min-height: 32px;
+    border: 1px solid var(--mode-ink, var(--accent-line));
+    border-radius: var(--r-control);
+    background: transparent;
+    color: var(--text);
+    font-weight: 600;
+}
+
+.map-shipment-follow[aria-pressed="true"] {
+    background: var(--mode, var(--accent));
+    color: #0f1420;
+}

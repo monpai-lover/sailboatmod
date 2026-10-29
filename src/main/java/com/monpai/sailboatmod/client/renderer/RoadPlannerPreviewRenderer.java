@@ -41,6 +41,11 @@ public final class RoadPlannerPreviewRenderer {
     private static final double MAX_WIREFRAME_RENDER_DISTANCE_SQR = 64.0D * 64.0D;
     private static List<RoadPlannerClientHooks.PreviewGhostBlock> cachedRenderList = List.of();
     private static int cachedPreviewHash = 0;
+    /** Re-pick the nearby ghost blocks once the camera has moved this far (squared blocks). */
+    private static final double NEARBY_REFRESH_DISTANCE_SQR = 8.0D * 8.0D;
+    private static List<RoadPlannerClientHooks.PreviewGhostBlock> nearbySource = null;
+    private static Vec3 nearbyCamera = null;
+    private static List<RoadPlannerClientHooks.PreviewGhostBlock> nearbyList = List.of();
 
     private RoadPlannerPreviewRenderer() {
     }
@@ -60,14 +65,12 @@ public final class RoadPlannerPreviewRenderer {
         PoseStack poseStack = event.getPoseStack();
         MultiBufferSource.BufferSource bufferSource = minecraft.renderBuffers().bufferSource();
         Vec3 cameraPos = event.getCamera().getPosition();
-        List<RoadPlannerClientHooks.PreviewGhostBlock> modelGhostBlocks = previewModelRenderList(
+        List<RoadPlannerClientHooks.PreviewGhostBlock> modelGhostBlocks = cachedNearbyRenderList(
                 preview.ghostBlocks(),
-                MAX_MODEL_RENDER_BLOCKS
+                cameraPos,
+                Math.min(MAX_MODEL_RENDER_BLOCKS, MAX_WIREFRAME_RENDER_BLOCKS)
         );
-        List<RoadPlannerClientHooks.PreviewGhostBlock> wireframeGhostBlocks = previewWireframeRenderList(
-                preview.ghostBlocks(),
-                MAX_WIREFRAME_RENDER_BLOCKS
-        );
+        List<RoadPlannerClientHooks.PreviewGhostBlock> wireframeGhostBlocks = modelGhostBlocks;
 
         // Phase 1: Render translucent block models only for nearby blocks
         BlockRenderDispatcher blockRenderer = minecraft.getBlockRenderer();
@@ -491,6 +494,63 @@ public final class RoadPlannerPreviewRenderer {
             int maxBlocks
     ) {
         return previewRenderList(blocks, null, -1.0D, maxBlocks);
+    }
+
+    private static List<RoadPlannerClientHooks.PreviewGhostBlock> cachedNearbyRenderList(
+            List<RoadPlannerClientHooks.PreviewGhostBlock> blocks,
+            Vec3 cameraPos,
+            int maxBlocks
+    ) {
+        boolean sameList = blocks == nearbySource;
+        boolean cameraStill = nearbyCamera != null && nearbyCamera.distanceToSqr(cameraPos) < NEARBY_REFRESH_DISTANCE_SQR;
+        if (sameList && (cameraStill || blocks.size() <= maxBlocks)) {
+            return nearbyList;
+        }
+        nearbySource = blocks;
+        nearbyCamera = cameraPos;
+        nearbyList = nearbyRenderList(blocks, cameraPos, maxBlocks);
+        return nearbyList;
+    }
+
+    /**
+     * Every ghost block when they fit under the cap; otherwise the ones nearest the camera, still in road order.
+     * Taking the first blocks instead left everything past the first few hundred metres of a long road invisible.
+     */
+    private static List<RoadPlannerClientHooks.PreviewGhostBlock> nearbyRenderList(
+            List<RoadPlannerClientHooks.PreviewGhostBlock> blocks,
+            Vec3 cameraPos,
+            int maxBlocks
+    ) {
+        List<RoadPlannerClientHooks.PreviewGhostBlock> unique = previewRenderList(blocks, null, -1.0D, Integer.MAX_VALUE);
+        if (unique.size() <= maxBlocks || cameraPos == null) {
+            return unique.size() <= maxBlocks ? unique : List.copyOf(unique.subList(0, maxBlocks));
+        }
+        double[] distance = new double[unique.size()];
+        Integer[] order = new Integer[unique.size()];
+        for (int i = 0; i < unique.size(); i++) {
+            distance[i] = unique.get(i).pos().distToCenterSqr(cameraPos);
+            order[i] = i;
+        }
+        java.util.Arrays.sort(order, java.util.Comparator.comparingDouble(i -> distance[i]));
+        boolean[] keep = new boolean[unique.size()];
+        for (int k = 0; k < maxBlocks; k++) {
+            keep[order[k]] = true;
+        }
+        java.util.ArrayList<RoadPlannerClientHooks.PreviewGhostBlock> nearest = new java.util.ArrayList<>(maxBlocks);
+        for (int i = 0; i < unique.size(); i++) {
+            if (keep[i]) {
+                nearest.add(unique.get(i));
+            }
+        }
+        return List.copyOf(nearest);
+    }
+
+    static List<RoadPlannerClientHooks.PreviewGhostBlock> nearbyRenderListForTest(
+            List<RoadPlannerClientHooks.PreviewGhostBlock> blocks,
+            Vec3 cameraPos,
+            int maxBlocks
+    ) {
+        return nearbyRenderList(blocks, cameraPos, maxBlocks);
     }
 
     static PreviewBox previewBoxForTest(BlockPos pos, Vec3 cameraPos) {

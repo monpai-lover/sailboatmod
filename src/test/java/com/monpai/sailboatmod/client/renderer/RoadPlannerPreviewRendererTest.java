@@ -123,6 +123,29 @@ class RoadPlannerPreviewRendererTest {
     }
 
     @Test
+    void longRoadsShowTheGhostBlocksNearestTheCameraNotTheFirstOnes() {
+        List<RoadPlannerClientHooks.PreviewGhostBlock> road = new java.util.ArrayList<>();
+        for (int x = 0; x < 10_000; x++) {
+            road.add(new RoadPlannerClientHooks.PreviewGhostBlock(new BlockPos(x, 64, 0), Blocks.STONE_BRICKS.defaultBlockState()));
+        }
+        List<RoadPlannerClientHooks.PreviewGhostBlock> shown = RoadPlannerPreviewRenderer.nearbyRenderListForTest(
+                road, new Vec3(9_000.5D, 66.0D, 0.5D), 100);
+
+        assertEquals(100, shown.size());
+        assertTrue(shown.stream().allMatch(block -> Math.abs(block.pos().getX() - 9_000) <= 50), "blocks around the camera");
+        assertEquals(8_950, shown.get(0).pos().getX(), "kept in road order");
+    }
+
+    @Test
+    void shortRoadsStillShowEveryBlockInOrder() {
+        RoadPlannerClientHooks.PreviewGhostBlock near = new RoadPlannerClientHooks.PreviewGhostBlock(new BlockPos(0, 64, 0), Blocks.STONE_BRICKS.defaultBlockState());
+        RoadPlannerClientHooks.PreviewGhostBlock far = new RoadPlannerClientHooks.PreviewGhostBlock(new BlockPos(180, 64, 0), Blocks.STONE_BRICKS.defaultBlockState());
+
+        assertEquals(List.of(near, far), RoadPlannerPreviewRenderer.nearbyRenderListForTest(
+                List.of(near, far, near), new Vec3(500.0D, 64.0D, 0.0D), 4096));
+    }
+
+    @Test
     void blockBoxesUseExactCameraOffset() {
         RoadPlannerPreviewRenderer.PreviewBox box = RoadPlannerPreviewRenderer.previewBoxForTest(
                 new BlockPos(10, 64, 20),

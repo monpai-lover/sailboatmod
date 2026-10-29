@@ -13,6 +13,24 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class BuildPackagingTest {
     @Test
+    void tellusIsOnlyACompileTimeDependency() throws IOException {
+        String buildScript = Files.readString(Path.of("build.gradle"));
+
+        assertTrue(buildScript.contains("compileOnly files('libs/compile-only/Tellus-neoforge-1.21.1-0.8.3.jar')"),
+                "Tellus must be available to compile the optional compat package");
+        for (String line : buildScript.split("\\R")) {
+            if (line.contains("Tellus-neoforge")) {
+                assertTrue(line.trim().startsWith("compileOnly "), "Tellus must never be bundled: " + line);
+            }
+        }
+        String modsToml = Files.readString(Path.of("src/main/resources/META-INF/neoforge.mods.toml"));
+        int tellus = modsToml.indexOf("modId=\"tellus\"");
+        assertTrue(tellus > 0, "mods.toml should declare tellus");
+        assertTrue(modsToml.substring(tellus, Math.min(modsToml.length(), tellus + 120)).contains("type=\"optional\""),
+                "tellus must stay an optional dependency");
+    }
+
+    @Test
     void isolatedDevelopmentModuleHasEmbeddedSqliteDriverResource() throws IOException {
         try (InputStream driver = com.monpai.sailboatmod.market.db.MarketDatabase.class.getResourceAsStream(
                 "/META-INF/sailboatmod-libs/sqlite-jdbc-3.46.1.3.jar")) {

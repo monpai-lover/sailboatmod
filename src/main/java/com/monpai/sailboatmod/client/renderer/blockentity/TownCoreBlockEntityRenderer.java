@@ -1,5 +1,6 @@
 package com.monpai.sailboatmod.client.renderer.blockentity;
 
+import com.monpai.sailboatmod.client.renderer.HologramBillboard;
 import com.monpai.sailboatmod.block.entity.TownCoreBlockEntity;
 import com.mojang.blaze3d.vertex.PoseStack;
 import net.minecraft.client.Minecraft;
@@ -29,8 +30,7 @@ public class TownCoreBlockEntityRenderer implements BlockEntityRenderer<TownCore
 
         poseStack.pushPose();
         poseStack.translate(0.5D, 1.35D, 0.5D);
-        poseStack.mulPose(minecraft.getEntityRenderDispatcher().cameraOrientation());
-        poseStack.scale(-0.025F, -0.025F, 0.025F);
+        HologramBillboard.faceCamera(poseStack, minecraft.getEntityRenderDispatcher().cameraOrientation(), 0.025F);
 
         String title = blockEntity.getDisplayName() == null ? "" : blockEntity.getDisplayName().getString();
         String townName = blockEntity.getTownName();

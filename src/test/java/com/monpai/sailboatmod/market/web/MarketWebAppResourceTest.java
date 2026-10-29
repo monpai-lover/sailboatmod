@@ -636,4 +636,129 @@ class MarketWebAppResourceTest {
         assertTrue(start >= 0 && end > start, methodName + " method should be present");
         return source.substring(start, end);
     }
+    @Test
+    void mapJsWiresTellusLayers() throws Exception {
+        String map = Files.readString(MAP_JS);
+
+        assertTrue(map.contains("\"/api/map/world\""), "map.js should ask whether this is a Tellus world");
+        assertTrue(map.contains("/api/map/tellus/tile/"), "map.js should request Tellus prediction tiles");
+        assertTrue(map.contains("window.SailboatTellusBasemap"), "map.js should use the Tellus basemap module");
+        assertTrue(map.contains(".xyzCrops("), "the basemap layer should compose provider tiles");
+        assertTrue(map.contains(".shouldShowBasemap("), "non-Tellus worlds must not get the basemap");
+        assertTrue(map.contains("gcjOffsetMeters("), "GCJ-02 sources must be shifted");
+        assertTrue(map.contains("basemapUnavailable"), "repeated basemap failures should be explained");
+        assertTrue(map.contains("data-map-basemap"), "the toolbar should offer a basemap source picker");
+    }
+
+    @Test
+    void tileLayersNeverRedrawOutsideTheirZoomRange() throws Exception {
+        String map = Files.readString(MAP_JS).replace("\r\n", "\n");
+        int start = map.indexOf("function redrawSquaremapTerrain()");
+        String redraw = map.substring(start, map.indexOf("\n  }\n", start));
+        assertTrue(redraw.contains("tileLayerActiveAt("), "redraw below the layer's zoom range floods tile requests");
+
+        int tellus = map.indexOf("function createTellusTileLayer(");
+        String tellusLayer = map.substring(tellus, map.indexOf("\n  }\n", tellus));
+        assertFalse(tellusLayer.contains(".redraw("), "missing Tellus tiles are retried one by one, not by redrawing the layer");
+        assertTrue(tellusLayer.contains("bounds:"), "Tellus tiles are limited to the Earth's extent");
+    }
+
+    @Test
+    void logisticsRendererIsServedAndUsedByTheMap() throws Exception {
+        String index = Files.readString(Path.of("src/main/resources/marketweb/index.html"));
+        String server = Files.readString(Path.of("src/main/java/com/monpai/sailboatmod/market/web/MarketWebServer.java"));
+        String map = Files.readString(MAP_JS);
+
+        assertTrue(index.indexOf("/logistics-render.js") > 0 && index.indexOf("/logistics-render.js") < index.indexOf("/map.js"),
+                "the logistics renderer must load before map.js");
+        assertTrue(server.contains("\"/logistics-render.js\""), "the web server must serve the logistics renderer");
+        assertTrue(map.contains(".drawVehicle("), "vehicles are drawn by the logistics renderer");
+        assertTrue(map.contains("prefers-reduced-motion"), "trail and particle motion respects reduced motion");
+        assertFalse(map.contains("function drawSailboatIcon"), "the old hand-drawn icons are gone");
+    }
+
+    @Test
+    void traditionalChineseIsOfferedAndFollowsTheBrowser() throws Exception {
+        String index = Files.readString(Path.of("src/main/resources/marketweb/index.html"));
+        String server = Files.readString(Path.of("src/main/java/com/monpai/sailboatmod/market/web/MarketWebServer.java"));
+        String app = Files.readString(Path.of("src/main/resources/marketweb/app.js"));
+        String map = Files.readString(MAP_JS);
+
+        assertTrue(index.contains("value=\"zh-TW\""), "the language menu offers Traditional Chinese");
+        assertTrue(index.indexOf("/zh-tw.js") > 0 && index.indexOf("/zh-tw.js") < index.indexOf("/map.js"),
+                "the converter loads before map.js and app.js");
+        assertTrue(server.contains("\"/zh-tw.js\""), "the web server serves the converter");
+        assertTrue(app.contains("I18N[\"zh-TW\"]"), "app.js derives the zh-TW strings");
+        assertTrue(map.contains("LABELS[\"zh-TW\"]"), "map.js derives the zh-TW labels");
+        String appJs = app.replace("\r\n", "\n");
+        int start = appJs.indexOf("\nfunction preferredLocale(");
+        String preferred = appJs.substring(start, appJs.indexOf("\n}\n", start));
+        assertTrue(preferred.contains("navigator.languages"), "without a saved choice the page follows the browser language");
+        assertTrue(preferred.contains("zh-HK") || preferred.contains("hant"), "Hong Kong and Hant browsers get Traditional");
+    }
+
+    @Test
+    void shipmentCardsComeFromTheTestedPanelModule() throws Exception {
+        String index = Files.readString(Path.of("src/main/resources/marketweb/index.html"));
+        String server = Files.readString(Path.of("src/main/java/com/monpai/sailboatmod/market/web/MarketWebServer.java"));
+        String map = Files.readString(MAP_JS);
+
+        int render = index.indexOf("/logistics-render.js");
+        int panel = index.indexOf("/logistics-panel.js");
+        assertTrue(render > 0 && panel > render && panel < index.indexOf("/map.js"),
+                "the panel loads after the renderer it uses and before map.js");
+        assertTrue(server.contains("\"/logistics-panel.js\""), "the web server serves the panel module");
+        assertTrue(jsFunction(map, "renderShipments").contains(".cardHtml("), "list cards are built by the panel module");
+        assertTrue(jsFunction(map, "renderSelection").contains(".detailHtml("), "the detail card is built by the panel module");
+        assertFalse(map.contains("class=\"map-shipment-card\""), "no second copy of the card markup in map.js");
+    }
+
+    @Test
+    void shipmentHistoryIsServedWithTheLiveShipmentVisibilityRule() throws Exception {
+        String server = Files.readString(Path.of("src/main/java/com/monpai/sailboatmod/market/web/MarketWebServer.java"));
+        String service = Files.readString(Path.of("src/main/java/com/monpai/sailboatmod/market/logistics/ShippingTraceService.java"));
+        String handler = server.replace("\r\n", "\n");
+        int start = handler.indexOf("private void handleMapShipments(");
+        String body = handler.substring(start, handler.indexOf("\n    }\n", start));
+
+        assertTrue(body.contains("requireIdentity(exchange)"), "history needs a logged-in player like live shipments");
+        assertTrue(body.contains("\"history\""), "/api/map/shipments/history is answered here");
+        assertTrue(body.contains("gameTime"), "responses carry the server time for relative times");
+        assertTrue(service.contains("historyVisibleFor") && service.contains("canSee(trace,"),
+                "history and live shipments share one visibility check");
+    }
+
+    private static String jsFunction(String source, String name) {
+        String js = source.replace("\r\n", "\n");
+        int start = js.indexOf("function " + name + "(");
+        return js.substring(start, js.indexOf("\n  }\n", start));
+    }
+
+    @Test
+    void followCameraIsCheapAndYieldsToAnotherSelection() throws Exception {
+        String map = Files.readString(MAP_JS);
+        String loop = jsFunction(map, "stepShipmentLoop");
+        assertFalse(loop.contains("renderCanvas()"), "following must not resync the terrain map every frame");
+        assertTrue(loop.contains("FOLLOW_TERRAIN_SYNC_MS"), "terrain sync while following is throttled");
+        assertTrue(jsFunction(map, "renderShipments").contains("state.followShipmentId = \"\""),
+                "choosing another shipment in the list stops following the old one");
+    }
+
+    @Test
+    void refreshesKeepKeyboardFocus() throws Exception {
+        String map = Files.readString(MAP_JS);
+        assertTrue(jsFunction(map, "renderShipments").contains(".focus("), "the focused shipment card keeps focus across refreshes");
+        assertTrue(jsFunction(map, "renderSelection").contains(".focus("), "the Follow button keeps focus across refreshes");
+    }
+
+    @Test
+    void modeColoursHaveReadableLightThemeInks() throws Exception {
+        String css = Files.readString(Path.of("src/main/resources/marketweb/app.css"));
+        for (String kind : new String[]{"sailboat", "carriage", "train"}) {
+            assertTrue(css.contains(":root[data-theme=\"light\"] [data-kind=\"" + kind + "\"]"), "light-theme ink for " + kind);
+        }
+        int pct = css.indexOf(".map-shipment-pct {");
+        assertTrue(css.substring(pct, css.indexOf("}", pct)).contains("var(--mode-ink"), "percentages use the readable ink");
+    }
+
 }

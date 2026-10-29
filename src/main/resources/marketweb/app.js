@@ -1,6 +1,6 @@
 ﻿const state = {
   sessionToken: localStorage.getItem("marketWebSessionToken") || "",
-  locale: localStorage.getItem("marketWebLocale") || "zh-CN",
+  locale: preferredLocale(),
   session: null,
   webResourceVersion: "",
   markets: [],
@@ -1213,6 +1213,28 @@ Object.assign(I18N["zh-CN"], {
   mc_warehouse_count: "{count} 种物品",
   mc_warehouse_listed: "已从殖民地仓库上架。"
 });
+
+// Traditional Chinese is derived from the Simplified strings by the generated table in zh-tw.js.
+I18N["zh-TW"] = window.SailboatZhTw ? window.SailboatZhTw.convertAll(I18N["zh-CN"]) : I18N["zh-CN"];
+
+/** The saved choice, otherwise the browser language: Taiwan, Hong Kong, Macau and Hant get Traditional. */
+function preferredLocale() {
+  const saved = localStorage.getItem("marketWebLocale");
+  if (saved) {
+    return saved;
+  }
+  const languages = typeof navigator === "undefined" ? [] : (navigator.languages && navigator.languages.length ? navigator.languages : [navigator.language]);
+  for (const raw of languages) {
+    const lang = String(raw || "").toLowerCase();
+    if (lang.startsWith("zh")) {
+      return /hant|-tw|-hk|-mo/.test(lang) ? "zh-TW" : "zh-CN";
+    }
+    if (lang.startsWith("en")) {
+      return "en-US";
+    }
+  }
+  return "zh-CN";
+}
 
 function t(key, vars = {}) {
   const locale = I18N[state.locale] || I18N["en-US"];

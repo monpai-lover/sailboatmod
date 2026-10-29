@@ -99,8 +99,7 @@ public final class NationCoreRelocationPreviewRenderer {
         Font font = minecraft.font;
         poseStack.pushPose();
         poseStack.translate(0.5D, 1.45D, 0.5D);
-        poseStack.mulPose(minecraft.getEntityRenderDispatcher().cameraOrientation());
-        poseStack.scale(-0.025F, -0.025F, 0.025F);
+        HologramBillboard.faceCamera(poseStack, minecraft.getEntityRenderDispatcher().cameraOrientation(), 0.025F);
         float x = -font.width(label) / 2.0F;
         font.drawInBatch(label, x, 0, color, false, poseStack.last().pose(), bufferSource, Font.DisplayMode.SEE_THROUGH, 0x66000000, 0xF000F0);
         poseStack.popPose();

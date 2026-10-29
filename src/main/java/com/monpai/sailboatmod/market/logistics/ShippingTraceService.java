@@ -95,18 +95,47 @@ public final class ShippingTraceService {
             if (!isMapVisibleStatus(trace.status()) || trace.waypoints().size() < 2) {
                 continue;
             }
-            boolean ownShipment = !viewerUuid.isBlank() && viewerUuid.equals(trace.shipperUuid());
-            if (!ownShipment) {
-                ShippingOrder order = marketData.getShippingOrder(trace.shippingOrderId());
-                ownShipment = order != null && viewerUuid.equals(order.shipperUuid());
-            }
-            boolean sameNation = !viewerNationId.isBlank() && viewerNationId.equals(trace.nationId());
-            if (ownShipment || sameNation) {
+            if (canSee(trace, viewerUuid, viewerNationId, marketData)) {
                 out.add(trace);
             }
         }
         out.sort(Comparator.comparing(ShippingTraceRecord::updatedGameTime).reversed());
         return out;
+    }
+
+    /** Finished shipments the viewer may see, newest first: the same rule as live shipments. */
+    public static List<ShippingTraceSavedData.ArchivedShipment> historyVisibleFor(MinecraftServer server, MarketPlayerIdentity identity) {
+        if (server == null || identity == null) {
+            return List.of();
+        }
+        ServerLevel overworld = server.overworld();
+        NationMemberRecord member = NationSavedData.get(overworld).getMember(identity.playerUuid());
+        String viewerNationId = member == null ? "" : member.nationId();
+        String viewerUuid = identity.playerUuidString();
+        MarketSavedData marketData = MarketSavedData.get(overworld);
+        List<ShippingTraceSavedData.ArchivedShipment> out = new ArrayList<>();
+        for (ShippingTraceSavedData.ArchivedShipment archived : ShippingTraceSavedData.get(overworld).getHistory()) {
+            ShippingTraceRecord trace = archived.trace();
+            if (trace.waypoints().size() >= 2 && canSee(trace, viewerUuid, viewerNationId, marketData)) {
+                out.add(archived);
+            }
+        }
+        return out;
+    }
+
+    /** The shipper, or a member of the shipper's nation. */
+    private static boolean canSee(ShippingTraceRecord trace, String viewerUuid, String viewerNationId, MarketSavedData marketData) {
+        boolean ownShipment = !viewerUuid.isBlank() && viewerUuid.equals(trace.shipperUuid());
+        if (!ownShipment) {
+            ShippingOrder order = marketData.getShippingOrder(trace.shippingOrderId());
+            ownShipment = order != null && !viewerUuid.isBlank() && viewerUuid.equals(order.shipperUuid());
+        }
+        boolean sameNation = !viewerNationId.isBlank() && viewerNationId.equals(trace.nationId());
+        return ownShipment || sameNation;
+    }
+
+    public static List<ShippingTraceEvent> eventsFor(MinecraftServer server, String shippingOrderId) {
+        return server == null ? List.of() : ShippingTraceSavedData.get(server.overworld()).getEvents(shippingOrderId);
     }
 
     public static List<MarketWebMapDtos.ShipmentTrace> toDtos(MinecraftServer server, List<ShippingTraceRecord> traces) {
@@ -316,18 +345,18 @@ public final class ShippingTraceService {
     }
 
     /**
-     * 载具名：订单轨迹优先用订单存的船名 boatName；都没有则按运输方式回退「帆船」(PORT) / 「马车」(LAND)。
+     * 载具名：订单轨迹优先用订单存的船名 boatName；都没有则按运输方式回退「帆船」/「马车」/「列车」。
      */
     private static String resolveVehicleName(ShippingTraceRecord trace, ShippingOrder order,
                                              net.minecraft.world.level.Level level) {
         if (order != null && order.boatName() != null && !order.boatName().isBlank()) {
             return order.boatName().trim();
         }
-        String mode = trace.transportMode() == null ? "" : trace.transportMode().trim().toUpperCase(Locale.ROOT);
-        if ("LAND".equals(mode)) {
-            return "马车";
+        String external = EXTERNAL_VEHICLE_NAMES.get(trace.shippingOrderId());
+        if (external != null) {
+            return external;
         }
-        return "帆船";
+        return TransportModes.defaultVehicleName(trace.transportMode());
     }
 
     /**
@@ -456,8 +485,8 @@ public final class ShippingTraceService {
         List<String> toRemove = new ArrayList<>();
         for (ShippingTraceRecord trace : traceData.getTraces()) {
             String id = trace.shippingOrderId();
-            if (id.isBlank()) {
-                continue;
+            if (id.isBlank() || isManagedExternally(id)) {
+                continue; // external traces have no entity here; their integration removes them
             }
             // 解析轨迹对应的载具 uuid：订单轨迹用订单的 boatUuid；手动轨迹 id 形如 "manual-<uuid>"。
             java.util.UUID vehicleUuid = resolveTraceVehicleUuid(marketData, trace, id);
@@ -522,7 +551,8 @@ public final class ShippingTraceService {
     /**
      * 为手动发车的载具建/更新一条 manual Trace（无市场订单）。
      * @param waypoints 载具 autopilotRoute 路点；少于 2 点不建
-     * @param transportMode "PORT"(水) / "LAND"(陆)；status 可见状态 "SAILING"/"IN_TRANSIT"
+     * @param transportMode {@link TransportModes#PORT}(水) / {@link TransportModes#LAND}(陆) / {@link TransportModes#RAIL}(铁路,
+     *                      预留给 Create 列车物流)；status 可见状态 "SAILING"/"IN_TRANSIT"
      * @param sourceName 出发地名（空则回退"手动"）
      * @param targetName 目的地名（空则回退"手动"）
      */
@@ -546,6 +576,70 @@ public final class ShippingTraceService {
                 waypoints, 0, 0.0D, gameTime, gameTime, currentX, currentZ, 0.0D,
                 cargo == null ? List.of() : cargo, true);
         ShippingTraceSavedData.get(level).putTrace(rec);
+    }
+
+    /** Trace ids written by another mod's integration (Create trains); that integration also removes them. */
+    public static final String EXTERNAL_TRACE_PREFIX = "external-";
+    /** Vehicle names of external traces (a train's name); refreshed with every update, so not saved. */
+    private static final Map<String, String> EXTERNAL_VEHICLE_NAMES = new java.util.concurrent.ConcurrentHashMap<>();
+
+    /**
+     * A shipment reported by another transport mod. {@code targetPointIndex} is the waypoint it is heading to,
+     * as for boats and carriages; {@code currentSpeed} is in blocks per tick.
+     */
+    public record ExternalShipment(String traceId,
+                                   String shipperUuid,
+                                   String nationId,
+                                   String transportMode,
+                                   String status,
+                                   String sourceName,
+                                   String targetName,
+                                   String vehicleName,
+                                   List<Vec3> waypoints,
+                                   int targetPointIndex,
+                                   double progressRatio,
+                                   double currentX,
+                                   double currentZ,
+                                   double currentSpeed,
+                                   List<MarketWebMapDtos.CargoItem> cargo) {
+    }
+
+    public static boolean isManagedExternally(String traceId) {
+        return traceId != null && traceId.startsWith(EXTERNAL_TRACE_PREFIX);
+    }
+
+    /**
+     * Creates or refreshes a shipment from another mod in one write, keeping when it started, so its timeline and
+     * history work like a boat's. For Create trains see {@code compat.create.CreateRailLogistics}.
+     */
+    public static void upsertExternalTrace(Level level, ExternalShipment shipment) {
+        if (!(level instanceof ServerLevel serverLevel) || shipment == null || !isManagedExternally(shipment.traceId())
+                || shipment.waypoints() == null || shipment.waypoints().size() < 2) {
+            return;
+        }
+        ShippingTraceSavedData data = ShippingTraceSavedData.get(serverLevel);
+        data.putTrace(mergeExternal(data.getTrace(shipment.traceId()), shipment, serverLevel.getGameTime()));
+        if (shipment.vehicleName() != null && !shipment.vehicleName().isBlank()) {
+            EXTERNAL_VEHICLE_NAMES.put(shipment.traceId(), shipment.vehicleName().trim());
+        }
+    }
+
+    public static void removeExternalTrace(Level level, String traceId) {
+        if (isManagedExternally(traceId)) {
+            removeTrace(level, traceId);
+            EXTERNAL_VEHICLE_NAMES.remove(traceId);
+        }
+    }
+
+    static ShippingTraceRecord mergeExternal(ShippingTraceRecord existing, ExternalShipment s, long gameTime) {
+        // Owner and nation are current access grants. Empty values revoke previous grants rather than inheriting them.
+        return new ShippingTraceRecord(
+                s.traceId(), s.shipperUuid(), MarketWebMapConstants.OVERWORLD, s.transportMode(), s.status(),
+                s.nationId(), "", s.sourceName(), s.targetName(), s.waypoints(),
+                s.targetPointIndex(), s.progressRatio(),
+                existing == null ? gameTime : existing.startedGameTime(), gameTime,
+                s.currentX(), s.currentZ(), s.currentSpeed(),
+                s.cargo() == null ? List.of() : s.cargo(), true);
     }
 
     /** 写入载具实时坐标（调度车/手动车通用）。 */

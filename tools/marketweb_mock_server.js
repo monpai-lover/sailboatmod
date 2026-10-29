@@ -370,9 +370,167 @@ function serveStatic(exchange, pathname) {
   });
 }
 
+// ---- world map preview data: three moving routes (sea, road, rail) and one stuck carriage ----
+const mapRoutes = [
+  { id: "demo-sea", mode: "PORT", status: "SAILING", from: "Tema Harbour", to: "Lomé Docks", fromTown: "Tema", toTown: "Lomé",
+    vehicle: "Aurora", owner: "PreviewPlayer", period: 90, speed: 0.42,
+    cargo: [{ name: "Wheat", quantity: 64, recipient: "Lomé Market" }, { name: "Salt", quantity: 32, recipient: "" }],
+    points: [[-180, 120], [-120, 60], [-40, 40], [40, 70], [120, 40], [190, -20]] },
+  { id: "demo-road", mode: "LAND", status: "IN_TRANSIT", from: "Accra Post", to: "Kumasi Post", fromTown: "Accra", toTown: "Kumasi",
+    vehicle: "Wagon 3", owner: "Kofi", period: 70, speed: 0.21,
+    cargo: [{ name: "Iron ingot", quantity: 24, recipient: "Kumasi Smithy" }],
+    points: [[-160, -140], [-90, -110], [-30, -130], [30, -90], [80, -110], [140, -70]] },
+  { id: "demo-rail", mode: "RAIL", status: "IN_TRANSIT", from: "Lagos Yard", to: "Ibadan Yard", fromTown: "Lagos", toTown: "Ibadan",
+    vehicle: "Express 7", owner: "Ada", period: 50, speed: 0.6,
+    cargo: [{ name: "Coal", quantity: 128, recipient: "" }, { name: "Glass", quantity: 16, recipient: "Ibadan Market" }, { name: "Brick", quantity: 64, recipient: "" }],
+    points: [[-200, 10], [-100, 10], [-20, -30], [60, -30], [150, 0], [220, 0]] },
+  { id: "demo-stuck", mode: "LAND", status: "STUCK", from: "Cape Coast", to: "Elmina", fromTown: "Cape Coast", toTown: "Elmina",
+    vehicle: "Cart 1", owner: "PreviewPlayer", period: 0, speed: 0, fixed: 0.45,
+    cargo: [{ name: "Fish", quantity: 40, recipient: "Elmina Market" }],
+    points: [[60, 150], [100, 130], [150, 140], [200, 110]] }
+];
+
+function routePosition(points, ratio) {
+  const lengths = [];
+  let total = 0;
+  for (let i = 1; i < points.length; i++) {
+    const d = Math.hypot(points[i][0] - points[i - 1][0], points[i][1] - points[i - 1][1]);
+    lengths.push(d);
+    total += d;
+  }
+  let target = total * ratio;
+  for (let i = 0; i < lengths.length; i++) {
+    if (target <= lengths[i] || i === lengths.length - 1) {
+      const t = lengths[i] === 0 ? 0 : Math.min(1, target / lengths[i]);
+      return {
+        completed: i,
+        x: points[i][0] + (points[i + 1][0] - points[i][0]) * t,
+        z: points[i][1] + (points[i + 1][1] - points[i][1]) * t,
+        total
+      };
+    }
+    target -= lengths[i];
+  }
+  return { completed: 0, x: points[0][0], z: points[0][1], total };
+}
+
+function mapShipments() {
+  const now = Date.now() / 1000;
+  return mapRoutes.map((route) => {
+    const ratio = route.period ? (now % route.period) / route.period : route.fixed;
+    const pos = routePosition(route.points, ratio);
+    const vehicleKind = route.mode === "RAIL" ? "train" : route.mode === "PORT" ? "sailboat" : "carriage";
+    return {
+      shippingOrderId: route.id,
+      label: route.vehicle,
+      transportMode: route.mode,
+      vehicleKind,
+      status: route.status,
+      sourceName: route.from,
+      targetName: route.to,
+      sourceTownName: route.fromTown,
+      targetTownName: route.toTown,
+      vehicleName: route.vehicle,
+      ownerName: route.owner,
+      etaSeconds: route.period ? Math.round((1 - ratio) * route.period) : 0,
+      currentSpeed: route.speed,
+      cargo: route.cargo,
+      points: route.points.map(([x, z]) => ({ x, z })),
+      // like the game: the waypoint the vehicle is heading to (autopilotTargetIndex)
+      targetPointIndex: Math.min(route.points.length - 1, pos.completed + 1),
+      completedPointCount: Math.min(route.points.length - 1, pos.completed + 1),
+      progressRatio: ratio,
+      manual: route.id === "demo-road",
+      current: { x: pos.x, z: pos.z },
+      events: demoEvents(route, ratio)
+    };
+  });
+}
+
+/** Mock server time in ticks (20 per second), like the game's overworld game time. */
+function gameTime() {
+  return Math.floor(Date.now() / 50);
+}
+
+function demoEvents(route, ratio) {
+  const [x0, z0] = route.points[0];
+  const [x1, z1] = route.points[Math.floor(route.points.length / 2)];
+  const events = [{ kind: "DEPARTED", gameTime: gameTime() - 20 * 60 * 9, x: x0, z: z0 }];
+  if (route.status === "STUCK") {
+    events.push({ kind: "STUCK", gameTime: gameTime() - 20 * 60 * 2, x: x1, z: z1 });
+  } else if (ratio > 0.5) {
+    events.push({ kind: "STUCK", gameTime: gameTime() - 20 * 60 * 6, x: x1, z: z1 });
+    events.push({ kind: route.mode === "PORT" ? "SAILING" : "IN_TRANSIT", gameTime: gameTime() - 20 * 60 * 5, x: x1, z: z1 });
+  }
+  return events;
+}
+
+/** A few finished shipments for the History view. */
+function mapShipmentHistory() {
+  const now = gameTime();
+  return mapShipments().slice(0, 3).map((shipment, i) => {
+    const outcome = ["DELIVERED", "CLAIMED", "FAILED"][i];
+    const ended = now - 20 * 60 * (12 + i * 55);
+    const last = shipment.points[shipment.points.length - 1];
+    return Object.assign({}, shipment, {
+      shippingOrderId: `${shipment.shippingOrderId}-done`,
+      status: outcome,
+      progressRatio: outcome === "FAILED" ? 0.6 : 1,
+      etaSeconds: 0,
+      currentSpeed: 0,
+      endedGameTime: ended,
+      events: [
+        { kind: "DEPARTED", gameTime: ended - 20 * 60 * 20, x: shipment.points[0].x, z: shipment.points[0].z },
+        { kind: outcome, gameTime: ended, x: last.x, z: last.z }
+      ]
+    });
+  });
+}
+
+function handleMap(pathname, response) {
+  if (pathname === "/api/map/snapshot") {
+    json(response, 200, { dimensionId: "minecraft:overworld", unknownColor: "#000000", tileSize: 512, lod: 1, renderVersion: 1,
+      tileEpoch: 0, defaultFocus: { x: 0, z: 0 }, territoryRevision: 0, marketRevision: 0 });
+    return true;
+  }
+  if (pathname === "/api/map/markets") {
+    json(response, 200, { markets: [] });
+    return true;
+  }
+  if (pathname === "/api/map/territories") {
+    json(response, 200, { territories: [] });
+    return true;
+  }
+  if (pathname === "/api/map/shipments/history") {
+    json(response, 200, { ok: true, history: mapShipmentHistory(), gameTime: gameTime() });
+    return true;
+  }
+  if (pathname === "/api/map/shipments") {
+    json(response, 200, { ok: true, shipments: mapShipments(), gameTime: gameTime() });
+    return true;
+  }
+  if (pathname === "/api/map/world") {
+    json(response, 200, { tellus: false, worldScale: 0, tellusTileMaxZoom: -1 });
+    return true;
+  }
+  if (pathname === "/api/map/render/status") {
+    json(response, 200, { running: false });
+    return true;
+  }
+  if (pathname.startsWith("/api/map/")) {
+    text(response, 404, "Tile not found");
+    return true;
+  }
+  return false;
+}
+
 function handle(request, response) {
   const url = new URL(request.url, "http://127.0.0.1");
   const pathname = decodeURIComponent(url.pathname);
+
+  if (handleMap(pathname, response)) {
+    return;
+  }
 
   if (pathname === "/config.json") {
     json(response, 200, {

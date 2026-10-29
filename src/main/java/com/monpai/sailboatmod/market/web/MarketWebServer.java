@@ -127,13 +127,119 @@ public final class MarketWebServer {
         LOGGER.info("Market web resources reloaded (resource version {})", version);
     }
 
+    /** Larger request bodies are refused (413) before parsing; an unbounded body could exhaust the server's memory. */
+    static final int MAX_REQUEST_BODY_BYTES = 64 * 1024;
+    /** Failed logins allowed per address and per username in {@link #LOGIN_WINDOW_MILLIS}. */
+    private static final long LOGIN_WINDOW_MILLIS = 15 * 60_000L;
+    private static final MarketWebLoginThrottle LOGIN_BY_ADDRESS = new MarketWebLoginThrottle(10, LOGIN_WINDOW_MILLIS, System::currentTimeMillis);
+    private static final MarketWebLoginThrottle LOGIN_BY_USERNAME = new MarketWebLoginThrottle(10, LOGIN_WINDOW_MILLIS, System::currentTimeMillis);
+    private static final java.util.regex.Pattern FLAG_ID = java.util.regex.Pattern.compile("[A-Za-z0-9_-]{1,128}");
+
+    /**
+     * 16 request threads and 256 waiting requests. Past that a request is refused, and HttpServer closes its
+     * connection; it is never run on the accepting thread, which would stop all other connections.
+     * Core size equals the maximum: with a bounded queue, threads past the core size only start once it is full.
+     */
+    static java.util.concurrent.ThreadPoolExecutor newRequestExecutor() {
+        java.util.concurrent.atomic.AtomicInteger counter = new java.util.concurrent.atomic.AtomicInteger();
+        java.util.concurrent.ThreadPoolExecutor executor = new java.util.concurrent.ThreadPoolExecutor(
+                16, 16, 60L, java.util.concurrent.TimeUnit.SECONDS,
+                new java.util.concurrent.ArrayBlockingQueue<>(256),
+                runnable -> {
+                    Thread thread = new Thread(runnable, "sailboatmod-market-web-" + counter.incrementAndGet());
+                    thread.setDaemon(true);
+                    return thread;
+                },
+                new java.util.concurrent.ThreadPoolExecutor.AbortPolicy());
+        executor.allowCoreThreadTimeOut(true);
+        return executor;
+    }
+
+    /** A relative resource path with no empty, "." or ".." segments and no backslashes. */
+    static boolean isSafeResourcePath(String relative) {
+        return relative != null && !relative.isEmpty() && relative.indexOf('\\') < 0 && relative.indexOf('\0') < 0
+                && Arrays.stream(relative.split("/", -1))
+                        .noneMatch(segment -> segment.isEmpty() || ".".equals(segment) || "..".equals(segment));
+    }
+
+    /** Flag ids are generated names: letters, digits, '_' and '-'. Anything else could name another file. */
+    static boolean isSafeFlagId(String flagId) {
+        return flagId != null && FLAG_ID.matcher(flagId).matches();
+    }
+
+    private static void applySecurityHeaders(Headers headers) {
+        headers.set("X-Content-Type-Options", "nosniff");
+        headers.set("X-Frame-Options", "DENY");
+        headers.set("Referrer-Policy", "no-referrer");
+    }
+
+    private static String clientAddress(HttpExchange exchange) {
+        InetSocketAddress remote = exchange.getRemoteAddress();
+        String direct = remote == null || remote.getAddress() == null ? "unknown" : remote.getAddress().getHostAddress();
+        java.util.Set<String> proxies;
+        try {
+            proxies = com.monpai.sailboatmod.ModConfig.marketWebTrustedProxies();
+        } catch (RuntimeException configNotLoaded) {
+            proxies = java.util.Set.of();
+        }
+        return MarketWebLoginThrottle.clientAddress(direct, exchange.getRequestHeaders().getFirst("X-Forwarded-For"), proxies);
+    }
+
+    /** Per username and address, so nobody can lock another player out of their account from elsewhere. */
+    private static String usernameKey(HttpExchange exchange, String username) {
+        return username == null || username.isBlank() ? null
+                : "user:" + username.trim().toLowerCase(Locale.ROOT) + "|ip:" + clientAddress(exchange);
+    }
+
+    private static boolean loginAllowed(HttpExchange exchange, String username) throws IOException {
+        String userKey = usernameKey(exchange, username);
+        boolean allowed = LOGIN_BY_ADDRESS.allowed("ip:" + clientAddress(exchange))
+                && (userKey == null || LOGIN_BY_USERNAME.allowed(userKey));
+        if (!allowed) {
+            writeJson(exchange, 429, error("too_many_attempts", "Too many failed attempts. Try again in 15 minutes."));
+        }
+        return allowed;
+    }
+
+    /** Only wrong credentials and tokens count as failures; form mistakes such as a taken username do not. */
+    private static boolean isCredentialFailure(String errorCode) {
+        return errorCode == null || "invalid_credentials".equals(errorCode) || "invalid_token".equals(errorCode);
+    }
+
+    private static void recordLogin(HttpExchange exchange, String username, boolean ok, String errorCode) {
+        if (!ok && !isCredentialFailure(errorCode)) {
+            return;
+        }
+        String address = "ip:" + clientAddress(exchange);
+        String user = usernameKey(exchange, username);
+        if (ok) {
+            LOGIN_BY_ADDRESS.recordSuccess(address);
+            if (user != null) {
+                LOGIN_BY_USERNAME.recordSuccess(user);
+            }
+        } else {
+            LOGIN_BY_ADDRESS.recordFailure(address);
+            if (user != null) {
+                LOGIN_BY_USERNAME.recordFailure(user);
+            }
+        }
+    }
+
     private void startInternal() throws IOException {
         InetSocketAddress address = new InetSocketAddress(
                 com.monpai.sailboatmod.ModConfig.marketWebBindHost(),
                 com.monpai.sailboatmod.ModConfig.marketWebPort()
         );
+        // Drop connections that never finish sending a request (slowloris) or never read the answer. Read once by
+        // the JDK when its first HttpServer starts, so a value already set elsewhere is left alone.
+        if (System.getProperty("sun.net.httpserver.maxReqTime") == null) {
+            System.setProperty("sun.net.httpserver.maxReqTime", "30");
+        }
+        if (System.getProperty("sun.net.httpserver.maxRspTime") == null) {
+            System.setProperty("sun.net.httpserver.maxRspTime", "120");
+        }
         httpServer = HttpServer.create(address, 0);
-        executor = Executors.newCachedThreadPool();
+        executor = newRequestExecutor();
         httpServer.setExecutor(executor);
         createContext("/api/auth/token-login", this::handleTokenLogin);
         createContext("/api/auth/password-login", this::handlePasswordLogin);
@@ -147,6 +253,8 @@ public final class MarketWebServer {
         createContext("/api/map/shipments", this::handleMapShipments);
         createContext("/api/map/render/status", this::handleMapRenderStatus);
         createContext("/api/map/square/tile", this::handleSquareMapTile);
+        createContext("/api/map/world", this::handleMapWorld);
+        createContext("/api/map/tellus/tile", this::handleTellusMapTile);
         createContext("/api/map/tile", this::handleMapTile);
         createContext("/api/map/flags", this::handleMapFlag);
         createContext("/api/items/resolve", this::handleItemResolve);
@@ -193,9 +301,16 @@ public final class MarketWebServer {
             return;
         }
         JsonObject body = readBody(exchange);
+        if (body == null) {
+            writeJson(exchange, 413, error("payload_too_large", "Request body too large"));
+            return;
+        }
         String token = stringValue(body, "token");
         String username = stringValue(body, "username");
         String password = stringValue(body, "password");
+        if (!loginAllowed(exchange, username)) {
+            return;
+        }
         boolean wantsBind = !username.isBlank() || !password.isBlank();
         MarketWebAuthManager.AuthResult result;
         if (wantsBind) {
@@ -206,6 +321,7 @@ public final class MarketWebServer {
                     ? MarketWebAuthManager.AuthResult.invalid("invalid_token", "Invalid token")
                     : new MarketWebAuthManager.AuthResult(session, "", false, null, null);
         }
+        recordLogin(exchange, username, result.ok(), result.errorCode());
         if (!result.ok()) {
             writeJson(exchange, 401, error(result.errorCode() == null ? "invalid_token" : result.errorCode(), result.message() == null ? "Invalid token" : result.message()));
             return;
@@ -221,10 +337,19 @@ public final class MarketWebServer {
             return;
         }
         JsonObject body = readBody(exchange);
+        if (body == null) {
+            writeJson(exchange, 413, error("payload_too_large", "Request body too large"));
+            return;
+        }
+        String username = stringValue(body, "username");
+        if (!loginAllowed(exchange, username)) {
+            return;
+        }
         MarketWebAuthManager.AuthResult result = auth.loginWithAccount(
-                stringValue(body, "username"),
+                username,
                 stringValue(body, "password")
         );
+        recordLogin(exchange, username, result.ok(), result.errorCode());
         if (!result.ok()) {
             writeJson(exchange, 401, error(result.errorCode() == null ? "invalid_credentials" : result.errorCode(), result.message() == null ? "Invalid username or password" : result.message()));
             return;
@@ -314,6 +439,10 @@ public final class MarketWebServer {
                 return;
             }
             JsonObject body = readBody(exchange);
+            if (body == null) {
+                writeJson(exchange, 413, error("payload_too_large", "Request body too large"));
+                return;
+            }
             if (path.size() == 4 && "probe-modes".equals(path.get(3))) {
                 JsonObject probe = callOnServerThread(() -> service.probeFulfillmentModes(
                         minecraftServer,
@@ -463,6 +592,10 @@ public final class MarketWebServer {
             }
             String listingId = path.get(2);
             JsonObject body = readBody(exchange);
+            if (body == null) {
+                writeJson(exchange, 413, error("payload_too_large", "Request body too large"));
+                return;
+            }
             boolean ok = callOnServerThread(() -> service.purchaseAggregated(
                     minecraftServer,
                     identity,
@@ -530,9 +663,16 @@ public final class MarketWebServer {
         if (identity == null) {
             return;
         }
+        boolean history = pathParts(exchange.getRequestURI().getPath()).contains("history");
         JsonObject out = callOnServerThread(() -> {
             JsonObject json = success();
-            json.add("shipments", service.mapShipments(minecraftServer, identity));
+            if (history) {
+                json.add("history", service.mapShipmentHistory(minecraftServer, identity));
+            } else {
+                json.add("shipments", service.mapShipments(minecraftServer, identity));
+            }
+            // Server time in ticks, so the page can show how long ago each timeline event happened.
+            json.addProperty("gameTime", minecraftServer.overworld().getGameTime());
             return json;
         });
         writeJson(exchange, 200, out);
@@ -596,6 +736,43 @@ public final class MarketWebServer {
         writeBytes(exchange, 200, "image/png", bytes);
     }
 
+    /** {@code GET /api/map/world}:是否 Tellus 世界、世界比例、预测层最远层级。 */
+    private void handleMapWorld(HttpExchange exchange) throws IOException {
+        if (!"GET".equalsIgnoreCase(exchange.getRequestMethod())) {
+            writeJson(exchange, 405, error("method_not_allowed", "Method not allowed"));
+            return;
+        }
+        JsonObject json = callOnServerThread(() -> service.worldInfo(minecraftServer));
+        exchange.getResponseHeaders().set("Cache-Control", "no-cache, max-age=0");
+        writeJson(exchange, 200, json);
+    }
+
+    /** {@code GET /api/map/tellus/tile/{z}/{x}_{y}.png}:Tellus 预测层瓦片;尚未画好回 404(已排入渲染)。 */
+    private void handleTellusMapTile(HttpExchange exchange) throws IOException {
+        if (!"GET".equalsIgnoreCase(exchange.getRequestMethod())) {
+            writeJson(exchange, 405, error("method_not_allowed", "Method not allowed"));
+            return;
+        }
+        List<String> path = pathParts(exchange.getRequestURI().getPath());
+        if (path.size() != 6) {
+            writeJson(exchange, 404, error("not_found", "Tile not found"));
+            return;
+        }
+        Integer zoom = parseInt(path.get(4));
+        TileName tile = parseTileName(path.get(5));
+        if (zoom == null || tile == null) {
+            writeJson(exchange, 404, error("not_found", "Tile not found"));
+            return;
+        }
+        byte[] bytes = callOnServerThread(() -> service.tellusTile(minecraftServer, zoom, tile.x(), tile.z()));
+        if (bytes == null || bytes.length == 0) {
+            writeJson(exchange, 404, error("not_found", "Tile not found"));
+            return;
+        }
+        exchange.getResponseHeaders().set("Cache-Control", "public, max-age=86400, immutable");
+        writeBytes(exchange, 200, "image/png", bytes);
+    }
+
     private void handleMapRenderStatus(HttpExchange exchange) throws IOException {
         if (!"GET".equalsIgnoreCase(exchange.getRequestMethod())) {
             writeJson(exchange, 405, error("method_not_allowed", "Method not allowed"));
@@ -619,6 +796,10 @@ public final class MarketWebServer {
         }
         String rawFlagId = path.get(3).substring(0, path.get(3).length() - ".png".length());
         String flagId = URLDecoder.decode(rawFlagId, StandardCharsets.UTF_8);
+        if (!isSafeFlagId(flagId)) {
+            writeJson(exchange, 404, error("not_found", "Flag not found"));
+            return;
+        }
         byte[] bytes = callOnServerThread(() -> service.mapFlag(minecraftServer, flagId));
         if (bytes == null || bytes.length == 0) {
             writeJson(exchange, 404, error("not_found", "Flag not found"));
@@ -655,14 +836,29 @@ public final class MarketWebServer {
             writeStatic(exchange, "marketweb/map.js", "application/javascript; charset=utf-8");
             return;
         }
+        if ("/tellus-basemap.js".equals(path)) {
+            writeStatic(exchange, "marketweb/tellus-basemap.js", "application/javascript; charset=utf-8");
+            return;
+        }
+        if ("/zh-tw.js".equals(path)) {
+            writeStatic(exchange, "marketweb/zh-tw.js", "application/javascript; charset=utf-8");
+            return;
+        }
+        if ("/logistics-panel.js".equals(path)) {
+            writeStatic(exchange, "marketweb/logistics-panel.js", "application/javascript; charset=utf-8");
+            return;
+        }
+        if ("/logistics-render.js".equals(path)) {
+            writeStatic(exchange, "marketweb/logistics-render.js", "application/javascript; charset=utf-8");
+            return;
+        }
         if ("/config.json".equals(path)) {
             writeStatic(exchange, "marketweb/config.json", "application/json; charset=utf-8");
             return;
         }
         if (path.startsWith("/vendor/leaflet/")) {
             String resourcePath = path.substring(1);
-            if (path.indexOf('\\') >= 0 || Arrays.stream(resourcePath.split("/", -1))
-                    .anyMatch(segment -> segment.isEmpty() || ".".equals(segment) || "..".equals(segment))) {
+            if (!isSafeResourcePath(resourcePath)) {
                 writeJson(exchange, 404, error("not_found", "Not found"));
                 return;
             }
@@ -671,6 +867,10 @@ public final class MarketWebServer {
         }
         if (path.startsWith("/assets/")) {
             String resourcePath = path.substring(1);
+            if (!isSafeResourcePath(resourcePath)) {
+                writeJson(exchange, 404, error("not_found", "Not found"));
+                return;
+            }
             writeStatic(exchange, resourcePath, contentType(resourcePath));
             return;
         }
@@ -737,6 +937,7 @@ public final class MarketWebServer {
             return;
         }
         Headers headers = exchange.getResponseHeaders();
+        applySecurityHeaders(headers);
         String etag = "\"" + ICON_CACHE_VERSION + ":v" + resourceVersion.get() + ":" + Integer.toHexString(commodityKey.hashCode()) + "\"";
         String ifNoneMatch = exchange.getRequestHeaders().getFirst("If-None-Match");
         if (etag.equals(ifNoneMatch)) {
@@ -856,6 +1057,7 @@ public final class MarketWebServer {
             if (devFile != null && Files.isRegularFile(devFile)) {
                 byte[] bytes = Files.readAllBytes(devFile);
                 Headers headers = exchange.getResponseHeaders();
+                applySecurityHeaders(headers);
                 headers.set("Content-Type", contentType);
                 headers.set("X-Web-Resource-Version", Long.toString(resourceVersion.get()));
                 applyNoCache(headers);
@@ -874,6 +1076,7 @@ public final class MarketWebServer {
             }
             byte[] bytes = stream.readAllBytes();
             Headers headers = exchange.getResponseHeaders();
+            applySecurityHeaders(headers);
             headers.set("Content-Type", contentType);
             headers.set("X-Web-Resource-Version", Long.toString(resourceVersion.get()));
             // 生产环境也禁用缓存:之前仅 devMode 才发 no-cache,生产下 /app.css /app.js /index.html 不带任何缓存头 →
@@ -1031,10 +1234,17 @@ public final class MarketWebServer {
         return identity != null ? identity : new MarketPlayerIdentity(null, "", null);
     }
 
+    /** The request's JSON object (empty when malformed), or null when the body exceeds {@link #MAX_REQUEST_BODY_BYTES}. */
     private static JsonObject readBody(HttpExchange exchange) throws IOException {
-        try (InputStream stream = exchange.getRequestBody();
-             InputStreamReader reader = new InputStreamReader(stream, StandardCharsets.UTF_8)) {
-            return JsonParser.parseReader(reader).getAsJsonObject();
+        byte[] bytes;
+        try (InputStream stream = exchange.getRequestBody()) {
+            bytes = stream.readNBytes(MAX_REQUEST_BODY_BYTES + 1);
+        }
+        if (bytes.length > MAX_REQUEST_BODY_BYTES) {
+            return null;
+        }
+        try {
+            return JsonParser.parseString(new String(bytes, StandardCharsets.UTF_8)).getAsJsonObject();
         } catch (Exception ignored) {
             return new JsonObject();
         }
@@ -1043,6 +1253,7 @@ public final class MarketWebServer {
     private static void writeJson(HttpExchange exchange, int status, JsonObject body) throws IOException {
         byte[] bytes = GSON.toJson(body).getBytes(StandardCharsets.UTF_8);
         Headers headers = exchange.getResponseHeaders();
+        applySecurityHeaders(headers);
         headers.set("Content-Type", "application/json; charset=utf-8");
         exchange.sendResponseHeaders(status, bytes.length);
         try (OutputStream output = exchange.getResponseBody()) {
@@ -1053,6 +1264,7 @@ public final class MarketWebServer {
     private static void writeBytes(HttpExchange exchange, int status, String contentType, byte[] bytes) throws IOException {
         byte[] safeBytes = bytes == null ? new byte[0] : bytes;
         Headers headers = exchange.getResponseHeaders();
+        applySecurityHeaders(headers);
         headers.set("Content-Type", contentType == null || contentType.isBlank() ? "application/octet-stream" : contentType);
         exchange.sendResponseHeaders(status, safeBytes.length);
         try (OutputStream output = exchange.getResponseBody()) {

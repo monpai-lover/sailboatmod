@@ -20,6 +20,11 @@ final class RoadFootprintPlanner {
     }
 
     static List<BlockPos> surfacePositions(List<RoadCenterlinePoint> centerline, int index, int width) {
+        return surfacePositions(centerline, index, width, new CenterlineSegmentLocator(centerline));
+    }
+
+    /** Same as {@link #surfacePositions(List, int, int)}, reusing one locator for the whole centerline. */
+    static List<BlockPos> surfacePositions(List<RoadCenterlinePoint> centerline, int index, int width, CenterlineSegmentLocator locator) {
         if (centerline == null || centerline.isEmpty() || index < 0 || index >= centerline.size()) {
             return List.of();
         }
@@ -38,11 +43,11 @@ final class RoadFootprintPlanner {
         LinkedHashSet<BlockPos> columns = new LinkedHashSet<>();
         columns.add(center);
         if (outsideSign == 0) {
-            addRibbonSide(columns, center, basis.normalX(), basis.normalZ(), halfWidth, 1, centerline);
-            addRibbonSide(columns, center, basis.normalX(), basis.normalZ(), halfWidth, -1, centerline);
+            addRibbonSide(columns, center, basis.normalX(), basis.normalZ(), halfWidth, 1, centerline, locator);
+            addRibbonSide(columns, center, basis.normalX(), basis.normalZ(), halfWidth, -1, centerline, locator);
         } else {
-            addRibbonSide(columns, center, basis.normalX(), basis.normalZ(), outsideHalfWidth, outsideSign, centerline);
-            addRibbonSide(columns, center, basis.normalX(), basis.normalZ(), halfWidth, -outsideSign, centerline);
+            addRibbonSide(columns, center, basis.normalX(), basis.normalZ(), outsideHalfWidth, outsideSign, centerline, locator);
+            addRibbonSide(columns, center, basis.normalX(), basis.normalZ(), halfWidth, -outsideSign, centerline, locator);
         }
         return List.copyOf(columns);
     }
@@ -60,13 +65,17 @@ final class RoadFootprintPlanner {
     }
 
     static int interpolateTerrainY(int x, int z, List<RoadCenterlinePoint> centerline) {
+        return interpolateTerrainY(x, z, centerline, new CenterlineSegmentLocator(centerline));
+    }
+
+    static int interpolateTerrainY(int x, int z, List<RoadCenterlinePoint> centerline, CenterlineSegmentLocator locator) {
         if (centerline == null || centerline.isEmpty()) {
             return 64;
         }
         if (centerline.size() == 1) {
             return centerline.get(0).terrainY();
         }
-        Projection projection = findNearestProjection(x, z, centerline);
+        Projection projection = findNearestProjection(x, z, centerline, locator);
         int startY = centerline.get(projection.segmentIndex()).terrainY();
         int endY = centerline.get(projection.segmentIndex() + 1).terrainY();
         return (int) Math.round(startY + projection.t() * (endY - startY));
@@ -78,13 +87,14 @@ final class RoadFootprintPlanner {
                                       int normalZ,
                                       int halfWidth,
                                       int sideSign,
-                                      List<RoadCenterlinePoint> centerline) {
+                                      List<RoadCenterlinePoint> centerline,
+                                      CenterlineSegmentLocator locator) {
         int lastX = center.getX();
         int lastZ = center.getZ();
         for (int step = 1; step <= halfWidth; step++) {
             int targetX = center.getX() + (normalX * step * sideSign);
             int targetZ = center.getZ() + (normalZ * step * sideSign);
-            addContinuousOffsetPath(columns, lastX, lastZ, targetX, targetZ, centerline);
+            addContinuousOffsetPath(columns, lastX, lastZ, targetX, targetZ, centerline, locator);
             lastX = targetX;
             lastZ = targetZ;
         }
@@ -95,7 +105,8 @@ final class RoadFootprintPlanner {
                                                 int fromZ,
                                                 int targetX,
                                                 int targetZ,
-                                                List<RoadCenterlinePoint> centerline) {
+                                                List<RoadCenterlinePoint> centerline,
+                                                CenterlineSegmentLocator locator) {
         int currentX = fromX;
         int currentZ = fromZ;
         while (currentX != targetX || currentZ != targetZ) {
@@ -103,9 +114,9 @@ final class RoadFootprintPlanner {
             boolean moveZ = currentZ != targetZ;
             if (moveX && moveZ) {
                 currentX += Integer.compare(targetX, currentX);
-                columns.add(posAtInterpolatedY(currentX, currentZ, centerline));
+                columns.add(posAtInterpolatedY(currentX, currentZ, centerline, locator));
                 currentZ += Integer.compare(targetZ, currentZ);
-                columns.add(posAtInterpolatedY(currentX, currentZ, centerline));
+                columns.add(posAtInterpolatedY(currentX, currentZ, centerline, locator));
                 continue;
             }
             if (moveX) {
@@ -113,22 +124,22 @@ final class RoadFootprintPlanner {
             } else {
                 currentZ += Integer.compare(targetZ, currentZ);
             }
-            columns.add(posAtInterpolatedY(currentX, currentZ, centerline));
+            columns.add(posAtInterpolatedY(currentX, currentZ, centerline, locator));
         }
     }
 
-    private static BlockPos posAtInterpolatedY(int x, int z, List<RoadCenterlinePoint> centerline) {
-        return new BlockPos(x, interpolateTargetY(x, z, centerline), z);
+    private static BlockPos posAtInterpolatedY(int x, int z, List<RoadCenterlinePoint> centerline, CenterlineSegmentLocator locator) {
+        return new BlockPos(x, interpolateTargetY(x, z, centerline, locator), z);
     }
 
-    private static int interpolateTargetY(int x, int z, List<RoadCenterlinePoint> centerline) {
+    private static int interpolateTargetY(int x, int z, List<RoadCenterlinePoint> centerline, CenterlineSegmentLocator locator) {
         if (centerline == null || centerline.isEmpty()) {
             return 64;
         }
         if (centerline.size() == 1) {
             return centerline.get(0).targetY();
         }
-        Projection projection = findNearestProjection(x, z, centerline);
+        Projection projection = findNearestProjection(x, z, centerline, locator);
         int startY = centerline.get(projection.segmentIndex()).targetY();
         int endY = centerline.get(projection.segmentIndex() + 1).targetY();
         return (int) Math.round(startY + projection.t() * (endY - startY));
@@ -187,33 +198,19 @@ final class RoadFootprintPlanner {
         return 0;
     }
 
-    private static Projection findNearestProjection(int x, int z, List<RoadCenterlinePoint> centerline) {
-        int bestSegment = 0;
-        double bestT = 0.0D;
-        double bestDistanceSq = Double.MAX_VALUE;
-        for (int i = 0; i < centerline.size() - 1; i++) {
-            BlockPos start = centerline.get(i).pos();
-            BlockPos end = centerline.get(i + 1).pos();
-            double ax = start.getX();
-            double az = start.getZ();
-            double bx = end.getX();
-            double bz = end.getZ();
-            double dx = bx - ax;
-            double dz = bz - az;
-            double lengthSq = dx * dx + dz * dz;
-            double t = lengthSq < 1.0E-9D
-                    ? 0.0D
-                    : Math.max(0.0D, Math.min(1.0D, ((x - ax) * dx + (z - az) * dz) / lengthSq));
-            double projectedX = ax + t * dx;
-            double projectedZ = az + t * dz;
-            double distanceSq = (x - projectedX) * (x - projectedX) + (z - projectedZ) * (z - projectedZ);
-            if (distanceSq < bestDistanceSq) {
-                bestDistanceSq = distanceSq;
-                bestSegment = i;
-                bestT = t;
-            }
-        }
-        return new Projection(bestSegment, bestT);
+    private static Projection findNearestProjection(int x, int z, List<RoadCenterlinePoint> centerline, CenterlineSegmentLocator locator) {
+        int segment = locator.nearestSegment(x, z);
+        BlockPos start = centerline.get(segment).pos();
+        BlockPos end = centerline.get(segment + 1).pos();
+        double ax = start.getX();
+        double az = start.getZ();
+        double dx = end.getX() - ax;
+        double dz = end.getZ() - az;
+        double lengthSq = dx * dx + dz * dz;
+        double t = lengthSq < 1.0E-9D
+                ? 0.0D
+                : Math.max(0.0D, Math.min(1.0D, ((x - ax) * dx + (z - az) * dz) / lengthSq));
+        return new Projection(segment, t);
     }
 
     private record RibbonBasis(int normalX,

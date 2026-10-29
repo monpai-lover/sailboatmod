@@ -22,6 +22,21 @@ public record RoadPlannerCancelJobPacket(UUID sessionId) {
         return new RoadPlannerCancelJobPacket(RoadPlannerPacketCodec.readUuid(buffer));
     }
 
+    public enum Cancelled { PREVIEW, BUILD, LOADING, NOTHING }
+
+    /** A shown preview first, then a running build (as before loading existed), and only then a preview still loading. */
+    public static Cancelled cancelInOrder(java.util.function.BooleanSupplier preview,
+                                          java.util.function.BooleanSupplier build,
+                                          java.util.function.BooleanSupplier loading) {
+        if (preview.getAsBoolean()) {
+            return Cancelled.PREVIEW;
+        }
+        if (build.getAsBoolean()) {
+            return Cancelled.BUILD;
+        }
+        return loading.getAsBoolean() ? Cancelled.LOADING : Cancelled.NOTHING;
+    }
+
     public static void handle(RoadPlannerCancelJobPacket packet, Supplier<NetworkEvent.Context> contextSupplier) {
         NetworkEvent.Context context = contextSupplier.get();
         context.enqueueWork(() -> {
@@ -30,8 +45,12 @@ public record RoadPlannerCancelJobPacket(UUID sessionId) {
                 return;
             }
             RoadPlannerBuildControlService service = RoadPlannerBuildControlService.global();
-            boolean cancelledPreview = service.cancelPreview(sender.getUUID(), packet.sessionId());
-            boolean cancelledBuild = !cancelledPreview && service.cancelBuild(sender.getUUID(), packet.sessionId(), sender.serverLevel());
+            Cancelled cancelled = cancelInOrder(
+                    () -> service.cancelPreview(sender.getUUID(), packet.sessionId()),
+                    () -> service.cancelBuild(sender.getUUID(), packet.sessionId(), sender.serverLevel()),
+                    () -> com.monpai.sailboatmod.roadplanner.service.RoadPlannerPreviewJobService.global().cancel(sender.getUUID()));
+            boolean cancelledPreview = cancelled == Cancelled.PREVIEW || cancelled == Cancelled.LOADING;
+            boolean cancelledBuild = cancelled == Cancelled.BUILD;
             if (cancelledPreview) {
                 sender.sendSystemMessage(Component.literal("道路预览已取消。"));
             } else if (cancelledBuild) {

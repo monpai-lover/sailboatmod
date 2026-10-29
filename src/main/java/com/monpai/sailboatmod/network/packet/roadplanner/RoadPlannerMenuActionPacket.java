@@ -63,6 +63,7 @@ public record RoadPlannerMenuActionPacket(Action action) {
             }
             if (packet.action() == Action.RETURN_TO_PLANNER) {
                 RoadPlannerBuildControlService.global().cancelPreview(sender.getUUID(), new java.util.UUID(0L, 0L));
+                com.monpai.sailboatmod.roadplanner.service.RoadPlannerPreviewJobService.global().cancel(sender.getUUID());
             }
             openPlanner(sender);
         });

@@ -54,6 +54,13 @@ public final class RealBlockWaterMap {
     private final AtomicInteger hitNbt = new AtomicInteger();
     private final AtomicInteger hitForced = new AtomicInteger();
     private final AtomicInteger hitUnknown = new AtomicInteger();
+    private final AtomicInteger hitPredicted = new AtomicInteger();
+    private final AtomicInteger predictTimeout = new AtomicInteger();
+    private final AtomicInteger predictFail = new AtomicInteger();
+
+    // ---- 地形预测后备(Tellus 世界):NBT 读不到(区块从未生成/未达 FULL)时问预测器,而不是直接当陆 ----
+    private volatile com.monpai.sailboatmod.route.terrain.TerrainPredictor predictor;
+    private volatile com.monpai.sailboatmod.route.terrain.PredictionBudget predictionBudget;
 
     // ---- 按需加载 + 滑动窗口卸载(单段 NBT A* 用)----
     // onDemand=true:sample 未命中时后台 NBT 直读该区块填缓存(不预加载整走廊);读不到的区块本次不 force
@@ -75,6 +82,26 @@ public final class RealBlockWaterMap {
     public RealBlockWaterMap enableOnDemand() {
         this.onDemandLoad = true;
         return this;
+    }
+
+    /**
+     * 挂地形预测后备:按需模式下 NBT 未命中 → predictor(等待受 budget 限制);READY 填预测列,NOT_READY/FAILED 填全陆。
+     * predictor 为 null 时行为与未挂完全相同。
+     */
+    public RealBlockWaterMap withPredictor(com.monpai.sailboatmod.route.terrain.TerrainPredictor predictor,
+                                           com.monpai.sailboatmod.route.terrain.PredictionBudget budget) {
+        if (predictor != null) {
+            this.predictionBudget = budget == null ? com.monpai.sailboatmod.route.terrain.PredictionBudget.sixtySeconds() : budget;
+            this.predictor = predictor;
+        }
+        return this;
+    }
+
+    /** 直接写入一个区块的判水列(航行前瞻用:已加载区块的内存方块快照,含未存盘改动),覆盖已有缓存。 */
+    public void seedChunk(int cx, int cz, NbtChunkWaterReader.ChunkColumns columns) {
+        long k = key(cx, cz);
+        cache.put(k, toChunkWater(columns));
+        lastAccess.put(k, accessClock.incrementAndGet());
     }
 
     public int seaLevel() {
@@ -378,14 +405,33 @@ public final class RealBlockWaterMap {
         if (!onDemandLoad) {
             return null;
         }
-        // 按需后台读:读到填真实水图;读不到(未存盘)填全陆,既绕开又不反复重读。
-        if (!loadNbtOffThread(cx, cz)) {
+        // 按需后台读:读到填真实水图;读不到(未存盘)→ 有预测器问预测器,否则填全陆,既绕开又不反复重读。
+        if (!loadNbtOffThread(cx, cz) && !loadPredicted(cx, cz)) {
             cache.putIfAbsent(k, allLand());
             hitUnknown.incrementAndGet();
         }
         lastAccess.put(k, accessClock.incrementAndGet());
         maybeEvict();
         return cache.get(k);
+    }
+
+    /** 预测后备:READY → 填预测列返回 true;NOT_READY/FAILED → 计数,返回 false(调用方填全陆)。无预测器 → false。 */
+    private boolean loadPredicted(int cx, int cz) {
+        com.monpai.sailboatmod.route.terrain.TerrainPredictor p = predictor;
+        if (p == null) {
+            return false;
+        }
+        com.monpai.sailboatmod.route.terrain.Prediction prediction = p.predictChunk(cx, cz, predictionBudget.remainingMillis());
+        switch (prediction.status()) {
+            case READY -> {
+                cache.putIfAbsent(key(cx, cz), toChunkWater(prediction.columns()));
+                hitPredicted.incrementAndGet();
+                return true;
+            }
+            case NOT_READY -> predictTimeout.incrementAndGet();
+            default -> predictFail.incrementAndGet();
+        }
+        return false;
     }
 
     /** 常驻区块超上限 → 淘汰最久未访问的若干区块(滑动窗口,内存有界)。仅按需模式生效。 */
@@ -629,12 +675,24 @@ public final class RealBlockWaterMap {
         return hitForced.get();
     }
 
+    public int predictedHits() {
+        return hitPredicted.get();
+    }
+
+    public int predictTimeouts() {
+        return predictTimeout.get();
+    }
+
+    public int predictFailures() {
+        return predictFail.get();
+    }
+
     public void logLayerStats(String phase) {
         int tc = totalCells.get();
         int wc = totalWaterCells.get();
-        LOGGER.info("[WaterPath] 真实水图层命中({}):NBT={} force={} unknown={} 缓存区块={} | 解码水格={}/{} ({}%)",
-                phase, hitNbt.get(), hitForced.get(), hitUnknown.get(), cache.size(),
-                wc, tc, tc == 0 ? 0 : wc * 100 / tc);
+        LOGGER.info("[WaterPath] 真实水图层命中({}):NBT={} force={} unknown={} predicted={} predictTimeout={} predictFail={} 缓存区块={} | 解码水格={}/{} ({}%)",
+                phase, hitNbt.get(), hitForced.get(), hitUnknown.get(), hitPredicted.get(), predictTimeout.get(),
+                predictFail.get(), cache.size(), wc, tc, tc == 0 ? 0 : wc * 100 / tc);
     }
 
     /**

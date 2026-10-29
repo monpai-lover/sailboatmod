@@ -81,6 +81,11 @@ public class AutoRouteDockSelectionScreen extends ThemedScreen {
                     .flexWrap(dev.vfyjxf.taffy.style.FlexWrap.WRAP));
             modeRow.addChildren(Ui.muted(Component.translatable("screen.sailboatmod.ui.route_mode")), modeTabs.element());
             body.addChildren(modeRow, modeDescription);
+            if (net.neoforged.fml.ModList.get() != null
+                    && net.neoforged.fml.ModList.get().isLoaded(com.monpai.sailboatmod.route.terrain.TellusWorlds.MOD_ID)) {
+                // Tellus 地球世界:服务器忽略上面的模式,一律用真实地形 + 既有方块规划(协定不变,只做说明)。
+                body.addChild(Ui.paragraph(Component.translatable("screen.sailboatmod.ui.route_mode.tellus_hint"), "sm-muted"));
+            }
         }
 
         createButton = Ui.button(autoRouteText("create"), Ui.Tone.PRIMARY, this::createRoute);

@@ -32,4 +32,16 @@ class NationFlagStorageTest {
 
         assertEquals(legacy, resolved);
     }
+
+    @Test
+    void flagIdsThatClimbOutOfTheFolderResolveInsideIt() throws Exception {
+        Path flags = tempDir.resolve("flags");
+        Files.createDirectories(flags);
+        Files.write(tempDir.resolve("secret.png"), new byte[] {9});
+
+        Path resolved = NationFlagStorage.resolveFlagPathForTest(flags, "../secret");
+
+        org.junit.jupiter.api.Assertions.assertTrue(resolved.normalize().startsWith(flags.toAbsolutePath().normalize()),
+                "resolved outside the flag folder: " + resolved);
+    }
 }

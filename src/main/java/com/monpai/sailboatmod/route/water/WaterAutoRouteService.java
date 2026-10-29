@@ -120,6 +120,10 @@ public final class WaterAutoRouteService {
         DockSnapshot sourceSnapshot = snapshot(source);
         DockSnapshot targetSnapshot = snapshot(target);
         WaterRoutePolicy policy = WaterRoutePolicy.defaults();
+        // Tellus 地球世界:未生成区块用 Tellus 地形预测(NBT 优先),一律走单段 NBT,忽略 UI 选的模式。
+        final com.monpai.sailboatmod.route.terrain.TerrainPredictor predictor =
+                com.monpai.sailboatmod.route.terrain.TellusTerrain.forLevel(level).orElse(null);
+        final WaterMidMode mode = effectiveMode(midMode, predictor != null);
         // 2026-06 泊位解析改【真实方块判水】(与 debug 工具同口径):原 ServerWaterRouteWorld 用噪声判水,
         // WorldPainter/populate 地图下噪声≠真实方块,会解析到「噪声以为水、真实是陆」的坏泊位 → HYBRID 从陆地点
         // 出发、真实精寻找不到出水路 → refined==null → HYBRID 失败退回 NOISE → 出穿陆坏线。改真实判水后泊位必落
@@ -164,11 +168,12 @@ public final class WaterAutoRouteService {
         // ---- NBT 单段双向 A*(默认,WorldPainter/已存盘地图):源泊位直接搜到目标泊位,全程真实方块判定 ----
         // A* 节点扩展时用 3×3 船宽校验(占地内无陆才可航)→ 从源头根除搁浅;区块按需 NBT 后台读 + 滑动窗口卸载
         // (前沿过的区块淘汰,常驻有界)。不再拆三段、不噪声粗寻、不样条过冲。NOISE/HYBRID 仍走下方三段编排(原版/生成式地图)。
-        if (midMode == WaterMidMode.NBT) {
+        if (mode == WaterMidMode.NBT) {
             int seaY = level.getSeaLevel();
             int boatHalfWidth = Math.max(1, policy.boatHalfWidth()); // 1 = 船 3×3
             java.util.function.Supplier<WaterRouteResult<java.util.List<BlockPos>>> singleNbt =
-                    () -> runSingleSegmentNbt(level, sourceBerth, targetBerth, seaY, boatHalfWidth, policy, metasOut, bar);
+                    () -> runSingleSegmentNbt(level, sourceBerth, targetBerth, seaY, boatHalfWidth, policy, metasOut, bar,
+                            predictor, predictor == null ? null : com.monpai.sailboatmod.route.terrain.PredictionBudget.sixtySeconds());
             WaterRouteTask nbtTask = new WaterRouteTask(
                     level.dimension().location().toString(),
                     source.getBlockPos(), target.getBlockPos(), sourceBerth, targetBerth,
@@ -288,8 +293,13 @@ public final class WaterAutoRouteService {
             ServerLevel level, BlockPos sourceBerth, BlockPos targetBerth, int seaY, int boatHalfWidth,
             WaterRoutePolicy policy,
             java.util.concurrent.atomic.AtomicReference<List<WaypointMeta>> metasOut,
-            WaterRouteProgressBar bar) {
-        RealBlockWaterMap map = new RealBlockWaterMap(level, seaY).enableOnDemand();
+            WaterRouteProgressBar bar,
+            @Nullable com.monpai.sailboatmod.route.terrain.TerrainPredictor predictor,
+            @Nullable com.monpai.sailboatmod.route.terrain.PredictionBudget budget) {
+        if (predictor != null) {
+            prefetchTellusCorridor(predictor, budget, sourceBerth, targetBerth, bar);
+        }
+        RealBlockWaterMap map = new RealBlockWaterMap(level, seaY).enableOnDemand().withPredictor(predictor, budget);
 
         // ---- 阶段一:粗走廊(渐进 step + 中心判水,跑大致走向)----
         // 海峡可能只有 1-8 格宽,大 step 网格点踩不进去 → 起终水域在粗网格上不连通 → 失败。先大 step 快试(路宽时省节点),
@@ -368,6 +378,80 @@ public final class WaterAutoRouteService {
         metasOut.set(buildMetas(smoothed, null, raw, -1, smoothed.size()));
         bar.update(95, "完成");
         return WaterRouteResult.success(smoothed);
+    }
+
+    /**
+     * <b>后台线程</b>:Tellus 世界的完整自救——船位最近可航格 → 目的港泊位,用与建线相同的「NBT + 地形预测」单段规划。
+     * (原自救的 ServerWaterRouteWorld 依赖原版噪声生成器,在 Tellus 世界全判不可航。)level 可为 null(测试)。
+     */
+    public static WaterRouteResult<List<BlockPos>> planTellusRescue(@Nullable ServerLevel level, int seaY, BlockPos boat,
+                                                                    DockBerthResolver.DockZone destination,
+                                                                    com.monpai.sailboatmod.route.terrain.TerrainPredictor predictor,
+                                                                    com.monpai.sailboatmod.route.terrain.PredictionBudget budget) {
+        WaterRoutePolicy policy = WaterRoutePolicy.defaults();
+        RealBlockWaterMap probe = new RealBlockWaterMap(level, seaY).enableOnDemand().withPredictor(predictor, budget);
+        WaterRouteResult<DockBerthResolver.DockBerth> berth = DockBerthResolver.resolve(
+                RealBlockWaterWorld.coarse(probe, seaY, null, null), destination, policy,
+                WaterRouteFailureReason.NO_TARGET_BERTH);
+        if (!berth.successful()) {
+            return WaterRouteResult.failure(berth.reason());
+        }
+        BlockPos start = probe.nearestHullWater(boat.getX(), boat.getZ(), 1, 16);
+        if (start == null) {
+            return WaterRouteResult.failure(WaterRouteFailureReason.NO_SOURCE_BERTH);
+        }
+        BlockPos goal = blockPos(berth.value().pos());
+        int boatHalfWidth = Math.max(1, policy.boatHalfWidth());
+        return runSingleSegmentNbt(level, start, goal, seaY, boatHalfWidth, policy,
+                new java.util.concurrent.atomic.AtomicReference<>(List.of()),
+                new WaterRouteProgressBar(null, null, "", ""), predictor, budget);
+    }
+
+    /** Tellus 预取走廊:两码头直线两侧各此格数。走廊外的区域由 A* 按需预取。 */
+    static final int TELLUS_PREFETCH_SIDE_BLOCKS = 512;
+
+    /** Tellus 世界永远走单段 NBT(NBT + 地形预测);其余世界尊重玩家/指令选的模式。 */
+    static WaterMidMode effectiveMode(WaterMidMode requested, boolean tellusLevel) {
+        return tellusLevel ? WaterMidMode.NBT : requested;
+    }
+
+    /** 进度条「下载地形」阶段文字(与其它阶段同为硬编码简体)。 */
+    static String terrainDownloadStage(int done, int total) {
+        return "下载地形 " + done + "/" + total;
+    }
+
+    /**
+     * <b>后台线程</b>:预取两码头间走廊的 Tellus 地形数据,逐 tile 等待并更新进度条(0~5%)。等待从共用预算扣;
+     * 预算用完即停止等待(剩余区域在 A* 按需预测时再等/判陆)。单个 tile 失败不影响其它 tile。
+     */
+    private static void prefetchTellusCorridor(com.monpai.sailboatmod.route.terrain.TerrainPredictor predictor,
+                                               com.monpai.sailboatmod.route.terrain.PredictionBudget budget,
+                                               BlockPos sourceBerth, BlockPos targetBerth, WaterRouteProgressBar bar) {
+        List<java.util.concurrent.CompletableFuture<Void>> tiles =
+                predictor.gate().requestCorridor(sourceBerth, targetBerth, TELLUS_PREFETCH_SIDE_BLOCKS);
+        int total = tiles.size();
+        if (total == 0) {
+            return;
+        }
+        long start = System.currentTimeMillis();
+        int done = 0;
+        bar.update(0, terrainDownloadStage(0, total));
+        for (java.util.concurrent.CompletableFuture<Void> tile : tiles) {
+            try {
+                tile.get(budget.remainingMillis(), java.util.concurrent.TimeUnit.MILLISECONDS);
+            } catch (java.util.concurrent.TimeoutException e) {
+                break;
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+                break;
+            } catch (Exception e) {
+                LOGGER.warn("[WaterPath] Tellus 地形预取失败(该区按需再试): {}", e.toString());
+            }
+            done++;
+            bar.update(5 * done / total, terrainDownloadStage(done, total));
+        }
+        LOGGER.info("[WaterPath] Tellus 地形预取 {}/{} 区 耗时={}ms 剩余预算={}ms",
+                done, total, System.currentTimeMillis() - start, budget.remainingMillis());
     }
 
     /**
@@ -584,10 +668,13 @@ public final class WaterAutoRouteService {
                 && safeEquals(existing.endDockName(), replacement.endDockName());
     }
 
-    private static boolean isGeneratedWaterRoute(RouteDefinition route) {
-        // 兼容旧前缀("Water Auto: ")与新前缀("Auto-"),保证去重对历史航线仍生效。
-        return route != null && route.name() != null
-                && (route.name().startsWith("Auto-") || route.name().startsWith("Water Auto: "));
+    public static boolean isGeneratedWaterRoute(RouteDefinition route) {
+        return route != null && isGeneratedWaterRouteName(route.name());
+    }
+
+    /** 按名称判自动水路航线(载具重载后只剩航线名)。兼容旧前缀("Water Auto: ")与新前缀("Auto-")。 */
+    public static boolean isGeneratedWaterRouteName(String name) {
+        return name != null && (name.startsWith("Auto-") || name.startsWith("Water Auto: "));
     }
 
     /** townId → 城镇名;解析不到返回空串(由调用方回退 dock 名)。 */

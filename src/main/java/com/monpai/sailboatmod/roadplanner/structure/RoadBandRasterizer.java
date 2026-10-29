@@ -27,6 +27,7 @@ final class RoadBandRasterizer {
         }
 
         LinkedHashMap<Long, OwnedCell> owned = new LinkedHashMap<>();
+        CenterlineSegmentLocator locator = new CenterlineSegmentLocator(centerline);
         double halfWidth = Math.max(1.0D, width / 2.0D);
         double halfWidthSq = halfWidth * halfWidth;
 
@@ -45,7 +46,7 @@ final class RoadBandRasterizer {
                         continue;
                     }
                     int ownerIndex = projection.t() < 0.5D ? segment : segment + 1;
-                    int y = interpolateTargetY(x, z, centerline);
+                    int y = interpolateTargetY(x, z, centerline, locator);
                     BlockPos pos = new BlockPos(x, y, z);
                     long key = BlockPos.asLong(x, 0, z);
                     OwnedCell existing = owned.get(key);
@@ -78,17 +79,12 @@ final class RoadBandRasterizer {
         return List.copyOf(out);
     }
 
-    private static int interpolateTargetY(int x, int z, List<RoadCenterlinePoint> centerline) {
-        Projection best = null;
-        for (int segment = 0; segment < centerline.size() - 1; segment++) {
-            Projection projection = projectToSegment(x, z, centerline.get(segment), centerline.get(segment + 1), segment);
-            if (best == null || projection.distanceSq() < best.distanceSq()) {
-                best = projection;
-            }
-        }
-        if (best == null) {
+    private static int interpolateTargetY(int x, int z, List<RoadCenterlinePoint> centerline, CenterlineSegmentLocator locator) {
+        if (centerline.size() < 2) {
             return centerline.get(0).targetY();
         }
+        int segment = locator.nearestSegment(x, z);
+        Projection best = projectToSegment(x, z, centerline.get(segment), centerline.get(segment + 1), segment);
         int startY = centerline.get(best.segmentIndex()).targetY();
         int endY = centerline.get(best.segmentIndex() + 1).targetY();
         return (int) Math.floor(startY + (endY - startY) * best.t());

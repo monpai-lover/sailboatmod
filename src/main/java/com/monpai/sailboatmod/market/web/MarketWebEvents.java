@@ -14,6 +14,13 @@ import net.neoforged.neoforge.server.ServerLifecycleHooks;
 public final class MarketWebEvents {
     @SubscribeEvent
     public static void onServerStarted(ServerStartedEvent event) {
+        // After a renderer upgrade, chunks drawn by the old renderer are cleared once (before the web server serves
+        // tiles, and before rendering starts writing them) and repainted in the background.
+        int cleared = com.monpai.sailboatmod.market.web.map.MarketWebMapTileCache.forServer(event.getServer())
+                .clearStaleServerChunksAfterRendererUpgrade();
+        if (cleared > 0) {
+            MarketWebMapRenderService.global().enqueueRegionRepairScan(event.getServer().overworld(), 64);
+        }
         MarketWebServer.start(event.getServer());
         MarketWebMapRenderService.global().startRegionWatcher(event.getServer());
     }
@@ -21,6 +28,7 @@ public final class MarketWebEvents {
     @SubscribeEvent
     public static void onServerStopped(ServerStoppedEvent event) {
         MarketWebMapRenderService.global().stopRegionWatcher(event.getServer());
+        com.monpai.sailboatmod.market.web.map.MarketWebTellusTileQueue.shutdownGlobal();
         MarketWebServer.stop();
     }
 

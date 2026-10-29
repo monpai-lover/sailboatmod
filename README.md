@@ -1,117 +1,38 @@
 # Sailboat Vehicle Mod
 
-Minecraft NeoForge 1.21.1 模组，核心方向是航海运输、国家城镇治理、领地控制、市场贸易和蓝图建筑。
+Minecraft NeoForge 1.21.1 多人航海、運輸、國家與城鎮模組。包含帆船與馬車、自動航線、領土管理、市場與貨物配送、銀行國庫、居民、道路規劃及網頁市場。
 
-## 当前内容
+## 執行環境
 
-- 多人帆船、停靠、货运、自动航线
-- 国家 / 城镇 / 领地 / 外交 / 战争系统
-- 市场、港口、银行、国库与物流联动
-- 建筑蓝图、脚手架工地、结构预览、辅助放置
+- Minecraft 1.21.1、NeoForge 21.1.259、Java 21。
+- 必要外置前置：GeckoLib 4.9.3、LDLib2 2.2.42。客戶端與伺服器都需要安裝。
+- 可選整合：Tellus 0.8.3 地球地形與航線、Create 6.0.10 列車物流、Vault 經濟及 BlueMap 地圖。
+- 網路協定為 **12**；客戶端與伺服器請同步更新。
 
-## 环境要求
+## 本次更新
 
-- Minecraft: `1.21.1`
-- NeoForge: `21.1.259`
-- Java: `21`
+在 fix_5 的 UI 與市場修復基線上，加入 Tellus 水路預測與前瞻繞行、Tellus 網頁地圖圖層、物流歷程、Create 列車顯示與道路預覽載入管理，並修正 1.21.1 相機朝向變更導致的全息浮字消失。
 
-## 依赖库
+回傳實作與原作者的驗證範圍見 [Tellus 適配說明](docs/handoff/TELLUS_ADAPTATION_RETURN.md)。該文件中的測試數字及截圖屬回傳端記錄；整合時的修正與實際驗證另見 Git 提交說明。未安裝 Tellus/Create 時，對應整合保持關閉。
 
-### 必需依赖
+## 建置與測試
 
-- NeoForge `21.1.259`
-- GeckoLib `4.9.3`
+Windows：
 
-### 项目依赖
-
-- BlockUI `1.21.1-1.0.182-beta`
-- gdx-ai `1.8.2`
-- SQLite JDBC `3.46.1.3`
-- webp-imageio `0.1.6`（JarJar 打包）
-
-### 可选依赖
-
-- Vault
-  - 可选经济桥接，无硬依赖
-- BlueMap
-  - 可选地图展示集成
-
-## 安装说明
-
-### 玩家使用
-
-1. 安装 Minecraft `1.21.1`
-2. 安装 NeoForge `21.1.259`
-3. 将 `sailboatmod-<版本>-neoforge-1.21.1.jar` 和 GeckoLib 4.9.3 的 NeoForge 1.21.1 版本放入 `mods/`
-4. 网页市场可选：服务端另外安装 `sailboatmod-marketweb-<版本>-neoforge-1.21.1.jar`
-
-## 开发命令
-
-### 构建
-
-```bash
-./gradlew build
+```powershell
+.\gradlew.bat test releaseMod --console=plain -PfixIndex=6
+.\gradlew.bat runClient --console=plain
+.\gradlew.bat runServer --console=plain
 ```
 
-### 快速编译
+Linux/macOS 使用 `./gradlew`。網頁市場測試需要 Node 20+。Gradle wrapper 會下載其餘建置依賴；指定版本的 LDLib2 及編譯用 Tellus/Create JAR 已放在 `libs/`。後兩者使用 compileOnly，不會打入成品，也不會自動安裝到遊戲。
 
-```bash
-./gradlew compileJava
-```
+成品位於 `build/libs/`：主模組 `sailboatmod-<版本>-neoforge-1.21.1.jar`；可選伺服器網頁附加模組 `sailboatmod-marketweb-<版本>-neoforge-1.21.1.jar`。`fixIndex` 只為輸出名稱加修訂後綴。
 
-### 运行客户端
+## 安裝與開發
 
-```bash
-./gradlew runClient
-```
+主模組、GeckoLib、LDLib2 放入客戶端及伺服器的 `mods`，移除各模組舊版本；網頁附加模組只裝於伺服器。需要 Tellus 或 Create 功能時，再安裝相應可選模組。
 
-### 运行服务端
+遊戲內 UI 已使用 LDLib2；正常建置不需要舊開發 init script。主題在 `src/main/resources/assets/sailboatmod/lss/`。開發入口見 [START_HERE.md](START_HERE.md)、[AGENTS.md](AGENTS.md) 與 [LDLib2 接入](docs/handoff/LDLIB2_INTEGRATION.md)。
 
-```bash
-./gradlew runServer
-```
-
-### 数据生成
-
-```bash
-./gradlew runData
-```
-
-## 构建输出
-
-- 产物目录: `build/libs/`
-- 主模组: `sailboatmod-<版本>-neoforge-1.21.1.jar`（包含 JarJar 库依赖）
-- 可选网页市场: `sailboatmod-marketweb-<版本>-neoforge-1.21.1.jar`
-- 完整发行构建: `./gradlew releaseMod`
-
-本迁移快照的完整测试为 1,267 项、1,265 通过、2 项既有网页测试失败。主模组与 addon 可用 `./gradlew releaseMod -x test` 单独打包；验证范围和剩余问题见 [交接验证](docs/handoff/VALIDATION.md)。网页市场重构由 Claude 接手，入口见 [交接说明](docs/handoff/CLAUDE_WEB_MARKET_HANDOFF.md)。
-
-## 当前进展
-
-- 市场后端已开始接入 SQLite 方向，为后续真实浮动市场做准备
-
-## 道路系统重构进展
-
-当前道路系统正在按 `RoadWeaver` 的思路重构，但保留了本项目自己的“桥墩桥梁”方案。已经落地的部分主要包括：
-
-- 手动城镇道路规划改为分阶段规划流程，补上结构化失败原因，并把详细原因写入 `debug.log`
-- 加入地形采样缓存与基础地形分析，作为后续等高线/分段寻路和桥梁判定的底层数据
-- 长距离道路开始走分段式骨架规划，减少一次性超长搜索带来的卡顿和空路径问题
-- 普通陆地路面改为更偏向“替换地表并清理上方自然方块”的构建方式，而不是简单浮在地表上
-- 桥梁被拆成独立桥段处理，不再把整段高架结构当成普通贴地路
-- 桥段检测加入短桥过滤和近距离桥段合并，减少小水沟/小起伏被误判成完整桥梁
-- 桥墩改为按整段高架跨度做锚点分布，而不是简单固定间隔下柱；桥墩只会出现在锚点位置
-- 可通船桥面使用相对水面净空来抬高桥面，并生成连续上下坡，而不是被中途陆地高度吸附回地面
-- 桥面材质切换为砖石桥面、砖石桥墩、扶手与照明组合，桥面两侧结构与照明会跟随桥体一起生成
-- 道路与桥梁的核心区过滤加强，核心周围禁建区不再应被纳入道路施工范围
-- 普通陆地道路加入按间距布置的路灯，同时玩家站在已建成道路表面上会获得 1 级速度效果
-
-仍在继续推进的阶段包括：
-
-- 更完整的 `RoadWeaver` 风格路径后处理、道路吸附和路网并网
-- 更稳定的桥梁曲线、桥面宽度和复杂地形下的桥接策略
-- 完整道路网络持久化，以及马车/物流实体基于已建成道路图运行
-
-## License
-
-MIT
+舊 UI 驗證見 [fix_5 窗口排版報告](docs/handoff/UI_WINDOW_LAYOUT_2026-10-14.md)。編譯或單元測試成功不代表所有多人流程或遊戲畫面已驗證。

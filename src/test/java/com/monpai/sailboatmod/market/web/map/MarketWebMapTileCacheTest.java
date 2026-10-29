@@ -6,6 +6,7 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
 import java.io.ByteArrayInputStream;
+import java.io.IOException;
 import java.awt.image.BufferedImage;
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -18,6 +19,7 @@ import static org.junit.jupiter.api.Assertions.assertArrayEquals;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotEquals;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class MarketWebMapTileCacheTest {
@@ -145,6 +147,54 @@ class MarketWebMapTileCacheTest {
         assertEquals(0xFF0000CC, readArgb(png, 0, 0));
         assertEquals(MarketWebMapTileCache.RENDER_VERSION,
                 cache.readMetadata("minecraft:overworld", 0, 0).orElseThrow().rendererVersion());
+    }
+
+    @Test
+    void afterARendererUpgradeOldServerChunksAreClearedOnceAndClientUploadsAreKept() throws Exception {
+        MarketWebMapTileCache cache = new MarketWebMapTileCache(tempDir);
+        assertTrue(cache.mergeChunkArgb("minecraft:overworld", 0, 0, chunkPixels(0xFF2A2A2A),
+                MarketWebMapTileQuality.SERVER_LOADED_CHUNK, 1L, MarketWebMapTileCache.RENDER_VERSION - 1));
+        assertTrue(cache.writePng("minecraft:overworld", 0, 0, solidPng(0xFF22AA44), MarketWebMapTileQuality.CLIENT_UPLOAD, 2L));
+
+        assertEquals(1, cache.clearStaleServerChunksAfterRendererUpgrade(), "the old server chunk is cleared");
+        byte[] png = cache.readPng("minecraft:overworld", 0, 0).orElseThrow();
+        assertEquals(0x00000000, readArgb(png, 0, 0), "old renderer pixels are gone, so the page shows what lies below");
+        assertEquals(0xFF22AA44, readArgb(png, 32, 0), "client uploads are kept");
+
+        // Recorded: the next start does not scan the cache again.
+        assertTrue(cache.mergeChunkArgb("minecraft:overworld", 0, 0, chunkPixels(0xFF2A2A2A),
+                MarketWebMapTileQuality.SERVER_LOADED_CHUNK, 3L, MarketWebMapTileCache.RENDER_VERSION - 1));
+        assertEquals(-1, cache.clearStaleServerChunksAfterRendererUpgrade());
+    }
+
+    @Test
+    void aFailedRendererVersionRecordIsRetriedOnTheNextStart() throws Exception {
+        MarketWebMapTileCache cache = new MarketWebMapTileCache(tempDir);
+        assertTrue(cache.mergeChunkArgb("minecraft:overworld", 0, 0, chunkPixels(0xFF2A2A2A),
+                MarketWebMapTileQuality.SERVER_LOADED_CHUNK, 1L, MarketWebMapTileCache.RENDER_VERSION - 1));
+        Path marker = tempDir.resolve("renderer-version.txt");
+        Files.createDirectory(marker);
+        // Writing a file over a directory really fails on Windows and Unix, even when the test user can bypass
+        // read permissions. This exercises retry after an I/O failure without depending on chmod support.
+        assertThrows(IOException.class, () -> Files.writeString(marker, "blocked"));
+
+        assertEquals(1, cache.clearStaleServerChunksAfterRendererUpgrade(), "the scan succeeds despite the failed version record");
+        assertTrue(Files.isDirectory(marker), "the failed write must not create a successful renderer marker");
+        assertFalse(Files.isRegularFile(marker));
+
+        Files.delete(marker);
+        assertTrue(cache.mergeChunkArgb("minecraft:overworld", 0, 0, chunkPixels(0xFF2A2A2A),
+                MarketWebMapTileQuality.SERVER_LOADED_CHUNK, 2L, MarketWebMapTileCache.RENDER_VERSION - 1));
+        assertEquals(1, cache.clearStaleServerChunksAfterRendererUpgrade(), "without a recorded version the next start scans again");
+        assertEquals(Integer.toString(MarketWebMapTileCache.RENDER_VERSION), Files.readString(marker));
+        assertEquals(-1, cache.clearStaleServerChunksAfterRendererUpgrade(), "a successful record stops repeated scans");
+    }
+
+    @Test
+    void anEmptyCacheJustRecordsTheRendererVersion() {
+        MarketWebMapTileCache cache = new MarketWebMapTileCache(tempDir);
+        assertEquals(0, cache.clearStaleServerChunksAfterRendererUpgrade());
+        assertEquals(-1, cache.clearStaleServerChunksAfterRendererUpgrade());
     }
 
     @Test

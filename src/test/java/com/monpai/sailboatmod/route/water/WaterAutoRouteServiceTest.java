@@ -16,6 +16,27 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class WaterAutoRouteServiceTest {
     @Test
+    void generatedWaterRouteNamesAreRecognised() {
+        assertTrue(WaterAutoRouteService.isGeneratedWaterRouteName("Auto-Tema-Lome"));
+        assertTrue(WaterAutoRouteService.isGeneratedWaterRouteName("Water Auto: Tema"));
+        assertEquals(false, WaterAutoRouteService.isGeneratedWaterRouteName("Harbour loop"));
+        assertEquals(false, WaterAutoRouteService.isGeneratedWaterRouteName(null));
+    }
+
+    @Test
+    void tellusForcesSingleSegmentNbt() {
+        assertEquals(WaterMidMode.NBT, WaterAutoRouteService.effectiveMode(WaterMidMode.NOISE, true));
+        assertEquals(WaterMidMode.NBT, WaterAutoRouteService.effectiveMode(WaterMidMode.HYBRID, true));
+        assertEquals(WaterMidMode.NOISE, WaterAutoRouteService.effectiveMode(WaterMidMode.NOISE, false));
+        assertEquals(WaterMidMode.HYBRID, WaterAutoRouteService.effectiveMode(WaterMidMode.HYBRID, false));
+    }
+
+    @Test
+    void terrainStageText() {
+        assertEquals("下载地形 3/10", WaterAutoRouteService.terrainDownloadStage(3, 10));
+    }
+
+    @Test
     void candidateCheckFailsWhenPermissionFails() {
         WaterRouteResult<WaterAutoRouteService.BerthPair> result = WaterAutoRouteService.canListCandidate(
                 dock("Source", new BlockPos(0, 64, 0), "town-a", "nation-a"),

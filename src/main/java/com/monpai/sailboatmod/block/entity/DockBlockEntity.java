@@ -108,6 +108,10 @@ public class DockBlockEntity extends BlockEntity implements MenuProvider {
             }
             refreshTerminalNetworkEntry();
             syncFacilityMarkers();
+            if (level instanceof net.minecraft.server.level.ServerLevel serverLevel) {
+                // 区块未加载期间航行中产生的航线修正(Tellus 前瞻绕障),码头加载时写回。
+                com.monpai.sailboatmod.route.repair.RouteRepairService.applyPending(serverLevel, worldPosition, this);
+            }
         }
     }
 
@@ -412,6 +416,10 @@ public class DockBlockEntity extends BlockEntity implements MenuProvider {
     public void clearRouteBook() {
         routeBook = ItemStack.EMPTY;
         setChanged();
+    }
+
+    public int getSelectedRouteIndex() {
+        return selectedRouteIndex;
     }
 
     public int selectRouteDelta(int delta) {

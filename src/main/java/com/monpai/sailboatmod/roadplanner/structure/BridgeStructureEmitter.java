@@ -263,6 +263,7 @@ public final class BridgeStructureEmitter {
         }
 
         int deckLightIndex = 0;
+        CenterlineSegmentLocator profileLocator = null;
         for (int index = 0; index < plannedPoints.size(); index++) {
             RoadPlannerBridgeGeometryPlanner.PlannedPoint planned = plannedPoints.get(index);
             RoadCenterlinePoint point = bridgeProfile.get(index);
@@ -275,7 +276,8 @@ public final class BridgeStructureEmitter {
             BlockPos center = new BlockPos(point.pos().getX(), y, point.pos().getZ());
             List<BlockPos> footprint = index < footprints.size()
                     ? footprints.get(index)
-                    : RoadFootprintPlanner.surfacePositions(bridgeProfile, index, settings.width());
+                    : RoadFootprintPlanner.surfacePositions(bridgeProfile, index, settings.width(),
+                            profileLocator != null ? profileLocator : (profileLocator = new CenterlineSegmentLocator(bridgeProfile)));
             for (BlockPos surfacePos : footprint) {
                 BlockPos placedSurfacePos = surfacePos;
                 BlockState placedState = state;

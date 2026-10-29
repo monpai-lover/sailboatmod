@@ -1800,6 +1800,7 @@
   "screen.sailboatmod.ui.route_mode.noise": "Fast",
   "screen.sailboatmod.ui.route_mode.nbt": "Accurate",
   "screen.sailboatmod.ui.route_mode.hybrid": "Hybrid (recommended)",
+  "screen.sailboatmod.ui.route_mode.tellus_hint": "In a Tellus Earth world the server always plans with real terrain plus existing blocks.",
   "screen.sailboatmod.ui.owner_nation": "%s · %s",
   "screen.sailboatmod.ui.autopilot": "Autopilot",
   "screen.sailboatmod.ui.seats": "Seats",

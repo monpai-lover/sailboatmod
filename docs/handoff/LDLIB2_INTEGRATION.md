@@ -22,7 +22,7 @@
 正式建置不需要舊交接包的開發 init script：
 
 ```powershell
-.\gradlew.bat test releaseMod --console=plain -PfixIndex=3
+.\gradlew.bat test releaseMod --console=plain -PfixIndex=5
 .\gradlew.bat runClient
 .\gradlew.bat runServer
 ```

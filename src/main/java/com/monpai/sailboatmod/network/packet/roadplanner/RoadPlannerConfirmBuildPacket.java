@@ -29,6 +29,10 @@ public record RoadPlannerConfirmBuildPacket(UUID sessionId) {
             if (sender == null) {
                 return;
             }
+            if (com.monpai.sailboatmod.roadplanner.service.RoadPlannerPreviewJobService.global().pendingFor(sender.getUUID())) {
+                sender.sendSystemMessage(Component.literal("道路预览仍在加载沿线区块，请稍候再确认。"));
+                return;
+            }
             RoadPlannerBuildControlService.global().confirmPreview(sender.getUUID(), packet.sessionId(), sender.serverLevel())
                     .ifPresentOrElse(
                             jobId -> sender.sendSystemMessage(Component.literal("道路建造已加入施工队列，可用道路规划器管理或取消。")),

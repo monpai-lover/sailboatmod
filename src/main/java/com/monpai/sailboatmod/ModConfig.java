@@ -13,6 +13,7 @@ public final class ModConfig {
     public static final ModConfigSpec.IntValue MARKET_WEB_LOGIN_TOKEN_TTL_MINUTES;
     public static final ModConfigSpec.BooleanValue MARKET_WEB_DEV_MODE;
     public static final ModConfigSpec.ConfigValue<String> MARKET_WEB_DEV_ROOT;
+    public static final ModConfigSpec.ConfigValue<String> MARKET_WEB_TRUSTED_PROXIES;
     public static final ModConfigSpec.IntValue MARKET_WEB_MAP_RENDER_THREADS;
     public static final ModConfigSpec.IntValue MARKET_WEB_MAP_SNAPSHOT_CACHE_SIZE;
     public static final ModConfigSpec.IntValue MARKET_WEB_MAP_MAX_ACTIVE_SNAPSHOT_REQUESTS;
@@ -73,6 +74,11 @@ public final class ModConfig {
         MARKET_WEB_LOGIN_TOKEN_TTL_MINUTES = builder
                 .comment("One-time login token lifetime in minutes.")
                 .defineInRange("webLoginTokenTtlMinutes", 30, 1, 1440);
+        MARKET_WEB_TRUSTED_PROXIES = builder
+                .comment("Comma-separated addresses of reverse proxies in front of the web market (for example 127.0.0.1).",
+                        "Only requests from these addresses may name the client with X-Forwarded-For; the login limits",
+                        "then count per real client instead of treating everyone behind the proxy as one address.")
+                .define("webTrustedProxies", "");
         MARKET_WEB_DEV_MODE = builder
                 .comment("Serve market web static assets from disk and disable cache headers for hot reload during development.")
                 .define("webDevMode", false);
@@ -205,6 +211,16 @@ public final class ModConfig {
 
     public static int marketWebLoginTokenTtlMinutes() {
         return MARKET_WEB_LOGIN_TOKEN_TTL_MINUTES.get();
+    }
+
+    public static java.util.Set<String> marketWebTrustedProxies() {
+        java.util.Set<String> out = new java.util.HashSet<>();
+        for (String entry : MARKET_WEB_TRUSTED_PROXIES.get().split(",")) {
+            if (!entry.isBlank()) {
+                out.add(entry.trim());
+            }
+        }
+        return out;
     }
 
     public static boolean marketWebDevMode() {

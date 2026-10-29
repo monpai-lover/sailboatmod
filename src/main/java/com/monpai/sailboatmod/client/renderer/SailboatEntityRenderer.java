@@ -61,8 +61,7 @@ public class SailboatEntityRenderer extends GeoEntityRenderer<SailboatEntity> {
         };
         poseStack.pushPose();
         poseStack.translate(0.0D, entity.getBbHeight() + 1.15D, 0.0D);
-        poseStack.mulPose(minecraft.getEntityRenderDispatcher().cameraOrientation());
-        poseStack.scale(-ARRIVAL_HOLOGRAM_SCALE, -ARRIVAL_HOLOGRAM_SCALE, ARRIVAL_HOLOGRAM_SCALE);
+        HologramBillboard.faceCamera(poseStack, minecraft.getEntityRenderDispatcher().cameraOrientation(), ARRIVAL_HOLOGRAM_SCALE);
         float lineHeight = 10.0F;
         float startY = -((lines.length - 1) * lineHeight) / 2.0F;
         for (int i = 0; i < lines.length; i++) {
