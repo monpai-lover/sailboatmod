@@ -185,6 +185,9 @@
       shipments: true
     },
     center: { x: 0, z: 0 },
+    // zoom is CSS pixels per block (the Leaflet contract); drawing coordinates are backing pixels.
+    canvasScaleX: 1,
+    canvasScaleY: 1,
     zoom: 0.85,
     hover: null,
     selected: null,
@@ -838,15 +841,15 @@
 
   function worldToScreen(point) {
     return {
-      x: (point.x - state.center.x) * state.zoom + state.canvas.width / 2,
-      y: (point.z - state.center.z) * state.zoom + state.canvas.height / 2
+      x: (point.x - state.center.x) * state.zoom * state.canvasScaleX + state.canvas.width / 2,
+      y: (point.z - state.center.z) * state.zoom * state.canvasScaleY + state.canvas.height / 2
     };
   }
 
   function screenToWorld(x, y) {
     return {
-      x: (x - state.canvas.width / 2) / state.zoom + state.center.x,
-      z: (y - state.canvas.height / 2) / state.zoom + state.center.z
+      x: (x - state.canvas.width / 2) / (state.zoom * state.canvasScaleX) + state.center.x,
+      z: (y - state.canvas.height / 2) / (state.zoom * state.canvasScaleY) + state.center.z
     };
   }
 
@@ -969,9 +972,16 @@
     const dpr = canvasPixelRatio();
     const width = Math.max(320, Math.floor(rect.width * dpr));
     const height = Math.max(320, Math.floor(rect.height * dpr));
-    if (state.canvas.width !== width || state.canvas.height !== height) {
+    // Floors and the minimum backing size can make these differ from DPR and from each other.
+    // Cache them here so drawing thousands of vertices never needs a layout read.
+    const scaleX = rect.width > 0 ? width / rect.width : 1;
+    const scaleY = rect.height > 0 ? height / rect.height : 1;
+    if (state.canvas.width !== width || state.canvas.height !== height
+      || state.canvasScaleX !== scaleX || state.canvasScaleY !== scaleY) {
       state.canvas.width = width;
       state.canvas.height = height;
+      state.canvasScaleX = scaleX;
+      state.canvasScaleY = scaleY;
       state.ctx.setTransform(1, 0, 0, 1, 0, 0);
       state.ctx.imageSmoothingEnabled = false;
       state.staticKey = ""; // 画布尺寸变 → 静态层缓存失效
@@ -1390,7 +1400,15 @@
     renderSelection();
   }
 
+  function clearPointerHover() {
+    state.hover = null;
+    renderTooltip(null);
+    renderSelection();
+    scheduleRender();
+  }
+
   function centerOn(point, zoom) {
+    clearPointerHover();
     state.center = { x: Number(point.x) || 0, z: Number(point.z) || 0 };
     state.zoom = clamp(Number(zoom) || state.zoom, minZoom(), MAX_ZOOM);
     renderToolbar();
@@ -1398,6 +1416,7 @@
   }
 
   function zoomAt(screenX, screenY, ratio) {
+    clearPointerHover();
     const before = screenToWorld(screenX, screenY);
     state.zoom = clamp(state.zoom * ratio, minZoom(), MAX_ZOOM);
     const after = screenToWorld(screenX, screenY);
@@ -1490,7 +1509,7 @@
     return !!neighbor && territoryOwnerKey(neighbor) === territoryOwnerKey(territory);
   }
 
-  function drawTerritories(ctx) {
+  function drawTerritories(ctx, padding = 0) {
     if (!state.layers.territories) {
       return;
     }
@@ -1499,7 +1518,8 @@
       const x = Number(territory.chunkX) * CHUNK_SIZE;
       const z = Number(territory.chunkZ) * CHUNK_SIZE;
       const rect = screenRectForWorldBounds(x, z, CHUNK_SIZE, CHUNK_SIZE);
-      if (rect.right < -4 || rect.bottom < -4 || rect.x > state.canvas.width + 4 || rect.y > state.canvas.height + 4) {
+      if (rect.right < -padding - 4 || rect.bottom < -padding - 4
+        || rect.x > state.canvas.width + padding + 4 || rect.y > state.canvas.height + padding + 4) {
         continue;
       }
       ctx.fillStyle = rgbaFromRgb(territory.fillRgb, 0.28);
@@ -1511,7 +1531,8 @@
       const x = Number(territory.chunkX) * CHUNK_SIZE;
       const z = Number(territory.chunkZ) * CHUNK_SIZE;
       const rect = screenRectForWorldBounds(x, z, CHUNK_SIZE, CHUNK_SIZE);
-      if (rect.right < -4 || rect.bottom < -4 || rect.x > state.canvas.width + 4 || rect.y > state.canvas.height + 4) {
+      if (rect.right < -padding - 4 || rect.bottom < -padding - 4
+        || rect.x > state.canvas.width + padding + 4 || rect.y > state.canvas.height + padding + 4) {
         continue;
       }
       ctx.beginPath();
@@ -1783,13 +1804,14 @@
     ctx.restore();
   }
 
-  function drawMarkets(ctx) {
+  function drawMarkets(ctx, padding = 0) {
     if (!state.layers.markets) {
       return;
     }
     for (const marker of state.markets || []) {
       const screen = worldToScreen({ x: Number(marker.x) || 0, z: Number(marker.z) || 0 });
-      if (screen.x < -32 || screen.y < -32 || screen.x > state.canvas.width + 32 || screen.y > state.canvas.height + 32) {
+      if (screen.x < -padding - 32 || screen.y < -padding - 32
+        || screen.x > state.canvas.width + padding + 32 || screen.y > state.canvas.height + padding + 32) {
         continue;
       }
       const selected = state.selected?.type === "market" && state.selected.data?.marketId === marker.marketId;
@@ -1819,11 +1841,12 @@
     if (item.type === "territory") {
       const territory = item.data;
       const screen = worldToScreen({ x: Number(territory.chunkX) * CHUNK_SIZE, z: Number(territory.chunkZ) * CHUNK_SIZE });
-      const size = CHUNK_SIZE * state.zoom;
+      const width = CHUNK_SIZE * state.zoom * state.canvasScaleX;
+      const height = CHUNK_SIZE * state.zoom * state.canvasScaleY;
       ctx.save();
       ctx.strokeStyle = "#ffffff";
       ctx.lineWidth = 2;
-      ctx.strokeRect(screen.x, screen.y, size, size);
+      ctx.strokeRect(screen.x, screen.y, width, height);
       ctx.restore();
     }
   }
@@ -1837,6 +1860,7 @@
     return [
       state.zoom,
       state.canvas.width, state.canvas.height,
+      state.canvasScaleX, state.canvasScaleY,
       snapshot.territoryRevision || 0,
       snapshot.marketRevision || 0,
       state.localTileRevision || 0,
@@ -1852,8 +1876,8 @@
     if (!state.staticAnchor) {
       return Infinity;
     }
-    const dx = Math.abs(state.center.x - state.staticAnchor.x) * state.zoom;
-    const dz = Math.abs(state.center.z - state.staticAnchor.z) * state.zoom;
+    const dx = Math.abs(state.center.x - state.staticAnchor.x) * state.zoom * state.canvasScaleX;
+    const dz = Math.abs(state.center.z - state.staticAnchor.z) * state.zoom * state.canvasScaleY;
     return Math.max(dx, dz);
   }
 
@@ -1887,8 +1911,8 @@
       octx.fillRect(-STATIC_LAYER_PAD, -STATIC_LAYER_PAD, off.width, off.height);
       drawTerrain(octx);
     }
-    drawTerritories(octx);
-    drawMarkets(octx);
+    drawTerritories(octx, STATIC_LAYER_PAD);
+    drawMarkets(octx, STATIC_LAYER_PAD);
     state.staticKey = key;
     return off;
   }
@@ -1903,8 +1927,8 @@
     const layer = ensureStaticLayer();
     ctx.clearRect(0, 0, state.canvas.width, state.canvas.height);
     const anchor = state.staticAnchor || { x: state.center.x, z: state.center.z };
-    const offsetX = (anchor.x - state.center.x) * state.zoom - STATIC_LAYER_PAD;
-    const offsetZ = (anchor.z - state.center.z) * state.zoom - STATIC_LAYER_PAD;
+    const offsetX = (anchor.x - state.center.x) * state.zoom * state.canvasScaleX - STATIC_LAYER_PAD;
+    const offsetZ = (anchor.z - state.center.z) * state.zoom * state.canvasScaleY - STATIC_LAYER_PAD;
     ctx.drawImage(layer, Math.round(offsetX), Math.round(offsetZ));
     drawShipments(ctx);
     drawHoverHighlight(ctx);
@@ -1994,7 +2018,8 @@
     for (const shipment of state.shipments || []) {
       const points = (shipment.points || []).map(normalizePoint);
       for (let index = 1; index < points.length; index += 1) {
-        const distance = distanceToSegment(world, points[index - 1], points[index]) * state.zoom;
+        const distance = distanceToSegment(world, points[index - 1], points[index],
+          state.zoom * state.canvasScaleX, state.zoom * state.canvasScaleY);
         if (distance < bestDistance) {
           bestDistance = distance;
           best = shipment;
@@ -2026,17 +2051,17 @@
     return best;
   }
 
-  function distanceToSegment(point, a, b) {
-    const dx = b.x - a.x;
-    const dz = b.z - a.z;
+  function distanceToSegment(point, a, b, scaleX = 1, scaleZ = 1) {
+    const dx = (b.x - a.x) * scaleX;
+    const dz = (b.z - a.z) * scaleZ;
+    const px = (point.x - a.x) * scaleX;
+    const pz = (point.z - a.z) * scaleZ;
     const lengthSq = dx * dx + dz * dz;
     if (lengthSq <= 0.0001) {
-      return Math.hypot(point.x - a.x, point.z - a.z);
+      return Math.hypot(px, pz);
     }
-    const t = clamp(((point.x - a.x) * dx + (point.z - a.z) * dz) / lengthSq, 0, 1);
-    const x = a.x + dx * t;
-    const z = a.z + dz * t;
-    return Math.hypot(point.x - x, point.z - z);
+    const t = clamp((px * dx + pz * dz) / lengthSq, 0, 1);
+    return Math.hypot(px - dx * t, pz - dz * t);
   }
 
   function hitTest(clientX, clientY) {
@@ -2169,6 +2194,7 @@
 
   function bindCanvasEvents() {
     state.canvas.addEventListener("pointerdown", (event) => {
+      clearPointerHover();
       if (state.followShipmentId) {
         state.followShipmentId = ""; // dragging the map takes the camera back
         renderSelection();
@@ -2183,18 +2209,16 @@
       state.canvas.setPointerCapture(event.pointerId);
     });
     state.canvas.addEventListener("pointermove", (event) => {
-      updateCoordReadout(event.clientX, event.clientY);
       if (state.dragging && state.dragStart) {
-        const rect = state.canvas.getBoundingClientRect();
-        const scaleX = state.canvas.width / rect.width;
-        const scaleY = state.canvas.height / rect.height;
         state.center = {
-          x: state.dragStart.center.x - ((event.clientX - state.dragStart.x) * scaleX) / state.zoom,
-          z: state.dragStart.center.z - ((event.clientY - state.dragStart.y) * scaleY) / state.zoom
+          x: state.dragStart.center.x - (event.clientX - state.dragStart.x) / state.zoom,
+          z: state.dragStart.center.z - (event.clientY - state.dragStart.y) / state.zoom
         };
+        updateCoordReadout(event.clientX, event.clientY);
         scheduleRender();
         return;
       }
+      updateCoordReadout(event.clientX, event.clientY);
       if (isMobileMapDevice()) {
         state.hover = null;
         renderTooltip(null);
@@ -2439,6 +2463,8 @@
     state.root = null;
     state.mapElement = null;
     state.canvas = null;
+    state.canvasScaleX = 1;
+    state.canvasScaleY = 1;
     state.ctx = null;
     state.tooltip = null;
     state.toolbar = null;
