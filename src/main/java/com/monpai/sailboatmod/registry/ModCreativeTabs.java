@@ -22,6 +22,7 @@ public final class ModCreativeTabs {
                         output.accept(ModItems.ROUTE_BOOK_ITEM.get());
                         output.accept(ModItems.POST_ROUTE_BOOK_ITEM.get());
                         output.accept(ModItems.ROAD_PLANNER_ITEM.get());
+                        output.accept(ModItems.ROUTE_ATLAS_ITEM.get());
                         output.accept(ModItems.BUILDER_HAMMER_ITEM.get());
                         output.accept(ModItems.COMMAND_BATON_ITEM.get());
                         output.accept(ModItems.DOCK_ITEM.get());

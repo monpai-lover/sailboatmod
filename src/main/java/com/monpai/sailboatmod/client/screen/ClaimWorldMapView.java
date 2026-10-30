@@ -1,7 +1,6 @@
 package com.monpai.sailboatmod.client.screen;
 
 import com.monpai.sailboatmod.client.map.SharedMapClientState;
-import com.monpai.sailboatmod.client.map.route.SharedMapRouteLayer;
 import com.monpai.sailboatmod.client.roadplanner.RoadPlannerMapCanvas;
 import com.monpai.sailboatmod.client.roadplanner.RoadPlannerMapComponent;
 import com.monpai.sailboatmod.client.roadplanner.RoadPlannerMapLayout;
@@ -25,7 +24,6 @@ public final class ClaimWorldMapView implements AutoCloseable {
     public static final MapLod RENDER_LOD = MapLod.LOD_1;
 
     private final UUID sessionId = UUID.randomUUID();
-    private final SharedMapRouteLayer routeLayer = new SharedMapRouteLayer(sessionId);
     private final boolean createDefaultTileManager;
     private RoadPlannerTileManager tileManager;
     private RoadPlannerMapView view;
@@ -50,22 +48,6 @@ public final class ClaimWorldMapView implements AutoCloseable {
 
     public UUID sessionId() {
         return sessionId;
-    }
-
-    public SharedMapRouteLayer routeLayer() {
-        return routeLayer;
-    }
-
-    /** Routes share the exact terrain projection, including a scrolled map's on-screen origin. */
-    public void renderRoutes(GuiGraphics graphics, Font font, ClaimMapViewport viewport, int mouseX, int mouseY) {
-        ensureView(0, 0, 0, viewport.width(), viewport.height());
-        routeLayer.render(graphics, font, view, mapRect(viewport.x(), viewport.y(), viewport.width(), viewport.height()),
-                worldId(), dimensionId(), mouseX, mouseY);
-    }
-
-    public boolean inspectRouteClick(double mouseX, double mouseY, ClaimMapViewport viewport) {
-        ensureView(0, 0, 0, viewport.width(), viewport.height());
-        return routeLayer.inspectClick(mouseX, mouseY, view, mapRect(viewport.x(), viewport.y(), viewport.width(), viewport.height()));
     }
 
     public int centerChunkX() {

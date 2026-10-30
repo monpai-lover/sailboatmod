@@ -438,7 +438,6 @@ public class NationHomeScreen extends ThemedScreen implements RoadPlannerTileSyn
         UIElement mapTools = Ui.row();
         mapTools.layout(l -> l.gapAll(Ui.GAP_XS));
         mapTools.addChildren(Ui.muted(Component.translatable("screen.sailboatmod.nation.claims.map_title")), Ui.spacer(),
-                com.monpai.sailboatmod.client.map.route.RouteMapOptionsScreen.settingsButton(this, claimWorldMapView.routeLayer()),
                 Ui.iconButton(new ItemStack(Items.COMPASS), Component.translatable("screen.sailboatmod.ui.territory.recenter"), this::resetMapOffset),
                 Ui.iconButton(new ItemStack(Items.CLOCK), Component.translatable("screen.sailboatmod.nation.action.refresh"), this::requestRefresh));
         claimMap = new ClaimMapElement(mapHost());
@@ -1061,14 +1060,13 @@ public class NationHomeScreen extends ThemedScreen implements RoadPlannerTileSyn
                 claimWorldMapView.renderBase(g, font, viewport, mapCenterX(), mapCenterZ(), claimRadius());
                 requestInitialVisibleClaimMapForceRender(viewport);
                 ClaimMapPainter.drawClaims(g, claimWorldMapView, viewport, cachedClaimOverlays.values(), NationHomeScreen.this::findClaim, NationOverviewClaim::nationId);
-                claimWorldMapView.renderRoutes(g, font, viewport, mouseX, mouseY);
                 ClaimMapPainter.drawMarker(g, claimWorldMapView, viewport, data.currentChunkX(), data.currentChunkZ(), 0xFFFFFFFF);
                 ClaimMapPainter.drawMarker(g, claimWorldMapView, viewport, selectedClaimChunkX, selectedClaimChunkZ, 0xFFFFD166);
                 ClaimMapPainter.drawArea(g, claimWorldMapView, viewport, areaCorner1X, areaCorner1Z, areaCorner2X, areaCorner2Z);
                 ClaimMapPainter.drawProgress(g, viewport, data.claimMapState(),
                         claimMapProgressWidth(data.claimMapState(), viewport.width() - 2, true),
                         claimMapProgressWidth(data.claimMapState(), viewport.width() - 2, false));
-                if (!claimWorldMapView.routeLayer().inspectionEnabled()) ClaimMapPainter.drawHoverLabel(g, font, claimWorldMapView, viewport, mouseX, mouseY, NationHomeScreen.this::findClaim,
+                ClaimMapPainter.drawHoverLabel(g, font, claimWorldMapView, viewport, mouseX, mouseY, NationHomeScreen.this::findClaim,
                         NationOverviewClaim::nationId, NationOverviewClaim::nationName, data.nearbyClaims());
             }
 
@@ -1080,7 +1078,6 @@ public class NationHomeScreen extends ThemedScreen implements RoadPlannerTileSyn
 
             @Override
             public void clickMap(double mouseX, double mouseY, ClaimMapViewport viewport, boolean extendArea) {
-                if (claimWorldMapView.inspectRouteClick(mouseX, mouseY, viewport)) return;
                 ChunkPos chunk = claimWorldMapView.screenToChunk(mouseX, mouseY, viewport);
                 if (extendArea && areaCorner1X != Integer.MIN_VALUE) {
                     areaCorner2X = chunk.x;

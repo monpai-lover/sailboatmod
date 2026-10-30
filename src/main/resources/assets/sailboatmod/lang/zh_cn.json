@@ -2013,5 +2013,9 @@
   "screen.sailboatmod.map_routes.endpoints": "%s → %s",
   "screen.sailboatmod.map_routes.distance": "长度：约%s 格",
   "screen.sailboatmod.map_routes.truncated": "部分路线未显示，请放大查看。",
-  "screen.sailboatmod.map_routes.inspect_badge": "查看路线：开启"
+  "screen.sailboatmod.map_routes.inspect_badge": "查看路线：开启",
+  "item.sailboatmod.route_atlas": "交通地图",
+  "screen.sailboatmod.route_atlas.title": "交通地图",
+  "screen.sailboatmod.route_atlas.controls": "左键查看路线；中键拖动；滚轮缩放。",
+  "screen.sailboatmod.route_atlas.recenter": "回到玩家位置"
 }

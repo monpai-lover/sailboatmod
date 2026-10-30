@@ -10,6 +10,7 @@ import com.monpai.sailboatmod.item.NationCoreItem;
 import com.monpai.sailboatmod.item.PostRouteBookItem;
 import com.monpai.sailboatmod.item.RoadPlannerItem;
 import com.monpai.sailboatmod.item.RouteBookItem;
+import com.monpai.sailboatmod.item.RouteAtlasItem;
 import com.monpai.sailboatmod.item.SailboatItem;
 import com.monpai.sailboatmod.item.StandingAndWallFlagBlockItem;
 import com.monpai.sailboatmod.item.TownCoreItem;
@@ -39,6 +40,11 @@ public final class ModItems {
     public static final DeferredHolder<Item, Item> ROAD_PLANNER_ITEM = ITEMS.register(
             "road_planner",
             () -> new RoadPlannerItem(new Item.Properties().stacksTo(1))
+    );
+
+    public static final DeferredHolder<Item, Item> ROUTE_ATLAS_ITEM = ITEMS.register(
+            "route_atlas",
+            () -> new RouteAtlasItem(new Item.Properties().stacksTo(1))
     );
 
     public static final DeferredHolder<Item, Item> DOCK_ITEM = ITEMS.register(

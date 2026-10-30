@@ -180,7 +180,6 @@ public final class SharedMapRouteLayer {
         if (legendHeight > availableHeight) return;
         List<Component> statuses = new ArrayList<>();
         if (truncated()) statuses.add(text("truncated"));
-        if (inspectionEnabled()) statuses.add(text("inspect_badge"));
         int statusLineLimit = Math.max(0, (availableHeight - legendHeight - 2) / lineHeight);
         List<FormattedCharSequence> statusLines = new ArrayList<>();
         for (Component status : statuses) {

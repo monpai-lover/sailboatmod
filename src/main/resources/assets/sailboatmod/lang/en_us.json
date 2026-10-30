@@ -2013,5 +2013,9 @@
   "screen.sailboatmod.map_routes.endpoints": "%s → %s",
   "screen.sailboatmod.map_routes.distance": "Length: approx. %s blocks",
   "screen.sailboatmod.map_routes.truncated": "Some routes are omitted; zoom in to see more.",
-  "screen.sailboatmod.map_routes.inspect_badge": "Inspect routes: on"
+  "screen.sailboatmod.map_routes.inspect_badge": "Inspect routes: on",
+  "item.sailboatmod.route_atlas": "Transport Atlas",
+  "screen.sailboatmod.route_atlas.title": "Transport Atlas",
+  "screen.sailboatmod.route_atlas.controls": "Left click: route details. Middle drag: pan. Wheel: zoom.",
+  "screen.sailboatmod.route_atlas.recenter": "Center on player"
 }

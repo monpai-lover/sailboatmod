@@ -31,7 +31,7 @@ Minecraft NeoForge 1.21.1 mod (Java 21) implementing a multiplayer system with s
 
 ## Tellus and Create update
 
-See `docs/handoff/TELLUS_ADAPTATION_RETURN.md` for the returned implementation and its original validation limits. Shared map route overlays use protocol 14 and preserve server authority, market escrow and native inventory behavior. `HologramBillboard` follows the Minecraft 1.21.1 name-tag transform.
+See `docs/handoff/TELLUS_ADAPTATION_RETURN.md` for the returned implementation and its original validation limits. The standalone transport atlas uses protocol 15 and preserves server authority, market escrow and native inventory behavior. `HologramBillboard` follows the Minecraft 1.21.1 name-tag transform.
 
 ## Architecture
 
@@ -44,7 +44,7 @@ All content uses NeoForge's `DeferredRegister` pattern. Registries initialized i
 - `ModCreativeTabs` — single creative tab
 
 ### Network (`network/`)
-`ModNetwork` registers 112 directional custom payloads through `PayloadChannel` (protocol version "14"). Every packet class follows the same static-method pattern: `encode`, `decode`, `handle`. Add new packets at the end of `ModNetwork.register()` with `packetId++`. `PacketStringCodec` provides safe UTF encoding helpers.
+`ModNetwork` registers 112 directional custom payloads through `PayloadChannel` (protocol version "15"). Every packet class follows the same static-method pattern: `encode`, `decode`, `handle`. Add new packets at the end of `ModNetwork.register()` with `packetId++`. `PacketStringCodec` provides safe UTF encoding helpers.
 
 ### Entity System (`entity/`)
 - **SailboatEntity** — extends `Boat`, implements GeckoLib's `GeoEntity`. Features: 5-seat passengers, 27-slot inventory, sail/engine/autopilot mechanics, rental pricing, route waypoint following. Physics uses knot-based speed with drag coefficients. Autopilot has stall detection and dock parking logic with chunk loading.
