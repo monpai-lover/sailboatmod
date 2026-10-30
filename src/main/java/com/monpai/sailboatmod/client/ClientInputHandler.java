@@ -191,6 +191,7 @@ public final class ClientInputHandler {
         NationFlagTextureCache.clearCache();
         com.monpai.sailboatmod.client.map.SharedMapClientState.defaultState().clearAll();
         com.monpai.sailboatmod.client.roadplanner.RoadPlannerTileManager.closeSharedDefault();
+        com.monpai.sailboatmod.client.map.route.SharedMapRouteLayer.clearAll();
     }
 
     private ClientInputHandler() {

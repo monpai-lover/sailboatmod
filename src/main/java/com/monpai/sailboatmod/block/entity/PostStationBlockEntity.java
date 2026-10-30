@@ -45,9 +45,20 @@ public class PostStationBlockEntity extends DockBlockEntity {
     private int selectedVehicleIndex = 0;
     private boolean autoReturnOnDispatch = true;
     private boolean autoUnloadOnDispatch = true;
+    private List<RouteDefinition> generatedMapRoutes = List.of();
 
     public PostStationBlockEntity(BlockPos pos, BlockState state) {
         super(ModBlockEntities.POST_STATION_BLOCK_ENTITY.get(), pos, state);
+    }
+
+    @Override
+    public void onLoad() {
+        if (level != null && !level.isClientSide) {
+            var saved = com.monpai.sailboatmod.map.route.StationMapRouteSavedData.get(level)
+                    .station(level.dimension().location().toString(), worldPosition);
+            if (saved != null) generatedMapRoutes = saved.generatedRoutes();
+        }
+        super.onLoad();
     }
 
     @Override
@@ -62,6 +73,15 @@ public class PostStationBlockEntity extends DockBlockEntity {
 
     @Override
     protected void syncFacilityMarkers() {
+        if (level != null && !level.isClientSide) {
+            var data = com.monpai.sailboatmod.map.route.StationMapRouteSavedData.get(level);
+            generatedMapRoutes = data.retainPublishedGenerated(level.dimension().location().toString(), worldPosition, generatedMapRoutes);
+            List<RouteDefinition> registered = getRoutesForMap();
+            data.put(
+                    new com.monpai.sailboatmod.map.route.StationMapRouteSavedData.StationSnapshot(
+                            level.dimension().location().toString(), worldPosition, getDockName(),
+                            RoadAutoRouteService.mergeRoutes(registered, generatedMapRoutes), generatedMapRoutes, registered));
+        }
     }
 
     @Override
@@ -114,9 +134,15 @@ public class PostStationBlockEntity extends DockBlockEntity {
         if (!(level instanceof net.minecraft.server.level.ServerLevel serverLevel)) {
             return super.availableRoutes();
         }
+        List<RouteDefinition> freshGenerated = RoadAutoRouteService.buildRoadNetworkRoutes(serverLevel, this);
+        generatedMapRoutes = com.monpai.sailboatmod.map.route.StationMapRouteSavedData.get(level)
+                .refreshGeneratedCatalog(level.dimension().location().toString(), worldPosition, getDockName(),
+                        getRoutesForMap(), freshGenerated,
+                        pos -> serverLevel.getChunkSource().getChunkNow(pos.getX() >> 4, pos.getZ() >> 4) != null)
+                .generatedRoutes();
         return RoadAutoRouteService.mergeRoutes(
                 super.availableRoutes(),
-                RoadAutoRouteService.buildRoadNetworkRoutes(serverLevel, this)
+                freshGenerated
         );
     }
 

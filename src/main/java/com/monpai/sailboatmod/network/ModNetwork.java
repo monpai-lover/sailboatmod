@@ -109,7 +109,7 @@ import net.neoforged.bus.api.IEventBus;
 import java.util.Optional;
 
 public final class ModNetwork {
-    private static final String PROTOCOL_VERSION = "13"; // Shared terrain streaming and registered physical transport controllers.
+    private static final String PROTOCOL_VERSION = "14"; // Shared route layers on all game maps.
     public static final PayloadChannel CHANNEL = new PayloadChannel(PROTOCOL_VERSION);
 
     private static int packetId = 0;
@@ -992,6 +992,18 @@ public final class ModNetwork {
                 com.monpai.sailboatmod.network.packet.RegisteredVehicleControllerActionPacket::decode,
                 com.monpai.sailboatmod.network.packet.RegisteredVehicleControllerActionPacket::handle,
                 Optional.of(NetworkDirection.PLAY_TO_SERVER));
+        CHANNEL.registerMessage(packetId++,
+                com.monpai.sailboatmod.network.packet.maproute.MapRouteViewportRequestPacket.class,
+                com.monpai.sailboatmod.network.packet.maproute.MapRouteViewportRequestPacket::encode,
+                com.monpai.sailboatmod.network.packet.maproute.MapRouteViewportRequestPacket::decode,
+                com.monpai.sailboatmod.network.packet.maproute.MapRouteViewportRequestPacket::handle,
+                Optional.of(NetworkDirection.PLAY_TO_SERVER));
+        CHANNEL.registerMessage(packetId++,
+                com.monpai.sailboatmod.network.packet.maproute.MapRouteSnapshotPacket.class,
+                com.monpai.sailboatmod.network.packet.maproute.MapRouteSnapshotPacket::encode,
+                com.monpai.sailboatmod.network.packet.maproute.MapRouteSnapshotPacket::decode,
+                com.monpai.sailboatmod.network.packet.maproute.MapRouteSnapshotPacket::handle,
+                Optional.of(NetworkDirection.PLAY_TO_CLIENT));
     }
 
     private ModNetwork() {

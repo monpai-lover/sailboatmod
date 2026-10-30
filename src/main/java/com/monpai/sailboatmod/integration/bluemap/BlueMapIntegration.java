@@ -119,17 +119,25 @@ public final class BlueMapIntegration {
 
     private static void pruneStaleEntries(ServerLevel level, BlueMapMarkerSavedData markerData) {
         List<BlueMapMarkerSavedData.DockSnapshot> docks = markerData.getDocks(level.dimension());
-        for (BlueMapMarkerSavedData.DockSnapshot dock : docks) {
-            if (!(level.getBlockEntity(dock.pos()) instanceof DockBlockEntity)) {
-                markerData.removeDock(level.dimension(), dock.pos());
-            }
-        }
+        pruneDockSnapshots(docks,
+                pos -> level.getChunkSource().getChunkNow(pos.getX() >> 4, pos.getZ() >> 4) != null,
+                pos -> {
+                    var chunk = level.getChunkSource().getChunkNow(pos.getX() >> 4, pos.getZ() >> 4);
+                    return chunk == null || chunk.getBlockEntity(pos) instanceof DockBlockEntity;
+                }, pos -> markerData.removeDock(level.dimension(), pos));
         List<BlueMapMarkerSavedData.BoatSnapshot> boats = markerData.getBoats(level.dimension());
         for (BlueMapMarkerSavedData.BoatSnapshot boat : boats) {
             if (level.getEntity(boat.uuid()) == null) {
                 markerData.removeBoat(level.dimension(), boat.uuid());
             }
         }
+    }
+
+    static void pruneDockSnapshots(List<BlueMapMarkerSavedData.DockSnapshot> docks,
+                                    java.util.function.Predicate<BlockPos> loaded,
+                                    java.util.function.Predicate<BlockPos> dockPresent,
+                                    java.util.function.Consumer<BlockPos> remove) {
+        for (var dock : docks) if (loaded.test(dock.pos()) && !dockPresent.test(dock.pos())) remove.accept(dock.pos());
     }
 
     private static void syncNow(Level level) {

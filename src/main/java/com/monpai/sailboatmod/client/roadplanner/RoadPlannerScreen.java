@@ -1,5 +1,7 @@
 package com.monpai.sailboatmod.client.roadplanner;
 
+import com.monpai.sailboatmod.client.map.route.RouteMapOptionsScreen;
+import com.monpai.sailboatmod.client.map.route.SharedMapRouteLayer;
 import com.monpai.sailboatmod.network.ModNetwork;
 import com.monpai.sailboatmod.network.packet.roadplanner.OpenRoadMergeCandidatesPacket;
 import com.monpai.sailboatmod.network.packet.roadplanner.RoadMapSnapshotRequestPacket;
@@ -81,6 +83,7 @@ public class RoadPlannerScreen extends Screen implements RoadPlannerTileSyncRece
     private RoadPlannerMapLayout mapLayout;
     private RoadPlannerVanillaLayout compatibilityLayout;
     private RoadPlannerMapView mapView;
+    private final SharedMapRouteLayer routeLayer = new SharedMapRouteLayer();
     private boolean mapViewUsingFallbackOrigin;
     private RoadPlannerMapCanvas canvas;
     private RoadPlannerClaimOverlayRenderer claimOverlayRenderer = new RoadPlannerClaimOverlayRenderer(List.of());
@@ -90,7 +93,8 @@ public class RoadPlannerScreen extends Screen implements RoadPlannerTileSyncRece
     private RoadNetworkGraph graph = new RoadNetworkGraph();
     private final RoadPlannerLinePlan linePlan = new RoadPlannerLinePlan();
     private final RoadPlannerForceRenderQueue forceRenderQueue = new RoadPlannerForceRenderQueue();
-    private final RoadPlannerTileRenderScheduler tileRenderScheduler = new RoadPlannerTileRenderScheduler();
+    private RoadPlannerTileRenderScheduler tileRenderScheduler = new RoadPlannerTileRenderScheduler();
+    private boolean tileRenderSchedulerClosed;
     private final RoadPlannerMinimapRequestScheduler mapRequestScheduler = new RoadPlannerMinimapRequestScheduler(350L);
     private final RoadPlannerAutoCompleteService autoCompleteService = new RoadPlannerAutoCompleteService();
     private final RoadPlannerBridgeRuleService bridgeRuleService = new RoadPlannerBridgeRuleService(RoadPlannerScreen::isClientLand);
@@ -1259,6 +1263,10 @@ public class RoadPlannerScreen extends Screen implements RoadPlannerTileSyncRece
 
     @Override
     protected void init() {
+        if (tileRenderSchedulerClosed) {
+            tileRenderScheduler = new RoadPlannerTileRenderScheduler();
+            tileRenderSchedulerClosed = false;
+        }
         centerFallbackMapViewOnPlayerIfAvailable();
         recomputeLayout();
         if (!testMode) {
@@ -1286,6 +1294,7 @@ public class RoadPlannerScreen extends Screen implements RoadPlannerTileSyncRece
         tileManager = null;
         closeTileManagerOnRemoved = false;
         tileRenderScheduler.close();
+        tileRenderSchedulerClosed = true;
     }
 
     private void recomputeLayout() {
@@ -1492,7 +1501,8 @@ public class RoadPlannerScreen extends Screen implements RoadPlannerTileSyncRece
             // The map, toolbar, status bar and menu are drawn by the LDLib2 chrome at the planner's layout rectangles.
             chrome.sync(width, height);
             super.render(graphics, mouseX, mouseY, partialTick);
-            if (canvas.contains(mouseX, mouseY) && (contextMenu == null || !contextMenu.isOpen())) {
+            if (canvas.contains(mouseX, mouseY) && (contextMenu == null || !contextMenu.isOpen())
+                    && !routeLayer.inspectionEnabled() && routeLayer.hoveredRoute().isEmpty()) {
                 claimOverlayRenderer.renderTooltip(graphics, font, mapView, mapLayout.map(), mouseX, mouseY);
                 RoadPlannerRoadOverlayHitTester.Result roadHit = hoveredRoadOverlay(mouseX, mouseY);
                 if (roadHit.hit()) {
@@ -1504,14 +1514,14 @@ public class RoadPlannerScreen extends Screen implements RoadPlannerTileSyncRece
         renderBackground(graphics, mouseX, mouseY, partialTick);
         canvas.render(graphics, font);
         claimOverlayRenderer.render(graphics, mapView, mapLayout.map());
-        renderRoadOverlay(graphics, mouseX, mouseY);
+        renderMapOverlays(graphics, mouseX, mouseY);
         renderToolbar(graphics, mouseX, mouseY);
         renderInspector(graphics);
         renderStatusBar(graphics);
         if (contextMenu != null && contextMenu.isOpen()) {
             contextMenu.render(graphics, font, mouseX, mouseY, width, height);
         }
-        if (canvas.contains(mouseX, mouseY)) {
+        if (canvas.contains(mouseX, mouseY) && !routeLayer.inspectionEnabled() && routeLayer.hoveredRoute().isEmpty()) {
             claimOverlayRenderer.renderTooltip(graphics, font, mapView, mapLayout.map(), mouseX, mouseY);
             RoadPlannerRoadOverlayHitTester.Result roadHit = hoveredRoadOverlay(mouseX, mouseY);
             if (roadHit.hit()) {
@@ -1526,7 +1536,7 @@ public class RoadPlannerScreen extends Screen implements RoadPlannerTileSyncRece
             public void paintMap(GuiGraphics graphics, int mouseX, int mouseY) {
                 canvas.render(graphics, font);
                 claimOverlayRenderer.render(graphics, mapView, mapLayout.map());
-                renderRoadOverlay(graphics, mouseX, mouseY);
+                renderMapOverlays(graphics, mouseX, mouseY);
             }
 
             @Override
@@ -1571,12 +1581,35 @@ public class RoadPlannerScreen extends Screen implements RoadPlannerTileSyncRece
             public void close() {
                 onClose();
             }
+
+            @Override
+            public void openRouteOptions() {
+                expandedToolbarGroup = RoadPlannerTopToolbar.Group.NONE;
+                panning = false;
+                RouteMapOptionsScreen.open(RoadPlannerScreen.this, routeLayer);
+            }
         };
     }
 
     private RoadPlannerTopToolbar currentToolbar() {
         return RoadPlannerScreenLayoutModel.fitToolbar(
                 RoadPlannerTopToolbar.toolbar(width, expandedToolbarGroup), width, height);
+    }
+
+    public SharedMapRouteLayer routeLayer() {
+        return routeLayer;
+    }
+
+    private void renderRegisteredRoutes(GuiGraphics graphics, int mouseX, int mouseY) {
+        if (tileManager == null) return;
+        tileManager.refreshWorldContext();
+        routeLayer.render(graphics, font, mapView, mapLayout.map(), tileManager.worldId(), tileManager.dimensionId(), mouseX, mouseY);
+    }
+
+    private void renderMapOverlays(GuiGraphics graphics, int mouseX, int mouseY) {
+        if (!routeLayer.inspectionEnabled()) renderRegisteredRoutes(graphics, mouseX, mouseY);
+        renderRoadOverlay(graphics, mouseX, mouseY);
+        if (routeLayer.inspectionEnabled()) renderRegisteredRoutes(graphics, mouseX, mouseY);
     }
 
     @Override
@@ -1628,7 +1661,7 @@ public class RoadPlannerScreen extends Screen implements RoadPlannerTileSyncRece
 
     private void renderRoadOverlay(GuiGraphics graphics, int mouseX, int mouseY) {
         RoadPlannerMapLayout.Rect map = mapLayout.map();
-        renderSyncedRoadOverlays(graphics, map, hoveredRoadOverlay(mouseX, mouseY));
+        if (!routeLayer.inspectionEnabled()) renderSyncedRoadOverlays(graphics, map, hoveredRoadOverlay(mouseX, mouseY));
         List<BlockPos> nodes = linePlan.nodes();
         List<RoadPlannerSegmentType> segments = linePlan.segments();
         for (int index = 1; index < nodes.size(); index++) {
@@ -1644,7 +1677,7 @@ public class RoadPlannerScreen extends Screen implements RoadPlannerTileSyncRece
             BlockPos node = nodes.get(index);
             int x = mapView.worldToScreenX(node.getX(), map);
             int y = mapView.worldToScreenZ(node.getZ(), map);
-            boolean selected = selectedNode != null && selectedNode.nodeIndex() == index;
+            boolean selected = !routeLayer.inspectionEnabled() && selectedNode != null && selectedNode.nodeIndex() == index;
             int radius = selected ? 6 : 3;
             if (selected) {
                 graphics.fill(x - 8, y - 1, x + 9, y + 2, 0xFFFFF176);
@@ -1659,7 +1692,7 @@ public class RoadPlannerScreen extends Screen implements RoadPlannerTileSyncRece
         }
         renderTownMarker(graphics, map, startTownPos, "起点", 0xFFFFE066);
         renderTownMarker(graphics, map, destinationTownPos, "终点", 0xFFFF5555);
-        if (hoverWorldPos != null && !nodes.isEmpty() && showsHoverPreviewLine()) {
+        if (!routeLayer.inspectionEnabled() && hoverWorldPos != null && !nodes.isEmpty() && showsHoverPreviewLine()) {
             BlockPos previous = nodes.get(nodes.size() - 1);
             int previewColor = state.activeTool() == RoadToolType.ROAD && requiresBridgeTool(hoverWorldPos) ? 0xCCFF4D4D : 0xCCFFFFFF;
             drawMapLine(graphics, map,
@@ -2109,6 +2142,9 @@ public class RoadPlannerScreen extends Screen implements RoadPlannerTileSyncRece
             return true;
         }
         if (canvas.contains(mouseX, mouseY)) {
+            if (button == 0 && routeLayer.inspectClick(mouseX, mouseY, mapView, mapLayout.map())) {
+                return true;
+            }
             if (button == 1) {
                 BlockPos world = canvas.mouseToWorld(mouseX, mouseY);
                 return openContextMenuAtWorld(world.getX(), world.getZ(), (int) mouseX, (int) mouseY);
@@ -2211,6 +2247,7 @@ public class RoadPlannerScreen extends Screen implements RoadPlannerTileSyncRece
             lastMouseY = mouseY;
             return true;
         }
+        if (button == 0 && routeLayer.inspectionEnabled() && canvas.contains(mouseX, mouseY)) return true;
         if (button == 0 && canvas.contains(mouseX, mouseY) && state.activeTool() == RoadToolType.FORCE_RENDER && forceRenderSelectionStart != null) {
             forceRenderSelectionEnd = canvas.mouseToWorld(mouseX, mouseY);
             return true;
@@ -2231,6 +2268,11 @@ public class RoadPlannerScreen extends Screen implements RoadPlannerTileSyncRece
     public boolean mouseReleased(double mouseX, double mouseY, int button) {
         boolean wasPanning = panning;
         panning = false;
+        if (button == 0 && routeLayer.inspectionEnabled()) {
+            forceRenderSelectionStart = null;
+            forceRenderSelectionEnd = null;
+            return canvas.contains(mouseX, mouseY);
+        }
         if (button == 0 && state.activeTool() == RoadToolType.FORCE_RENDER && forceRenderSelectionStart != null) {
             if (canvas.contains(mouseX, mouseY)) {
                 forceRenderSelectionEnd = canvas.mouseToWorld(mouseX, mouseY);

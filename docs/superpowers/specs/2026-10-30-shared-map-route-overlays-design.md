@@ -5,7 +5,7 @@ User approval: 2026-10-30, “按推荐方案实施”. Applies to the existing 
 ## Behavior
 
 - Draw registered built roads, registered land transport routes and port sea routes over the existing actual/Tellus map, using gold, green and cyan with contrasting outlines. Provide independent ROAD/LAND/SEA layer switches and a legend.
-- Hover shows the route name. An explicit route inspection mode enables click selection, highlight and details: name, kind, start, end and original route length. Normal territory selection and road editing retain their existing behavior when inspection is off; middle drag and wheel zoom continue in both modes.
+- Hover shows the route name. An explicit route inspection mode enables click selection, highlight and details: name, kind, start, end and route distance (stored length when available, otherwise measured display geometry, labelled approximate). Normal territory selection and road editing retain their existing behavior when inspection is off; middle drag and wheel zoom continue in both modes.
 - Lines use the same world-to-screen transform as terrain. Clip actual line segments, including a segment whose endpoints are both outside the viewport. Keep screen-space widths and hit tolerance stable across zoom; preserve disconnected clipped portions.
 - Use bounded view requests and replies, zoom-sensitive display simplification, generation IDs and world/dimension checks. Report incomplete bounded results visibly; never join unrelated pieces or quietly imply complete coverage.
 

@@ -9,6 +9,7 @@ import com.monpai.sailboatmod.client.roadplanner.RoadPlannerMapLayout;
 import com.monpai.sailboatmod.client.roadplanner.RoadPlannerTopToolbar;
 import com.monpai.sailboatmod.client.roadplanner.RoadPlannerVanillaContextMenu;
 import com.monpai.sailboatmod.client.roadplanner.RoadPlannerVanillaLayout;
+import com.monpai.sailboatmod.client.map.route.SharedMapRouteLayer;
 import com.monpai.sailboatmod.client.ui.kit.MeterBar;
 import com.monpai.sailboatmod.client.ui.kit.ThemedUi;
 import com.monpai.sailboatmod.client.ui.kit.Ui;
@@ -55,6 +56,8 @@ public final class RoadPlannerChrome {
         RoadPlannerVanillaContextMenu contextMenu();
 
         void close();
+
+        default void openRouteOptions() { }
     }
 
     /** Display names for the planner's internal toolbar labels (the labels themselves stay the action keys). */
@@ -95,6 +98,7 @@ public final class RoadPlannerChrome {
     private final MeterBar progressBar;
     private final UIElement menuPanel;
     private final Button themeButton;
+    private final Button routesButton;
     private final Button closeButton;
     private final List<Button> itemButtons = new ArrayList<>();
     private List<RoadPlannerTopToolbar.Item> shownItems = List.of();
@@ -129,13 +133,14 @@ public final class RoadPlannerChrome {
         toolbarItems = new UIElement();
         toolbarItems.layout(l -> l.widthPercent(100).heightPercent(100));
         themeButton = Ui.iconButton(new ItemStack(Items.MAP), Component.translatable("screen.sailboatmod.ui.theme.toggle"), () -> { });
+        routesButton = Ui.iconButton(new ItemStack(Items.FILLED_MAP), SharedMapRouteLayer.text("settings"), () -> { });
         closeButton = Ui.iconButton(new ItemStack(Items.BARRIER), Component.translatable("screen.sailboatmod.ui.close"), () -> { });
 
         menuPanel = Ui.column("sm-dialog");
         menuPanel.style(s -> s.zIndex(80));
         menuPanel.setDisplay(false);
 
-        root.addChildren(mapElement, statusPanel, toolbarPanel, toolbarItems, themeButton, closeButton, menuPanel);
+        root.addChildren(mapElement, statusPanel, toolbarPanel, toolbarItems, routesButton, themeButton, closeButton, menuPanel);
         modularUI = ThemedUi.create(root, UiPreferences.get().theme());
     }
 
@@ -159,6 +164,7 @@ public final class RoadPlannerChrome {
         place(toolbarPanel, layout.toolbar());
         place(closeButton, new RoadPlannerMapLayout.Rect(width - OWN_BUTTON - 8, 8, OWN_BUTTON, OWN_BUTTON - 2));
         place(themeButton, new RoadPlannerMapLayout.Rect(width - OWN_BUTTON * 2 - 12, 8, OWN_BUTTON, OWN_BUTTON - 2));
+        place(routesButton, new RoadPlannerMapLayout.Rect(width - OWN_BUTTON * 3 - 16, 8, OWN_BUTTON, OWN_BUTTON - 2));
         syncToolbar(width);
         statusLabel.setValue(host.statusText());
         progressBar.set(host.progressPercent() / 100f, 0xFF3CCF7E);
@@ -265,6 +271,10 @@ public final class RoadPlannerChrome {
         }
         if (contains(themeButton, mouseX, mouseY)) {
             UiPreferences.get().toggleTheme();
+            return true;
+        }
+        if (contains(routesButton, mouseX, mouseY)) {
+            host.openRouteOptions();
             return true;
         }
         if (contains(closeButton, mouseX, mouseY)) {

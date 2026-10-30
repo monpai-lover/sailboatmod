@@ -52,6 +52,7 @@ public final class ServerEvents {
         ClaimMapTaskService.onServerStarted(event.getServer());
         SharedMapServerState.onServerStarted(event.getServer());
         com.monpai.sailboatmod.roadplanner.service.SharedMapTerrainService.start(event.getServer());
+        com.monpai.sailboatmod.map.route.MapRouteCatalogService.start(event.getServer());
         com.monpai.sailboatmod.transport.control.RegisteredTransportSavedData.restoreKnown(event.getServer());
         RoadPlanningTaskService.onServerStarted(event.getServer());
         RoadPlannerMapPreloadService.onServerStarted(event.getServer());
@@ -97,6 +98,7 @@ public final class ServerEvents {
                 com.monpai.sailboatmod.roadplanner.service.SharedMapTerrainService.global().tick(level);
             });
             com.monpai.sailboatmod.compat.create.CreateRailLogistics.tick(server);
+            com.monpai.sailboatmod.map.route.MapRouteCatalogService.global().tick();
             com.monpai.sailboatmod.network.packet.RequestClaimMapViewportPacket.onServerTick(server);
             MARKET_ANALYTICS.maybeRecordSnapshots(server);
             if (server.getTickCount() % 20 == 0) {
@@ -151,6 +153,7 @@ public final class ServerEvents {
         java.util.UUID player = event.getEntity().getUUID();
         com.monpai.sailboatmod.roadplanner.service.RoadPlannerPreviewJobService.global().cancel(player);
         RoadPlannerBuildControlService.global().forgetPlayer(player);
+        com.monpai.sailboatmod.map.route.MapRouteCatalogService.global().forget(player);
     }
 
     @SubscribeEvent
@@ -167,6 +170,7 @@ public final class ServerEvents {
         RoadPlanningTaskService.onServerStopping();
         SharedMapServerState.onServerStopped();
         com.monpai.sailboatmod.roadplanner.service.SharedMapTerrainService.stop();
+        com.monpai.sailboatmod.map.route.MapRouteCatalogService.stop();
         com.monpai.sailboatmod.transport.TransportRegistry.clear(event.getServer());
         RoadPlannerMapPreloadService.onServerStopped();
         RoadEditTaskService.global().clear();

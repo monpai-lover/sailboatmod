@@ -7,9 +7,11 @@ Minecraft NeoForge 1.21.1 多人航海、運輸、國家與城鎮模組。包含
 - Minecraft 1.21.1、NeoForge 21.1.259、Java 21。
 - 必要外置前置：GeckoLib 4.9.3、LDLib2 2.2.42。客戶端與伺服器都需要安裝。
 - 可選整合：Tellus 0.8.3 地球地形與航線、Create 6.0.10 列車物流、Vault 經濟及 BlueMap 地圖。
-- 網路協定為 **13**；客戶端與伺服器請同步更新。
+- 網路協定為 **14**；客戶端與伺服器請同步更新。
 
 ## 本次更新
+
+fix_11 在道路規劃、Town、Nation 地圖加入已登記路線圖層：道路為金色、陸運為綠色、航線為青色。地圖工具列可開啟「地圖路線」設定，切換各分類及「查看路線」模式；點選路線會顯示名稱、起終點及約略距離。平移與縮放沿用底圖座標，未載入的終端使用已保存的路線資料。詳見 [fix_11 交付說明](docs/handoff/MAP_ROUTE_OVERLAYS_FIX_11.md)。
 
 fix_10 將 Tellus 預測底圖接入道路規劃、Town、Nation 共用地圖；真實地形逐步覆蓋預測，超長航線／道路採分段規劃和有限載入窗口。另新增零質量船舶／陸運註冊控制器，以原生動力控制接入現有物流。完整用法、1882 項回歸及遊戲內驗證範圍見 [fix_10 交付說明](docs/handoff/TELLUS_TRANSPORT_FIX_10.md)。Sable 2.0.6 在本次組合存在上游存檔重啟問題，物理載具穩定恢復及完整動力運輸仍未驗收；地圖功能可獨立使用。
 
@@ -22,7 +24,7 @@ fix_10 將 Tellus 預測底圖接入道路規劃、Town、Nation 共用地圖；
 Windows：
 
 ```powershell
-.\gradlew.bat test releaseMod --console=plain -PfixIndex=10
+.\gradlew.bat test releaseMod --console=plain -PfixIndex=11
 .\gradlew.bat runClient --console=plain
 .\gradlew.bat runServer --console=plain
 ```
