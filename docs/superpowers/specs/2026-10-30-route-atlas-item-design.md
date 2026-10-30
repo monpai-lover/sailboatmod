@@ -1,0 +1,10 @@
+# Independent transport route atlas
+
+The user explicitly superseded the fix_11 screen integration: route display belongs to a dedicated item and UI, not Town, Nation, web map or the road planner. The existing approved route colors, filters, inspection details and server catalogs remain applicable.
+
+- Register `sailboatmod:route_atlas`, stack size one, localized as 交通地图 / Transport Atlas. Right-click opens a dedicated client screen; add a creative-tab entry and a four-paper plus compass survival recipe. Common item loading must remain dedicated-server safe.
+- The LDLib2 screen is a large read-only terrain map. Three visible category buttons filter roads/land/sea independently; left click always selects, middle drag pans, wheel zooms, and a recenter button returns to the player. Render selected name/type/endpoints/approximate distance and bounded-results warning using the existing layer. No construction, dispatch, claims or force-render actions.
+- Reuse existing actual/Tellus terrain streaming and the bounded public route service. Preserve dimension/world/session rejection and unloaded terminal snapshots. Do not introduce a web endpoint, a new route catalog, forced chunk generation, or private mission/inventory access.
+- Remove fix_11 route rendering/buttons/input interception from Town, Nation, RoadPlanner and ClaimWorldMapView. Preserve their pre-existing maps, Tellus terrain and legacy planning visuals; web map had no fix_11 shared-route linkage and keeps its existing functions.
+- The atlas centers on the player on initial open or world/dimension change. Context refresh and resizing preserve pan/zoom; recenter preserves zoom. Closing/reopening creates a fresh route session. GUI 2/3/4 must keep map and controls visible.
+- Verify pure context transitions, complete regressions, actual item use/three filters/selection/pan/zoom at GUI 2/3/4 in the copied world, absence of the new overlays on the old screens, and exact release JAR server startup. Package fix_12, preserve original worlds/unrelated edits, and push the existing default branch. Both sides update together (protocol 15, unchanged 112 payload shapes).
