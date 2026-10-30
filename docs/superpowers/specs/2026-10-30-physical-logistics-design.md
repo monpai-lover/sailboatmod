@@ -6,6 +6,8 @@
 
 实施入口：[首批运动安全契约计划](../plans/2026-10-30-physical-logistics-safety-contracts.md)。其余阶段的依赖、文件和验收见本文第 12 节及 [验收矩阵](../../handoff/physical-logistics/acceptance.md)。
 
+用户后续选择：优先安装并复用现成附属模组，作为非必需依赖。具体版本、真实依赖及安装验证见[可选模块接入说明](../../handoff/physical-logistics/optional-addons.md)。下述驾驶器首先表示适配职责，已有后端能完成的动作不再重复实现控制循环；安装成功不代替订单接入或真实货运验收。
+
 ## 1. 要达到的运输效果
 
 玩家建造真实方块载具，装上对应登记控制器，选择真实货舱，绑定动力和终端；系统根据这艘船、这辆车、这架飞机**实际能做到的动作**安排物流。装货改变可用性能档位，起步、转弯、减速、等待、停靠与卸货都有可观察的过程。网页显示实际任务和设施状态，故障能解释原因，恢复不会凭空完成订单。
@@ -15,8 +17,8 @@
 | 类型 | 现有登记方块 | 实际执行动力 | 本轮强化重点 |
 |---|---|---|---|
 | 空运 | `air_vehicle_registration_controller` | 同结构 FC 导航终端与玩家装配的执行器 | 三机型程序、性能约束、进近和复飞、完整停泊 |
-| 海运 | `vessel_registration_controller` | 原生油门、舵或差分动力、实际倒车传动 | 吃水、转向水域、低速靠泊、船体漂移 |
-| 陆运 | `land_vehicle_registration_controller` | Offroad 轮组、Create 传动、实际转向与刹车 | 可行车曲线、坡度和支承、制动、路口与倒车入位 |
+| 海运 | `vessel_registration_controller` | 可选 Deep Seas/High Seas 硬件与控制，或现有原生油门/舵/传动 | 先复用船舶诊断及已有控制，再补吃水、航线、低速靠泊与漂移校验 |
+| 陆运 | `land_vehicle_registration_controller` | 优先可选 Automatics 路线执行；现有 Offroad/Create 原生驱动保留 | 先适配路线启停、控制权和停站，再补未覆盖的曲率、支承、制动和入位约束 |
 
 登记方块维持现有零质量配置；正质量来自真实结构。原生 `SailboatEntity` / `CarriageEntity` 与物理方块载具共享订单层，但保留各自驾驶器，不能把实体船的转速、半径或停车语义直接套给方块船。
 
@@ -25,10 +27,16 @@
 | 方案 | 优点 | 问题 | 决定 |
 |---|---|---|---|
 | 共用物流与设施规则，按介质选择真实控制适配器 | 保留货物、燃料、碰撞和既有市场；可分批迁移 | 要校准真实机械并承认硬件差异 | **采用** |
-| 将所有运输交给另一模组录制回放 | 既有站点与回放容易展示 | 第二套路线、控制权、货物权威；回放不等于本项目的真实动力控制 | 只保留未来显式适配边界 |
+| 按载具选择另一模组的录制回放 | 可复用 AL/Automatics 既有路线执行 | 必须映射站点、控制权和装卸回执；不同回放器的动力语义各自核验 | 作为显式可选后端适配，不替代全部物理驾驶，也不自动接管 FC 空中任务 |
 | 登记器直接施力、传送或移动刚体 | 路径跟随容易统一 | 会绕过玩家动力、燃料和结构性能 | 不作为自动驾驶实现 |
 
 官方 [FC 0.8.3 发布说明](https://www.curseforge.com/minecraft/mc-mods/create-flight-control/files/9313228)提供固定翼与起降改进；本项目实际调用范围以 [FC 接口核对](../../../src/main/java/com/monpai/sailboatmod/compat/flightcontrol/API_EVIDENCE.md)为准。官方 [AL 0.7.0 发布说明](https://www.curseforge.com/minecraft/mc-mods/create-aeronautics-automated-logistics/files/9184782)明确公开支持仍为录制路线回放，新的 Redstone Drive 项目尚未公开可用，不能将其当作现成海陆原生驾驶后端。Sable 版本固定为已核对的 [2.0.6 发布](https://github.com/ryanhcode/sable/releases/tag/mc1.21.1-2.0.6-neoforge)，不因文档日期假定将来版本接口相同。
+
+### 可选依赖与复用原则
+
+FC 继续通过真实导航终端和卡片接入，不需要伪造第三方身份。Automatics 1.0.1 的公开字节码已有 `setRecordedRoute`、`startTrip`、`stopTrip`、`isRouteActive`，优先验证为陆运执行端；这些方法尚不是已实现的 Sailboat 桥。Deep Seas 3.0.0 内含 High Seas，优先复用船舶部件、船壳诊断和可用控制。Avionics 0.7.0 alpha 先提供只读感知，不在别的后端控制车辆时启用 Lua 转向覆盖。Aeroworks/Synaxis 作为可选机械与人工/编程接口，World Engine 独立做性能对照。
+
+AL 自己的录线日程可以先设计成独立订单执行方式，由 AL 独占运动并提供真实站点/装卸回执。这不等于将 FC 飞机在空中透明交给 AL；后者仍需第 9 节的托管与动量保证。未适配的附属模组任务不自动写入 Sailboat 网页物流。具体前置和控制竞争证据以安装说明为准。
 
 ## 2. 基线事实和优先缺口
 
@@ -200,7 +208,7 @@ flowchart TD
 
 首批为单体轮式载具、固定驿站和已登记道路；拖挂/铰接、多体车组、任意越野和水陆切换需独立能力与校准后加入。原生马车继续原驾驶器，不因新轮式策略改变其既有行为。
 
-可选 [Create Avionics 0.4.0](https://modrinth.com/mod/create-avionics/version/0.4.0)公开描述了 Offroad 车轮的转向/刹车脚本和轮胎读取，适合后续诊断适配评估；这是脚本接口证据，尚未验证 Java 互操作、控制互斥和退出语义，首批不把 CC/Avionics 加为硬依赖。
+可选 [Create Avionics 0.7.0 alpha](https://modrinth.com/mod/create-avionics/version/5ONoEedX)提供 Offroad 车轮读数、转向/刹车脚本和雷达。已核对发布 JAR 的只读入口，但尚未验证游戏中的 Java 互操作、控制互斥和退出语义；首批作为只读诊断适配，CC/Avionics 不成为 Sailboat 硬依赖。Avionics 与 Automatics 均在车轮转向入口注入覆盖逻辑，同车不得同时启用两套转向控制。雷达是每秒两次、最长 256 格的单束探测，不代替完整扫掠净空。
 
 ## 8. 装卸、交付与海陆空联运
 
@@ -281,8 +289,9 @@ flowchart TD
 | M0c 装卸与设施一致性 | 新增 `transport/cargo/CargoTransferService`、`CargoTransferSavedData`、`CargoIntentJournal`、`transport/facility/FacilityLeaseService`；修改 `CarrierArrivalService`、`MarketBlockEntity`、`DockBlockEntity`、`AirportBlockEntity` | 按清单批次转移，持久意图屏障和批次收据，短货/重复交付拒绝，未决重启隔离；预约/实际占用分开，精确设施和 token 绑定；测试故障切点，不能只测记录类 |
 | M1 稳定探测与加载 | 新增 `transport/control/TerrainScanScheduler`、`transport/control/TerrainEvidence`；修改 `SweptTerrainProbe`、`TransportLoadingWindow` 和注册 BE | 移动包络跨预算完成，未知/过期不会通过，近场优先，故障停稳前保票；全局准入与队列饥饿测试 |
 | M2 空运强化 | 新增 `transport/air/FlightProcedureService`、`transport/air/AirframePerformanceProfile`；修改 `FlightRoutePlanner`、`AirportBlockEntity`、FC bridge | 三类起降/等待/备降程序、阶段租约、校准档案；FC不支持动作明确禁用；三机型真实货运验收后才开放对应能力 |
-| M3 海运 | 新增 `transport/water/WaterGuidance`、`WaterDockingProcedure`、`WaterClearanceProbe`；修改 `NativeNavigationDriver` WATER、`route/water/RealBlockWaterWorld` 与 Dock | 满载吃水、船体转弯、漂移停止、精确靠泊；原生油门舵/倒车校准，空中 FC 无参与；完成真实船往返交付 |
-| M4 陆运 | 新增 `transport/land/LandGuidance`、`RoadClearanceProbe`、`RoadReservationService`；修改 `NativeNavigationDriver` LAND、`LandTransportNetworkService`、PostStation | 可行曲线、坡度支承、提前制动、受控倒车、路口不堵死；完成真实 Offroad 往返交付 |
+| M3 海运 | 优先新增 `compat/deepseas/` 薄适配；按缺失补充 `transport/water/WaterGuidance`、`WaterDockingProcedure`、`WaterClearanceProbe`；保留现有 WATER 驱动 | 复用船壳/推进/深度能力，核验服务端接口；Sailboat 补满载吃水、航线、设施和精确靠泊约束。没有已验证外部航向控制时才补对应驱动，完成真实船往返交付 |
+| M4 陆运 | 优先新增 `compat/automatics/` 路线桥与 `compat/avionics/` 只读桥；按缺失补充 `transport/land/` 约束；接入网络与 PostStation | 复用路线设置/启停，验证真实动力行为、人工接管、停站确认及卸货；曲率、支承、制动、路口约束不以安装代替。保留无附属模组时现有原生驾驶，完成真实 Offroad 往返交付 |
+| M4b AL 日程 | 在 `compat/automatedlogistics/` 新增独立日程适配，接入登记器、任务和设施映射 | 载具显式选择 AL 控制，按真实日程/站点/货舱回执关联订单；防双重装卸和重复交付，网页状态由桥提供。与 FC 空中离线切换分开，不等待 M6 才能评估 |
 | M5 联运与网页 | 修改 `market/logistics/ShippingTraceRecord`、`ShippingTraceService`、`market/web/MarketWebServer`；前端位于仓库 `src/main/resources/marketweb/map.js`、`logistics-render.js`；新增权限与迁移测试 | 各阶段随改动增加遥测，M5完成统一设施层及联运；中转仓幂等交接、前端显示未知/过期/待核查，实服截图与 mock 分开 |
 | M6 远处托管 | `compat/automatedlogistics/` 的独立版本适配模块及真实上游/扩展补丁 | 物理/存储互斥、燃料、每个崩溃切点、玩家突发接近、多次恢复全部实测后逐组合开放；不能以时间排期绕过放行条件 |
 

@@ -1,0 +1,869 @@
+{
+  "schema_version": 1,
+  "checked_on": "2026-10-30",
+  "scope": "External addon overlay; not a complete modpack or a runtime capability declaration.",
+  "minecraft": "1.21.1",
+  "loader": "neoforge",
+  "sailboat_protocol": "17",
+  "base_tested_versions": {
+    "neoforge": "21.1.265",
+    "create": "6.0.10",
+    "sable": "2.0.6",
+    "aeronautics_bundled": "1.3.2",
+    "geckolib": "4.9.3",
+    "ldlib2": "2.2.42"
+  },
+  "base_note": "The tested baseline includes Sailboat main fix_15, its required dependencies and the optional marketweb fix_15 addon. Aeronautics bundled includes aeronautics, simulated and offroad, not sable.",
+  "profiles": {
+    "air_physical": [
+      "create-flight-control"
+    ],
+    "recorded_logistics": [
+      "create-aeronautics-automated-logistics"
+    ],
+    "sensors": [
+      "create-avionics",
+      "cc-tweaked"
+    ],
+    "land_routes": [
+      "create-automatics"
+    ],
+    "marine": [
+      "create-deep-seas"
+    ],
+    "manual_cockpit": [
+      "create-aeroworks"
+    ],
+    "programmable": [
+      "synaxis",
+      "sable-schematic-tool"
+    ],
+    "performance_experiment": [
+      "world-engine"
+    ]
+  },
+  "test_profiles": {
+    "content_coexistence": [
+      "create-flight-control",
+      "create-aeronautics-automated-logistics",
+      "create-avionics",
+      "create-automatics",
+      "create-deep-seas",
+      "create-aeroworks",
+      "synaxis",
+      "sable-schematic-tool",
+      "cc-tweaked"
+    ],
+    "with_worldengine": [
+      "create-flight-control",
+      "create-aeronautics-automated-logistics",
+      "create-avionics",
+      "create-automatics",
+      "create-deep-seas",
+      "create-aeroworks",
+      "synaxis",
+      "world-engine",
+      "sable-schematic-tool",
+      "cc-tweaked"
+    ]
+  },
+  "artifacts": [
+    {
+      "project": "create-flight-control",
+      "version": "0.8.3",
+      "version_id": "FSr0O2k8",
+      "page": "https://modrinth.com/mod/create-flight-control/version/FSr0O2k8",
+      "filename": "create_flight_control-neoforge-0.8.3.jar",
+      "download_url": "https://cdn.modrinth.com/data/IGVrnkhH/versions/FSr0O2k8/create_flight_control-neoforge-0.8.3.jar",
+      "size": 5700878,
+      "hashes": {
+        "sha256": "86691e6965bb9c3e54ef71001a4ebea798e1ccc9b30ccdb731538933f1379208",
+        "sha512": "24caa63157564786d944c4a4ad2f63aacfc441bffd4a9e2b83d639412ecb633c6753cb468f114e0fc2a829aa2f18438041defb60dc68d618afa0968bd35fa6fc"
+      },
+      "upstream_sha512_verified": true,
+      "release_type": "release",
+      "mod_ids": [
+        "create_flight_control"
+      ],
+      "install_sides": "client_and_server",
+      "jar_dependencies": {
+        "create_flight_control": [
+          {
+            "modId": "neoforge",
+            "type": "required",
+            "versionRange": "[21.1,)",
+            "ordering": "NONE",
+            "side": "BOTH"
+          },
+          {
+            "modId": "minecraft",
+            "type": "required",
+            "versionRange": "[1.21.1,)",
+            "ordering": "NONE",
+            "side": "BOTH"
+          },
+          {
+            "modId": "create",
+            "type": "required",
+            "versionRange": "[6.0.10,)",
+            "ordering": "AFTER",
+            "side": "BOTH"
+          },
+          {
+            "modId": "geckolib",
+            "type": "required",
+            "versionRange": "[4.9.3,)",
+            "ordering": "AFTER",
+            "side": "BOTH"
+          },
+          {
+            "modId": "synaxis",
+            "type": "optional",
+            "versionRange": "[1.5,)",
+            "ordering": "AFTER",
+            "side": "BOTH"
+          },
+          {
+            "modId": "sable_schematic_api",
+            "type": "optional",
+            "versionRange": "[1.0.1,)",
+            "ordering": "AFTER",
+            "side": "BOTH"
+          },
+          {
+            "modId": "computercraft",
+            "type": "optional",
+            "versionRange": "[1.117.1,)",
+            "ordering": "AFTER",
+            "side": "BOTH"
+          },
+          {
+            "modId": "sable",
+            "type": "required",
+            "versionRange": "[2.0.3,2.1.0)",
+            "ordering": "AFTER",
+            "side": "BOTH"
+          },
+          {
+            "modId": "create_aeronautics_toolgun",
+            "type": "optional",
+            "versionRange": "[0,)",
+            "ordering": "AFTER",
+            "side": "BOTH"
+          },
+          {
+            "modId": "create_afn",
+            "type": "optional",
+            "versionRange": "[1.1.6,)",
+            "ordering": "AFTER",
+            "side": "BOTH"
+          },
+          {
+            "modId": "drivebywire",
+            "type": "optional",
+            "versionRange": "[0,)",
+            "ordering": "AFTER",
+            "side": "BOTH"
+          },
+          {
+            "modId": "create_tweaked_controllers",
+            "type": "optional",
+            "versionRange": "[0,)",
+            "ordering": "AFTER",
+            "side": "BOTH"
+          },
+          {
+            "modId": "create_fire_control",
+            "type": "optional",
+            "versionRange": "[0,)",
+            "ordering": "AFTER",
+            "side": "BOTH"
+          },
+          {
+            "modId": "control_engineering",
+            "type": "optional",
+            "versionRange": "[0,)",
+            "ordering": "AFTER",
+            "side": "BOTH"
+          }
+        ]
+      }
+    },
+    {
+      "project": "create-aeronautics-automated-logistics",
+      "version": "0.7.0",
+      "version_id": "ESwTkggq",
+      "page": "https://modrinth.com/mod/create-aeronautics-automated-logistics/version/ESwTkggq",
+      "filename": "create_aeronautics_automated_logistics-0.7.0.jar",
+      "download_url": "https://cdn.modrinth.com/data/73ZXeRfx/versions/ESwTkggq/create_aeronautics_automated_logistics-0.7.0.jar",
+      "size": 1766088,
+      "hashes": {
+        "sha256": "a7f1519f19b54363de387381e0e37192e0a5929c5f72d8e778425c1a39496956",
+        "sha512": "7a3e7e2942bf076e545dc7abf258b0e014244bf14aae84134f31d4e27b8d50da525ff41d23eaebcd24483c6f1206f269931038b18e7be04606fccc6c752ef103"
+      },
+      "upstream_sha512_verified": true,
+      "release_type": "release",
+      "mod_ids": [
+        "create_aeronautics_automated_logistics"
+      ],
+      "install_sides": "client_and_server",
+      "jar_dependencies": {
+        "create_aeronautics_automated_logistics": [
+          {
+            "modId": "neoforge",
+            "type": "required",
+            "versionRange": "[21.1.229,)",
+            "ordering": "NONE",
+            "side": "BOTH"
+          },
+          {
+            "modId": "minecraft",
+            "type": "required",
+            "versionRange": "[1.21.1]",
+            "ordering": "NONE",
+            "side": "BOTH"
+          },
+          {
+            "modId": "create",
+            "type": "required",
+            "reason": "Automated Logistics uses Create schedule UI conventions and logistics types.",
+            "versionRange": "[6.0.10,)",
+            "ordering": "AFTER",
+            "side": "BOTH"
+          },
+          {
+            "modId": "aeronautics_bundled",
+            "type": "required",
+            "reason": "Automated Logistics targets Create Aeronautics airships from the bundled Create Aeronautics distribution.",
+            "versionRange": "[1.3.0,)",
+            "ordering": "AFTER",
+            "side": "BOTH"
+          },
+          {
+            "modId": "ftbteams",
+            "type": "optional",
+            "reason": "FTB Teams enables shared team and allied control of logistics assets.",
+            "versionRange": "[0,)",
+            "ordering": "AFTER",
+            "side": "BOTH"
+          },
+          {
+            "modId": "ftbchunks",
+            "type": "optional",
+            "reason": "FTB Chunks displays named automated ship markers on its map and minimap.",
+            "versionRange": "[0,)",
+            "ordering": "AFTER",
+            "side": "CLIENT"
+          },
+          {
+            "modId": "journeymap",
+            "type": "optional",
+            "reason": "JourneyMap displays named automated ship markers on its map and minimap.",
+            "versionRange": "[0,)",
+            "ordering": "AFTER",
+            "side": "CLIENT"
+          }
+        ]
+      }
+    },
+    {
+      "project": "create-avionics",
+      "version": "0.7.0",
+      "version_id": "5ONoEedX",
+      "page": "https://modrinth.com/mod/create-avionics/version/5ONoEedX",
+      "filename": "create_avionics-neoforge-1.21.1-0.7.0.jar",
+      "download_url": "https://cdn.modrinth.com/data/h4nsLvjf/versions/5ONoEedX/create_avionics-neoforge-1.21.1-0.7.0.jar",
+      "size": 300143,
+      "hashes": {
+        "sha256": "ad80e3d5ca6fafb1575f823c0bb904b55872a41f9761f5639d759a6ef317e69e",
+        "sha512": "64723fe03ce3e2aaeb623bf7976c4ff088b43e1ed8730a4394489d3c77e952547b64a913929da489454e3c5bbd4925e76a3e71eeaf74f5fb933c3b81dd22dc04"
+      },
+      "upstream_sha512_verified": true,
+      "release_type": "alpha",
+      "mod_ids": [
+        "create_avionics"
+      ],
+      "install_sides": "client_and_server",
+      "jar_dependencies": {
+        "create_avionics": [
+          {
+            "modId": "neoforge",
+            "type": "required",
+            "versionRange": "[21.1.219,)",
+            "ordering": "NONE",
+            "side": "BOTH"
+          },
+          {
+            "modId": "minecraft",
+            "type": "required",
+            "versionRange": "[1.21.1]",
+            "ordering": "NONE",
+            "side": "BOTH"
+          },
+          {
+            "modId": "simulated",
+            "type": "required",
+            "versionRange": "[1.2.1,)",
+            "ordering": "AFTER",
+            "side": "BOTH"
+          },
+          {
+            "modId": "computercraft",
+            "type": "required",
+            "versionRange": "[1.115,)",
+            "ordering": "AFTER",
+            "side": "BOTH"
+          },
+          {
+            "modId": "create",
+            "type": "required",
+            "versionRange": "[6.0.10,)",
+            "ordering": "AFTER",
+            "side": "BOTH"
+          },
+          {
+            "modId": "sable",
+            "type": "required",
+            "versionRange": "[1.1.0,)",
+            "ordering": "AFTER",
+            "side": "BOTH"
+          },
+          {
+            "modId": "aeronautics",
+            "type": "optional",
+            "versionRange": "[1.2.1,)",
+            "ordering": "AFTER",
+            "side": "BOTH"
+          },
+          {
+            "modId": "offroad",
+            "type": "optional",
+            "versionRange": "[1.2.1,)",
+            "ordering": "AFTER",
+            "side": "BOTH"
+          },
+          {
+            "modId": "thermoo",
+            "type": "optional",
+            "versionRange": "[4.8,)",
+            "ordering": "AFTER",
+            "side": "BOTH"
+          },
+          {
+            "modId": "sereneseasons",
+            "type": "optional",
+            "versionRange": "[10.1,)",
+            "ordering": "AFTER",
+            "side": "BOTH"
+          }
+        ]
+      }
+    },
+    {
+      "project": "create-automatics",
+      "version": "1.0.1",
+      "version_id": "UggaJy6l",
+      "page": "https://modrinth.com/mod/create-automatics/version/UggaJy6l",
+      "filename": "createautomatics-1.0.1.jar",
+      "download_url": "https://cdn.modrinth.com/data/UEmUkPnV/versions/UggaJy6l/createautomatics-1.0.1.jar",
+      "size": 994860,
+      "hashes": {
+        "sha256": "5bd847fa3ee45270650907fa9b75f351ead752fe8b1d6ab019ea11365f41f3c5",
+        "sha512": "91aa166982a988f8c2781d47ae21e7aa782520deefc99938a2bbf7fa669e17dcd3503909e495578e65d47b39ad8630692755baabeb7c0ff7713164f8fd12c994"
+      },
+      "upstream_sha512_verified": true,
+      "release_type": "release",
+      "mod_ids": [
+        "createautomatics"
+      ],
+      "install_sides": "client_and_server",
+      "jar_dependencies": {
+        "createautomatics": [
+          {
+            "modId": "neoforge",
+            "type": "required",
+            "versionRange": "[21.1.233,)",
+            "ordering": "NONE",
+            "side": "BOTH"
+          },
+          {
+            "modId": "minecraft",
+            "type": "required",
+            "versionRange": "[1.21.1]",
+            "ordering": "NONE",
+            "side": "BOTH"
+          },
+          {
+            "modId": "create",
+            "type": "required",
+            "versionRange": "[6.0.9,)",
+            "ordering": "AFTER",
+            "side": "BOTH"
+          }
+        ]
+      }
+    },
+    {
+      "project": "create-deep-seas",
+      "version": "3.0.0",
+      "version_id": "41sLCAgq",
+      "page": "https://modrinth.com/mod/create-deep-seas/version/41sLCAgq",
+      "filename": "create_submarine-3.0.0.jar",
+      "download_url": "https://cdn.modrinth.com/data/mva5q4qZ/versions/41sLCAgq/create_submarine-3.0.0.jar",
+      "size": 8104541,
+      "hashes": {
+        "sha256": "6b2fca4e4e76d595892ed7a95bab0f956c37bcf940530f1356112551727cd376",
+        "sha512": "b4b568ce9fb4fbd27efb4c92f8a4fb072e43be24f5b8512c344932b4ece91fd138ff7a420083e1566bbca8ad93af7fba6d625550969ce6b2d8c2fef9b8aa4b3b"
+      },
+      "upstream_sha512_verified": true,
+      "release_type": "release",
+      "mod_ids": [
+        "create_submarine",
+        "create_abyss",
+        "create_high_seas"
+      ],
+      "install_sides": "client_and_server",
+      "jar_dependencies": {
+        "create_submarine": [
+          {
+            "modId": "lithostitched",
+            "mandatory": false,
+            "type": "optional",
+            "versionRange": "[1.4.8,)",
+            "ordering": "AFTER",
+            "side": "BOTH"
+          },
+          {
+            "modId": "neoforge",
+            "type": "required",
+            "versionRange": "[21.1,)",
+            "ordering": "NONE",
+            "side": "BOTH"
+          },
+          {
+            "modId": "minecraft",
+            "type": "required",
+            "versionRange": "[1.21.1]",
+            "ordering": "NONE",
+            "side": "BOTH"
+          },
+          {
+            "modId": "create",
+            "type": "required",
+            "versionRange": "[0.5,)",
+            "ordering": "AFTER",
+            "side": "BOTH"
+          },
+          {
+            "modId": "ponder",
+            "type": "required",
+            "versionRange": "[1.0,)",
+            "ordering": "AFTER",
+            "side": "BOTH"
+          },
+          {
+            "modId": "sable",
+            "type": "required",
+            "versionRange": "[2.0.3,)",
+            "ordering": "AFTER",
+            "side": "BOTH"
+          },
+          {
+            "modId": "aeronautics",
+            "type": "required",
+            "versionRange": "[1.3.2,)",
+            "ordering": "AFTER",
+            "side": "BOTH"
+          },
+          {
+            "modId": "simulated",
+            "type": "required",
+            "versionRange": "[1.3.0,)",
+            "ordering": "AFTER",
+            "side": "BOTH"
+          },
+          {
+            "modId": "fusion",
+            "mandatory": false,
+            "type": "optional",
+            "versionRange": "[1.2.12,)",
+            "ordering": "NONE",
+            "side": "CLIENT"
+          }
+        ],
+        "create_abyss": [
+          {
+            "modId": "create_submarine",
+            "type": "required",
+            "versionRange": "[3.0.0,)",
+            "ordering": "AFTER",
+            "side": "BOTH"
+          },
+          {
+            "modId": "neoforge",
+            "type": "required",
+            "versionRange": "[21.1,)",
+            "ordering": "NONE",
+            "side": "BOTH"
+          },
+          {
+            "modId": "minecraft",
+            "type": "required",
+            "versionRange": "[1.21.1]",
+            "ordering": "NONE",
+            "side": "BOTH"
+          },
+          {
+            "modId": "sable",
+            "type": "required",
+            "versionRange": "[2.0.3,)",
+            "ordering": "AFTER",
+            "side": "BOTH"
+          },
+          {
+            "modId": "lithostitched",
+            "mandatory": false,
+            "type": "optional",
+            "versionRange": "[1.4.8,)",
+            "ordering": "AFTER",
+            "side": "BOTH"
+          }
+        ],
+        "create_high_seas": [
+          {
+            "modId": "create_submarine",
+            "type": "required",
+            "versionRange": "[3.0.0,)",
+            "ordering": "AFTER",
+            "side": "BOTH"
+          },
+          {
+            "modId": "neoforge",
+            "type": "required",
+            "versionRange": "[21.1,)",
+            "ordering": "NONE",
+            "side": "BOTH"
+          },
+          {
+            "modId": "minecraft",
+            "type": "required",
+            "versionRange": "[1.21.1]",
+            "ordering": "NONE",
+            "side": "BOTH"
+          }
+        ]
+      }
+    },
+    {
+      "project": "create-aeroworks",
+      "version": "1.5.0",
+      "version_id": "6kk7ruR3",
+      "page": "https://modrinth.com/mod/create-aeroworks/version/6kk7ruR3",
+      "filename": "aeroworks-1.5.0.jar",
+      "download_url": "https://cdn.modrinth.com/data/P26k79kP/versions/6kk7ruR3/aeroworks-1.5.0.jar",
+      "size": 790152,
+      "hashes": {
+        "sha256": "7e9745569a75eb613a9f75c9308aa2c806d3f0fab3a272d98647a13d3fa41641",
+        "sha512": "d79435aaf9c8d8697d1cb5a95b2189ab00ac1387dcbcdc0fbd701a25a22678eba2107e55b8da47bf0089282280ee2b3ff36418d9d7bda744b210d5fa5f4ca697"
+      },
+      "upstream_sha512_verified": true,
+      "release_type": "release",
+      "mod_ids": [
+        "aeroworks"
+      ],
+      "install_sides": "client_and_server",
+      "jar_dependencies": {
+        "aeroworks": [
+          {
+            "modId": "neoforge",
+            "type": "required",
+            "versionRange": "[21,)",
+            "ordering": "NONE",
+            "side": "BOTH"
+          },
+          {
+            "modId": "minecraft",
+            "type": "required",
+            "versionRange": "[1.21.1]",
+            "ordering": "NONE",
+            "side": "BOTH"
+          },
+          {
+            "modId": "create",
+            "type": "required",
+            "versionRange": "[6.0.0,)",
+            "ordering": "AFTER",
+            "side": "BOTH"
+          },
+          {
+            "modId": "sable",
+            "type": "required",
+            "versionRange": "[1.1.0,)",
+            "ordering": "AFTER",
+            "side": "BOTH"
+          },
+          {
+            "modId": "drivebywire",
+            "type": "optional",
+            "versionRange": "[0.2.8,)",
+            "ordering": "AFTER",
+            "side": "BOTH"
+          },
+          {
+            "modId": "drivebysable",
+            "type": "optional",
+            "versionRange": "[a,)",
+            "ordering": "AFTER",
+            "side": "BOTH"
+          },
+          {
+            "modId": "simulated",
+            "type": "optional",
+            "versionRange": "[1.3.0,)",
+            "ordering": "AFTER",
+            "side": "BOTH"
+          }
+        ]
+      },
+      "upstream_version_number": "1.5.0+mc1.21.1"
+    },
+    {
+      "project": "synaxis",
+      "version": "1.5.0",
+      "version_id": "RFBeUM47",
+      "page": "https://modrinth.com/mod/synaxis/version/RFBeUM47",
+      "filename": "synaxis-1.5.0.jar",
+      "download_url": "https://cdn.modrinth.com/data/aJewFWOb/versions/RFBeUM47/synaxis-1.5.0.jar",
+      "size": 4446035,
+      "hashes": {
+        "sha256": "e3c60f0ba403c745c82d6c4a99e12eef1cf41acda2a041554f43d6d5be32b592",
+        "sha512": "8510dbcd6a94e3489c597caf86de12b7123614550e6875fcfd094edde80eeb935c561b6c1ba249bdee4d56c56068309880a50391f19565a3b6a2d8a0086d84c8"
+      },
+      "upstream_sha512_verified": true,
+      "release_type": "release",
+      "mod_ids": [
+        "synaxis"
+      ],
+      "install_sides": "client_and_server",
+      "jar_dependencies": {
+        "synaxis": [
+          {
+            "modId": "neoforge",
+            "type": "required",
+            "versionRange": "[21.1.228,)",
+            "ordering": "NONE",
+            "side": "BOTH"
+          },
+          {
+            "modId": "minecraft",
+            "type": "required",
+            "versionRange": "[1.21.1]",
+            "ordering": "NONE",
+            "side": "BOTH"
+          },
+          {
+            "modId": "create",
+            "type": "required",
+            "versionRange": "[6.0.10,)",
+            "ordering": "NONE",
+            "side": "BOTH"
+          },
+          {
+            "modId": "flywheel",
+            "type": "required",
+            "versionRange": "[1.0.6,)",
+            "ordering": "NONE",
+            "side": "CLIENT"
+          },
+          {
+            "modId": "sable",
+            "type": "required",
+            "versionRange": "[2.0.0,)",
+            "ordering": "NONE",
+            "side": "BOTH"
+          },
+          {
+            "modId": "sable_schematic_api",
+            "type": "required",
+            "versionRange": "[0.4.1,)",
+            "ordering": "AFTER",
+            "side": "BOTH"
+          },
+          {
+            "modId": "ldlib2",
+            "type": "required",
+            "versionRange": "[2.2.17,)",
+            "ordering": "NONE",
+            "side": "BOTH"
+          },
+          {
+            "modId": "create_tweaked_controllers",
+            "type": "optional",
+            "versionRange": "[1.2.7,)",
+            "ordering": "AFTER",
+            "side": "BOTH"
+          }
+        ]
+      }
+    },
+    {
+      "project": "world-engine",
+      "version": "0.1.3",
+      "version_id": "9229628",
+      "page": "https://www.curseforge.com/minecraft/mc-mods/world-engine/files/9229628",
+      "filename": "world-engine-neoforge-0.1.3.jar",
+      "download_url": "https://edge.forgecdn.net/files/9229/628/world-engine-neoforge-0.1.3.jar",
+      "size": 10593645,
+      "hashes": {
+        "sha256": "89fca132b7d7dc9091d41f30c0d59e68674da18e6a1b0a8a15f2c28f29895ea4",
+        "sha512": "93ee1fcaa5cd32a5c07bee9ea70ddc87146a045054fcd95b1362ffa558eefee5fbbe90cd90452c6abd2d390c9845b483bcd5fdc8470cac92bb17fc0de9a29a13"
+      },
+      "upstream_sha512_verified": false,
+      "release_type": null,
+      "mod_ids": [
+        "worldengine"
+      ],
+      "install_sides": "server_smoke_test_only_client_policy_unverified",
+      "jar_dependencies": {
+        "worldengine": [
+          {
+            "modId": "neoforge",
+            "type": "required",
+            "versionRange": "[21.1.228,)",
+            "ordering": "NONE",
+            "side": "BOTH"
+          },
+          {
+            "modId": "minecraft",
+            "type": "required",
+            "versionRange": "[1.21.1]",
+            "ordering": "NONE",
+            "side": "BOTH"
+          },
+          {
+            "modId": "sable",
+            "type": "required",
+            "versionRange": "[2.0.5,)",
+            "ordering": "AFTER",
+            "side": "BOTH"
+          }
+        ]
+      }
+    },
+    {
+      "project": "sable-schematic-tool",
+      "version": "1.0.1",
+      "version_id": "hwxjOCxE",
+      "page": "https://modrinth.com/mod/sable-schematic-tool/version/hwxjOCxE",
+      "filename": "sable-photomancy-1.0.1.jar",
+      "download_url": "https://cdn.modrinth.com/data/hNGBYvQN/versions/hwxjOCxE/sable-photomancy-1.0.1.jar",
+      "size": 1607474,
+      "hashes": {
+        "sha256": "1d0805f537f27ce3160488331755497417514a3dfb30d5ca3fdca1b000e7e920",
+        "sha512": "3a02e10c10d96a8fde75a5e625207f5452991d48ec4b4762dff3ea870952fdb922b93ad3d0b84c66bdb7875bcf96f3c6f61076c595a13652ddf86fd9a6dc9730"
+      },
+      "upstream_sha512_verified": true,
+      "release_type": "release",
+      "mod_ids": [
+        "sable_schematic_api"
+      ],
+      "install_sides": "client_and_server",
+      "jar_dependencies": {
+        "sable_schematic_api": [
+          {
+            "modId": "neoforge",
+            "type": "required",
+            "versionRange": "[21.1.228,)",
+            "ordering": "NONE",
+            "side": "BOTH"
+          },
+          {
+            "modId": "minecraft",
+            "type": "required",
+            "versionRange": "[1.21.1]",
+            "ordering": "NONE",
+            "side": "BOTH"
+          },
+          {
+            "modId": "sable",
+            "type": "required",
+            "reason": "Blueprint export and placement operate on Sable sub-levels.",
+            "versionRange": "[1.1.3,)",
+            "ordering": "AFTER",
+            "side": "BOTH"
+          },
+          {
+            "modId": "ldlib2",
+            "type": "required",
+            "reason": "The external blueprint tool item uses LDLib2 for its in-game UI.",
+            "versionRange": "[2.2.17,)",
+            "ordering": "AFTER",
+            "side": "BOTH"
+          },
+          {
+            "modId": "create",
+            "type": "optional",
+            "reason": "Create is a compatibility target for blueprint mapper experiments.",
+            "versionRange": "[6.0.8,)",
+            "ordering": "AFTER",
+            "side": "BOTH"
+          },
+          {
+            "modId": "simulated",
+            "type": "optional",
+            "reason": "Simulated Project is a compatibility target for blueprint mapper experiments.",
+            "versionRange": "[1.0.0,)",
+            "ordering": "AFTER",
+            "side": "BOTH"
+          },
+          {
+            "modId": "copycats",
+            "type": "optional",
+            "reason": "Create: Copycats+ is a compatibility target for blueprint mapper experiments.",
+            "versionRange": "[3.0.4,)",
+            "ordering": "AFTER",
+            "side": "BOTH"
+          },
+          {
+            "modId": "drivebywire",
+            "type": "optional",
+            "reason": "Drive By Wire is a compatibility target for blueprint mapper experiments.",
+            "versionRange": "[0.2.4,)",
+            "ordering": "AFTER",
+            "side": "BOTH"
+          }
+        ]
+      }
+    },
+    {
+      "project": "cc-tweaked",
+      "version": "1.120.2",
+      "version_id": "1ewzHZYg",
+      "page": "https://modrinth.com/mod/cc-tweaked/version/1ewzHZYg",
+      "filename": "cc-tweaked-1.21.1-forge-1.120.2.jar",
+      "download_url": "https://cdn.modrinth.com/data/gu7yAYhd/versions/1ewzHZYg/cc-tweaked-1.21.1-forge-1.120.2.jar",
+      "size": 3126327,
+      "hashes": {
+        "sha256": "e8651fe24b384e925e563c9ad077644744474e2e7c0adb8e6d5b4757598dce9f",
+        "sha512": "009fcf48b7d123018a61b2c55f0fede7dd1f6a6325226bf9cc926342185ca8a7e059e13662816d24595aac243abf622b682583631cfe42c3757505b2e864ff73"
+      },
+      "upstream_sha512_verified": true,
+      "release_type": "alpha",
+      "mod_ids": [
+        "computercraft"
+      ],
+      "install_sides": "client_and_server",
+      "jar_dependencies": {
+        "computercraft": [
+          {
+            "modId": "neoforge",
+            "type": "required",
+            "versionRange": "[21.1.9,21.2)",
+            "ordering": "NONE",
+            "side": "BOTH"
+          }
+        ]
+      }
+    }
+  ]
+}

@@ -1,0 +1,105 @@
+{
+  "checked_on": "2026-10-30",
+  "source_base": "e61fa1a6a47cb74e3b15bc70d65d339a407fde72",
+  "scope": "Dedicated server startup and save smoke tests; not gameplay acceptance.",
+  "host": "Apple Silicon macOS / Temurin 21.0.12.1 / NeoForge 21.1.265",
+  "manifest_artifacts_verified": 10,
+  "official_sha512_verified": 9,
+  "default_profile": "final-content-profile",
+  "default_external_jar_count": 94,
+  "worldengine_enabled_by_default": false,
+  "all_test_processes_stopped": true,
+  "baseline_issues": [
+    "LDLib2/EMI ModularUIWidget dist warning, removed only in the EMI isolation run",
+    "PowerGrid native solver falls back to Java on this host",
+    "Missing optional recipe/loot items and copycat_catwalk physics tags",
+    "Server stays alive after stop/save; SIGTERM after 40 seconds"
+  ],
+  "unverified": [
+    "client multiplayer",
+    "three aircraft types flying",
+    "powered land and sea logistics",
+    "cargo/order completion",
+    "transport loading ticket add/remove/restart",
+    "nonempty vehicle restoration",
+    "performance improvement"
+  ],
+  "runs": [
+    {
+      "profile": "without-worldengine",
+      "result": {
+        "jar_count": 94,
+        "startup_done": true,
+        "saved_game": true,
+        "all_dimensions_saved": true,
+        "normal_exit": false,
+        "forced_signal": "SIGTERM",
+        "exit_code": 143,
+        "clientlevel_found": false,
+        "sable_ticket_error_found": false,
+        "fatal_mixin_or_dependency_failure": false,
+        "worldengine_physics_active": false
+      },
+      "console_log": "build/optional-addons-2026-10-30/without-worldengine-console.log",
+      "console_sha256": "90ed9c4ba6ae52401d7f3e6fe1307d9d887dfe2424040642696293a054fe86ae",
+      "nonfatal_mixin_failure": "FC 0.8.3 ToolGunValueSettingsMixin: non-private static method cfc$preferBearingToolGun"
+    },
+    {
+      "profile": "with-worldengine",
+      "result": {
+        "jar_count": 95,
+        "startup_done": true,
+        "saved_game": true,
+        "all_dimensions_saved": true,
+        "normal_exit": false,
+        "forced_signal": "SIGTERM",
+        "exit_code": 143,
+        "clientlevel_found": false,
+        "sable_ticket_error_found": false,
+        "fatal_mixin_or_dependency_failure": false,
+        "worldengine_physics_active": true
+      },
+      "console_log": "build/optional-addons-2026-10-30/with-worldengine-console.log",
+      "console_sha256": "94101beb4d8d7c5c686e3a5557bf96a5f2c0f2beb8be9b76f578c9206ea2f6cd",
+      "nonfatal_mixin_failure": "FC 0.8.3 ToolGunValueSettingsMixin: non-private static method cfc$preferBearingToolGun"
+    },
+    {
+      "profile": "diagnostic-without-emi",
+      "result": {
+        "jar_count": 93,
+        "startup_done": true,
+        "saved_game": true,
+        "all_dimensions_saved": true,
+        "normal_exit": false,
+        "forced_signal": "SIGTERM",
+        "exit_code": 143,
+        "clientlevel_found": false,
+        "sable_ticket_error_found": false,
+        "fatal_mixin_or_dependency_failure": false
+      },
+      "console_log": "build/optional-addons-2026-10-30/diagnostic-without-emi-console.log",
+      "console_sha256": "90533473d2edf43c93559a7da0c0ec83e6c5210e1b33d7e4e3ea16234cce68ab",
+      "nonfatal_mixin_failure": "FC 0.8.3 ToolGunValueSettingsMixin: non-private static method cfc$preferBearingToolGun"
+    },
+    {
+      "profile": "final-content-profile",
+      "result": {
+        "jar_count": 94,
+        "startup_done": true,
+        "saved_game": true,
+        "all_dimensions_saved": true,
+        "normal_exit": false,
+        "forced_signal": "SIGTERM",
+        "exit_code": 143,
+        "clientlevel_found": false,
+        "sable_loading_tickets_error_found": false,
+        "fatal_mixin_or_dependency_failure": false,
+        "worldengine_physics_active": false,
+        "no_key_layers_found": false
+      },
+      "console_log": "build/optional-addons-2026-10-30/final-content-profile-console.log",
+      "console_sha256": "10bb85833d72415ffb159ea5d7d290f58ed259ac0cce460ef42125aaf76acc71",
+      "nonfatal_mixin_failure": "FC 0.8.3 ToolGunValueSettingsMixin: non-private static method cfc$preferBearingToolGun"
+    }
+  ]
+}

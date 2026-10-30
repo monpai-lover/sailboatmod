@@ -6,6 +6,8 @@
 
 专用服务端的 Sable 客户端重载反射问题已在源码修复，当前构建为 fix_15。见 [修复与版本兼容说明](../SABLE_DEDICATED_SERVER_REFLECTION_FIX.md)：用户原 fix_12 热补丁仍是协议15，当前分支是协议17，不能跨协议混用。
 
+附属模组按可选安装和复用处理，见[安装清单与接入边界](../physical-logistics/optional-addons.md)。FC 已有真实终端适配；AL、Automatics 等独立玩法不会仅因安装自动成为 Sailboat 订单或网页任务。同一载具只启用一个自动控制后端，当前尚未实现所有第三方控制者的统一互斥。
+
 ## 已接入的路径
 
 - `飞行器登记控制器` 登记航空学/Sable 结构、现有货舱与稳定载具 UUID，选择飞艇、旋翼或固定翼。通过同结构的真实 Create Flight Control 导航终端执行三维航线。
