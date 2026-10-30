@@ -37,6 +37,10 @@ public final class MarketWebEvents {
         MinecraftServer server = ServerLifecycleHooks.getCurrentServer();
         if (server != null) {
             MarketWebMapRenderService.global().tick(server);
+            MarketWebServer web = MarketWebServer.get();
+            if (web != null) {
+                web.publishMarketChanges(server.getTickCount());
+            }
         }
     }
 

@@ -24,6 +24,13 @@ public class MarketSavedData extends SavedData {
     private transient ServerLevel rootServerLevel;
     private transient int lastSettlementRetryTick = Integer.MIN_VALUE;
 
+    /** Every listing, order, escrow, shipping and credit write ends here; open market screens follow the revision. */
+    @Override
+    public void setDirty() {
+        super.setDirty();
+        MarketChangeNotifier.changed();
+    }
+
     public static MarketSavedData get(Level level) {
         if (!(level instanceof ServerLevel serverLevel) || serverLevel.getServer() == null) {
             return new MarketSavedData();

@@ -1,10 +1,10 @@
 package com.monpai.sailboatmod.network.packet;
 
+import com.monpai.sailboatmod.market.MarketLiveSync;
 import com.monpai.sailboatmod.block.entity.MarketBlockEntity;
 import com.monpai.sailboatmod.market.commodity.BuyOrder;
 import com.monpai.sailboatmod.market.commodity.CommodityMarketService;
 import com.monpai.sailboatmod.market.wallet.MarketWalletService;
-import com.monpai.sailboatmod.network.ModNetwork;
 import net.minecraft.core.BlockPos;
 import net.minecraft.network.FriendlyByteBuf;
 import net.minecraft.server.level.ServerPlayer;
@@ -49,10 +49,7 @@ public class CancelBuyOrderPacket {
                 }
             } catch (Exception ignored) {
             }
-            ModNetwork.CHANNEL.send(
-                    player,
-                    new OpenMarketScreenPacket(market.buildOverview(player))
-            );
+            MarketLiveSync.sendOverview(player, market);
         });
         context.setPacketHandled(true);
     }

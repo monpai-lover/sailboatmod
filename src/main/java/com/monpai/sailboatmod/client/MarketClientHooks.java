@@ -18,6 +18,14 @@ public final class MarketClientHooks {
         }
     }
 
+    /** Live push from the server: refreshes a screen already showing this market and never opens one. */
+    public static void applyLiveUpdate(MarketOverviewData data) {
+        Minecraft minecraft = Minecraft.getInstance();
+        if (minecraft.screen instanceof MarketScreen marketScreen && marketScreen.isForMarket(data.marketPos())) {
+            marketScreen.applyLiveUpdate(data);
+        }
+    }
+
     public static void showNotice(BlockPos marketPos, String message, boolean positive) {
         latestNotice = new MarketNotice(marketPos, message == null ? "" : message, positive);
         Minecraft minecraft = Minecraft.getInstance();

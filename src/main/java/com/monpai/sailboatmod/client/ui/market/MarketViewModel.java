@@ -1,15 +1,20 @@
 package com.monpai.sailboatmod.client.ui.market;
 
 import com.monpai.sailboatmod.market.MarketOverviewData;
+import com.monpai.sailboatmod.market.analytics.CommodityCandlePoint;
+import com.monpai.sailboatmod.market.analytics.CommodityCandleSeries;
 import net.minecraft.core.BlockPos;
 
 import java.util.ArrayList;
 import java.util.Comparator;
+import java.util.HashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Locale;
+import java.util.Map;
 import java.util.Objects;
 import java.util.Set;
+import java.util.TreeMap;
 
 /**
  * Framework-independent state for the market terminal screen.
@@ -34,7 +39,7 @@ public final class MarketViewModel {
 
     /** Tabs shown for the selected commodity. */
     public enum ProductTab {
-        SELLING, BUYING, PRICE_CHART
+        SELLING, BUYING, ORDER_BOOK, PRICE_CHART
     }
 
     public enum Sort {
@@ -64,6 +69,39 @@ public final class MarketViewModel {
         HANDLED, CLOSE_SCREEN
     }
 
+    /** Direction a commodity's cheapest ask moved in a live update; drives a short price flash. */
+    public enum PriceMove {
+        UP, DOWN
+    }
+
+    private record PriceFlash(PriceMove move, long untilTick) {
+    }
+
+    /** How long a moved price stays highlighted (3 seconds). */
+    public static final int PRICE_FLASH_TICKS = 60;
+
+    /** The best open bid: estimated unit price (0 when the server sent no reference price), band edge and size. */
+    public record Bid(int unitPrice, int maxPriceBp, int quantity) {
+    }
+
+    /** One price level of the order book, with the running total from the best price outward. */
+    public record DepthLevel(int unitPrice, int quantity, int cumulative) {
+    }
+
+    /** Asks (cheapest first) and bids (highest first) of one commodity; {@code depth} scales the bars. */
+    public record OrderBook(List<DepthLevel> asks, List<DepthLevel> bids, int depth) {
+        public boolean isEmpty() {
+            return asks.isEmpty() && bids.isEmpty();
+        }
+    }
+
+    private static final long DAY_MILLIS = 24L * 60L * 60L * 1000L;
+
+    /** Seller shipping and automatic pickup: paid, queued for the seller, under way, delivered. */
+    private static final List<String> FLOW_SHIP = List.of("PAID", "WAITING_SHIPMENT", "IN_TRANSIT", "DELIVERED");
+    /** Pickup in person: paid, goods locked for the buyer, collected. */
+    private static final List<String> FLOW_PICKUP = List.of("PAID", "PICKUP_LOCKED", "DELIVERED");
+
     public static final String MODE_SELLER_SHIP = "SELLER_SHIP";
     public static final String MODE_AUTO_PICKUP = "AUTO_PICKUP";
     public static final String MODE_REAL_PICKUP = "REAL_PICKUP";
@@ -84,6 +122,9 @@ public final class MarketViewModel {
     private int rarity = RARITY_ALL;
     private PriceBand priceBand = PriceBand.ALL;
     private Sort sort = Sort.PRICE_ASC;
+
+    private Set<String> watchlist = Set.of();
+    private boolean watchOnly;
 
     private String selectedCommodityKey = "";
     private String selectedListingId = "";
@@ -114,6 +155,10 @@ public final class MarketViewModel {
     private boolean autoPickupReachable;
     private boolean realPickupReachable = true;
     private boolean probeAnswered;
+
+    private final Map<String, PriceFlash> priceFlashes = new HashMap<>();
+    /** Client tick at which the current snapshot arrived; queue ETAs count down from here. */
+    private long receivedTick;
 
     public MarketViewModel(MarketOverviewData data) {
         this.data = Objects.requireNonNull(data, "data");
@@ -151,6 +196,85 @@ public final class MarketViewModel {
         if (buyDialogOpen && findListing(buyDialogListingId) == null) {
             closeBuyDialog();
         }
+    }
+
+    /**
+     * A snapshot pushed after someone else's change. Applied like {@link #update}; additionally remembers which
+     * commodities' cheapest ask moved (for a price flash) and returns the viewer's orders whose status changed.
+     */
+    public List<MarketOverviewData.MyOrderEntry> applyLiveUpdate(MarketOverviewData updated, long tick) {
+        Map<String, Integer> before = cheapestAsks(data);
+        Map<String, String> statusBefore = new HashMap<>();
+        for (MarketOverviewData.MyOrderEntry order : data.myOrders()) {
+            statusBefore.put(order.orderId(), order.status());
+        }
+        update(updated);
+        receivedTick = tick;
+        cheapestAsks(updated).forEach((commodityKey, price) -> {
+            Integer previous = before.get(commodityKey);
+            if (previous != null && previous.intValue() != price.intValue()) {
+                priceFlashes.put(commodityKey, new PriceFlash(price > previous ? PriceMove.UP : PriceMove.DOWN,
+                        tick + PRICE_FLASH_TICKS));
+            }
+        });
+        List<MarketOverviewData.MyOrderEntry> changed = new ArrayList<>();
+        for (MarketOverviewData.MyOrderEntry order : updated.myOrders()) {
+            String previous = statusBefore.get(order.orderId());
+            if (previous != null && !previous.equals(order.status())) {
+                changed.add(order);
+            }
+        }
+        return changed;
+    }
+
+    /** Records when the current snapshot arrived, for the queue ETA countdown. */
+    public void markReceived(long tick) {
+        receivedTick = tick;
+    }
+
+    /** A queued order's ETA counted down since the snapshot arrived (20 ticks a second); 0 once it is due. */
+    public int remainingEtaSeconds(MarketOverviewData.MyOrderEntry order, long tick) {
+        if (order == null || order.queueEtaSeconds() <= 0) {
+            return 0;
+        }
+        long elapsed = Math.max(0L, tick - receivedTick) / 20L;
+        return (int) Math.max(0L, order.queueEtaSeconds() - elapsed);
+    }
+
+    /** Progress steps for an order's status: the shipping or the pickup flow; empty when cancelled or unknown. */
+    public static List<String> orderFlow(String status) {
+        String current = status == null ? "" : status.trim().toUpperCase(Locale.ROOT);
+        if (FLOW_PICKUP.contains(current) && !FLOW_SHIP.contains(current)) {
+            return FLOW_PICKUP;
+        }
+        return FLOW_SHIP.contains(current) ? FLOW_SHIP : List.of();
+    }
+
+    /** Position of the status in {@link #orderFlow}; -1 when it has no flow. */
+    public static int orderStep(String status) {
+        String current = status == null ? "" : status.trim().toUpperCase(Locale.ROOT);
+        return orderFlow(current).indexOf(current);
+    }
+
+    /** The flash for this commodity's price, or {@code null} when it did not move recently. */
+    public PriceMove priceMove(String commodityKey, long tick) {
+        PriceFlash flash = priceFlashes.get(commodityKey);
+        return flash == null || tick >= flash.untilTick() ? null : flash.move();
+    }
+
+    /** Drops flashes that ran out; returns whether any did, so the screen repaints the prices once. */
+    public boolean expirePriceFlashes(long tick) {
+        return priceFlashes.values().removeIf(flash -> tick >= flash.untilTick());
+    }
+
+    private static Map<String, Integer> cheapestAsks(MarketOverviewData snapshot) {
+        Map<String, Integer> cheapest = new HashMap<>();
+        for (MarketOverviewData.ListingEntry entry : snapshot.listingEntries()) {
+            if (entry.commodityKey() != null && entry.availableCount() > 0) {
+                cheapest.merge(entry.commodityKey(), entry.unitPrice(), Math::min);
+            }
+        }
+        return cheapest;
     }
 
     private void reconcileSelections() {
@@ -291,7 +415,7 @@ public final class MarketViewModel {
     }
 
     public boolean hasActiveFilters() {
-        return !search.isBlank() || !category.isEmpty() || rarity != RARITY_ALL || priceBand != PriceBand.ALL;
+        return !search.isBlank() || !category.isEmpty() || rarity != RARITY_ALL || priceBand != PriceBand.ALL || watchOnly;
     }
 
     public void clearFilters() {
@@ -299,20 +423,46 @@ public final class MarketViewModel {
         category = "";
         rarity = RARITY_ALL;
         priceBand = PriceBand.ALL;
+        watchOnly = false;
+    }
+
+    // ---------------------------------------------------------------- watchlist
+
+    /** Commodity keys the player starred; the screen keeps them in UiPreferences across sessions and markets. */
+    public void setWatchlist(Set<String> commodityKeys) {
+        watchlist = commodityKeys == null ? Set.of() : Set.copyOf(commodityKeys);
+    }
+
+    public boolean isWatched(String commodityKey) {
+        return commodityKey != null && watchlist.contains(commodityKey);
+    }
+
+    public boolean watchOnly() {
+        return watchOnly;
+    }
+
+    public void setWatchOnly(boolean value) {
+        watchOnly = value;
     }
 
     /** One entry per commodity after search, category, rarity and price filters, in the chosen order. */
     public List<MarketOverviewData.ListingEntry> catalog() {
         String query = search.trim().toLowerCase(Locale.ROOT);
+        // Letters only (such as "zs") may also be pinyin initials of a Chinese item name (钻石).
+        boolean initialsQuery = !query.isEmpty() && query.chars().allMatch(ch -> ch >= 'a' && ch <= 'z');
         List<MarketOverviewData.ListingEntry> matches = new ArrayList<>();
         for (MarketOverviewData.ListingEntry entry : data.listingEntries()) {
             if (!query.isEmpty()) {
                 String haystack = (nullToEmpty(entry.itemName()) + " " + nullToEmpty(entry.sellerName()) + " "
                         + nullToEmpty(entry.sourceDockName()) + " " + nullToEmpty(entry.commodityKey()))
                         .toLowerCase(Locale.ROOT);
-                if (!haystack.contains(query)) {
+                if (!haystack.contains(query)
+                        && !(initialsQuery && PinyinInitials.of(entry.itemName()).contains(query))) {
                     continue;
                 }
+            }
+            if (watchOnly && !isWatched(entry.commodityKey())) {
+                continue;
             }
             if (!category.isEmpty() && !category.equals(nullToEmpty(entry.category()).trim().toLowerCase(Locale.ROOT))) {
                 continue;
@@ -368,6 +518,99 @@ public final class MarketViewModel {
         };
         // Stable tie-break by listing ID so equal rows do not swap places between refreshes.
         return primary.thenComparing(entry -> nullToEmpty(entry.listingId()));
+    }
+
+    // ---------------------------------------------------------------- prices: bids, depth, trend
+
+    /**
+     * Estimated unit price at a buy-order band edge, the way the server reserves funds for it
+     * ({@code CommodityMarketService.reservedBalanceForBuyOrder}); 0 when the reference price is unknown.
+     */
+    public static int bidUnitPrice(int referenceUnitPrice, int bp) {
+        if (referenceUnitPrice <= 0) {
+            return 0;
+        }
+        int safeBp = Math.max(-5000, Math.min(5000, bp));
+        return (int) Math.max(1L, Math.round(referenceUnitPrice * (1.0D + safeBp / 10000.0D)));
+    }
+
+    /** The highest open bid for the commodity, or {@code null} when nobody is buying it. */
+    public Bid bestBid(String commodityKey) {
+        MarketOverviewData.CommodityBuyBook book = data.buyBookFor(commodityKey);
+        if (book == null) {
+            return null;
+        }
+        MarketOverviewData.CommodityBuyEntry best = null;
+        for (MarketOverviewData.CommodityBuyEntry entry : book.entries()) {
+            if (entry.quantity() > 0 && (best == null || entry.maxPriceBp() > best.maxPriceBp())) {
+                best = entry;
+            }
+        }
+        return best == null ? null
+                : new Bid(bidUnitPrice(book.referenceUnitPrice(), best.maxPriceBp()), best.maxPriceBp(), best.quantity());
+    }
+
+    /**
+     * Order book of one commodity: asks are listings with stock, merged by price; bids are open buy orders at the
+     * top of their band. Unlimited-stock listings count once at their price but not towards the depth totals.
+     */
+    public OrderBook orderBook(String commodityKey) {
+        TreeMap<Integer, Integer> asks = new TreeMap<>();
+        for (MarketOverviewData.ListingEntry entry : data.listingEntries()) {
+            if (Objects.equals(entry.commodityKey(), commodityKey) && entry.availableCount() > 0) {
+                int quantity = entry.availableCount() >= com.monpai.sailboatmod.market.MarketListing.INFINITE_THRESHOLD
+                        ? 0 : entry.availableCount();
+                asks.merge(entry.unitPrice(), quantity, Integer::sum);
+            }
+        }
+        TreeMap<Integer, Integer> bids = new TreeMap<>(Comparator.reverseOrder());
+        MarketOverviewData.CommodityBuyBook book = data.buyBookFor(commodityKey);
+        if (book != null && book.referenceUnitPrice() > 0) {
+            for (MarketOverviewData.CommodityBuyEntry entry : book.entries()) {
+                if (entry.quantity() > 0) {
+                    bids.merge(bidUnitPrice(book.referenceUnitPrice(), entry.maxPriceBp()), entry.quantity(), Integer::sum);
+                }
+            }
+        }
+        List<DepthLevel> askLevels = depthLevels(asks);
+        List<DepthLevel> bidLevels = depthLevels(bids);
+        int depth = Math.max(askLevels.isEmpty() ? 0 : askLevels.get(askLevels.size() - 1).cumulative(),
+                bidLevels.isEmpty() ? 0 : bidLevels.get(bidLevels.size() - 1).cumulative());
+        return new OrderBook(askLevels, bidLevels, depth);
+    }
+
+    private static List<DepthLevel> depthLevels(Map<Integer, Integer> byPrice) {
+        List<DepthLevel> levels = new ArrayList<>(byPrice.size());
+        int running = 0;
+        for (Map.Entry<Integer, Integer> level : byPrice.entrySet()) {
+            running += level.getValue();
+            levels.add(new DepthLevel(level.getKey(), level.getValue(), running));
+        }
+        return levels;
+    }
+
+    /**
+     * Change of the latest hourly close against the earliest close within the 24 hours before it, as a fraction
+     * (0.05 is +5%); {@code null} with fewer than two hourly points.
+     */
+    public Float change24h(String commodityKey) {
+        CommodityCandleSeries series = data.candleSeriesFor(commodityKey, "1h");
+        if (series == null || series.points().size() < 2) {
+            return null;
+        }
+        List<CommodityCandlePoint> points = series.points();
+        CommodityCandlePoint last = points.get(points.size() - 1);
+        CommodityCandlePoint base = null;
+        for (CommodityCandlePoint point : points) {
+            if (point != last && point.bucketAt() >= last.bucketAt() - DAY_MILLIS) {
+                base = point;
+                break;
+            }
+        }
+        if (base == null || base.closeUnitPrice() <= 0) {
+            return null;
+        }
+        return (last.closeUnitPrice() - base.closeUnitPrice()) / (float) base.closeUnitPrice();
     }
 
     // ---------------------------------------------------------------- listing selection

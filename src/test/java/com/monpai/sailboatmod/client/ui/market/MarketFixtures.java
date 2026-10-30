@@ -1,6 +1,7 @@
 package com.monpai.sailboatmod.client.ui.market;
 
 import com.monpai.sailboatmod.market.MarketOverviewData;
+import com.monpai.sailboatmod.market.analytics.CommodityCandleSeries;
 import net.minecraft.core.BlockPos;
 
 import java.util.ArrayList;
@@ -20,6 +21,8 @@ final class MarketFixtures {
     final List<MarketOverviewData.BuyOrderEntry> buyOrders = new ArrayList<>();
     final List<MarketOverviewData.WarehouseOption> warehouses = new ArrayList<>();
     final List<MarketOverviewData.MyOrderEntry> myOrders = new ArrayList<>();
+    final List<MarketOverviewData.CommodityBuyBook> buyBooks = new ArrayList<>();
+    final List<CommodityCandleSeries> candles = new ArrayList<>();
 
     static MarketOverviewData.ListingEntry listing(String id, String commodity, String name, int price, int stock,
                                                    String sellerUuid, String category, int rarity) {
@@ -54,7 +57,7 @@ final class MarketFixtures {
                 "town", "Town", 0, 0, 0, 0, 0, 0L, 0L, 0L, 0.0F,
                 List.of(), List.of(), List.of(), List.of(), List.of(), List.of(), List.of(), List.of(), List.of(),
                 List.copyOf(storage), List.copyOf(listings), List.copyOf(orders), List.of(), List.copyOf(carriers),
-                List.copyOf(buyOrders), List.of(), List.of(), List.of(), List.of(), List.of(),
+                List.copyOf(buyOrders), List.of(), List.copyOf(buyBooks), List.copyOf(candles), List.of(), List.of(),
                 List.copyOf(warehouses), canChooseReceiving, List.copyOf(myOrders));
     }
 }

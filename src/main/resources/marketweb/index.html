@@ -28,7 +28,6 @@
       } catch (e) {}
     })();
     </script>
-<link rel="stylesheet" href="/vendor/leaflet/leaflet.css">
 <link rel="stylesheet" href="/app.css">
 </head>
 <body>
@@ -55,6 +54,7 @@
                     <span id="mode-label" class="hero-chip-label">Mode</span>
                     <strong id="mode-value">Commodity Market</strong>
                 </div>
+                <div id="live-status" class="hero-chip hero-chip-live" hidden></div>
                 <div class="hero-chip hero-chip-session">
                     <span id="session-label" class="hero-chip-label">Session</span>
                     <strong id="session-pill">Offline</strong>
@@ -122,6 +122,8 @@
         </div>
     </header>
 
+    <div id="live-ticker" class="live-ticker" aria-label="Latest trades" hidden></div>
+
     <section id="access-panel" class="access-panel" hidden>
         <div class="access-grid">
             <div class="login-summary">
@@ -172,13 +174,9 @@
         </section>
     </main>
 </div>
-<script src="/lightweight-charts.standalone.production.js"></script>
-<script src="/vendor/leaflet/leaflet.js"></script>
+<!-- 图表库与地图脚本(Leaflet、tellus-basemap、logistics-*、map.js)由 app.js 在需要时加载。 -->
 <script src="/zh-tw.js"></script>
-<script src="/tellus-basemap.js"></script>
-<script src="/logistics-render.js"></script>
-<script src="/logistics-panel.js"></script>
-<script src="/map.js"></script>
+<script src="/market-runtime.js"></script>
 <script src="/app.js"></script>
 </body>
 </html>

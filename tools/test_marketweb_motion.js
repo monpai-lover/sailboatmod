@@ -13,14 +13,17 @@ function functionSource(name, nextName) {
   return appSource.slice(start, end);
 }
 
-const bindingsSource = functionSource("bindDetailActions", "normalizeCatalogSortMode");
+// The strip's toggle/animationend handling lives in the document-level listeners installed once at startup.
+const bindingsSource = functionSource("installDelegatedHandlers", "registerDetailActions");
 const preferenceSource = functionSource("prefersReducedMotion", "currentViewKey");
 
 function bindStrip({ savedOpen = false, open = savedOpen, reducedMotion = false } = {}) {
   const classes = new Set();
   const listeners = new Map();
-  const strip = {
+  class Element {}
+  const strip = Object.assign(new Element(), {
     open,
+    matches(selector) { return selector === ".market-strip"; },
     classList: {
       toggle(name, enabled) {
         if (enabled) classes.add(name);
@@ -28,26 +31,27 @@ function bindStrip({ savedOpen = false, open = savedOpen, reducedMotion = false 
       },
       remove(name) { classes.delete(name); },
       contains(name) { return classes.has(name); }
-    },
-    addEventListener(name, callback) { listeners.set(name, callback); }
-  };
+    }
+  });
   const state = { marketStripOpen: savedOpen };
-  // Execute the application's real binding and callbacks, without rendering
-  // a page or starting its browser bootstrap/network code.
+  // Execute the application's real listeners, without rendering a page or starting its browser bootstrap/network code.
   const context = vm.createContext({
     state,
+    Element,
     document: {
-      querySelector(selector) { return selector === ".market-strip" ? strip : null; },
-      querySelectorAll() { return []; }
+      addEventListener(name, callback) {
+        if (!listeners.has(name)) listeners.set(name, []);
+        listeners.get(name).push(callback);
+      }
     },
     window: { matchMedia() { return { matches: reducedMotion }; } }
   });
-  vm.runInContext(`${preferenceSource}\n${bindingsSource}\nbindDetailActions();`, context);
+  vm.runInContext(`const delegatedHandlers = { click: [], change: [], input: [], compositionend: [] };\n${preferenceSource}\n${bindingsSource}\ninstallDelegatedHandlers();`, context);
   return {
     strip,
     state,
     fire(name, details = {}) {
-      listeners.get(name)?.({ target: strip, currentTarget: strip, ...details });
+      (listeners.get(name) || []).forEach((listener) => listener({ target: strip, currentTarget: strip, ...details }));
     }
   };
 }

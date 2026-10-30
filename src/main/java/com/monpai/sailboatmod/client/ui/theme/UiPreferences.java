@@ -2,6 +2,8 @@ package com.monpai.sailboatmod.client.ui.theme;
 
 import com.google.gson.Gson;
 import com.google.gson.GsonBuilder;
+import com.google.gson.JsonArray;
+import com.google.gson.JsonElement;
 import com.google.gson.JsonObject;
 import com.google.gson.JsonParseException;
 import com.mojang.logging.LogUtils;
@@ -11,7 +13,10 @@ import java.io.IOException;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.Collections;
+import java.util.LinkedHashSet;
 import java.util.List;
+import java.util.Set;
 import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.function.Consumer;
 
@@ -31,6 +36,9 @@ public final class UiPreferences {
     private final Path file;
     private final List<Consumer<UiTheme>> listeners = new CopyOnWriteArrayList<>();
     private UiTheme theme = UiTheme.TRADING_HALL;
+    /** Commodity keys starred in the market screen; one list for every market terminal. */
+    private final Set<String> marketWatchlist = new LinkedHashSet<>();
+    static final int MAX_WATCHED = 256;
 
     UiPreferences(Path file) {
         this.file = file;
@@ -67,6 +75,28 @@ public final class UiPreferences {
         return theme;
     }
 
+    public Set<String> marketWatchlist() {
+        return Collections.unmodifiableSet(marketWatchlist);
+    }
+
+    /** Stars or unstars a commodity and saves; returns whether it is starred now. */
+    public boolean toggleMarketWatch(String commodityKey) {
+        if (commodityKey == null || commodityKey.isBlank()) {
+            return false;
+        }
+        boolean watched;
+        if (marketWatchlist.remove(commodityKey)) {
+            watched = false;
+        } else if (marketWatchlist.size() < MAX_WATCHED) {
+            marketWatchlist.add(commodityKey);
+            watched = true;
+        } else {
+            return false;
+        }
+        save();
+        return watched;
+    }
+
     /** Screens register while open and must call {@link #removeListener} when they close. */
     public void addListener(Consumer<UiTheme> listener) {
         listeners.add(listener);
@@ -85,6 +115,13 @@ public final class UiPreferences {
             if (json != null && json.has("theme")) {
                 theme = UiTheme.fromId(json.get("theme").getAsString());
             }
+            if (json != null && json.get("marketWatchlist") instanceof JsonArray watched) {
+                for (JsonElement key : watched) {
+                    if (key.isJsonPrimitive() && !key.getAsString().isBlank() && marketWatchlist.size() < MAX_WATCHED) {
+                        marketWatchlist.add(key.getAsString());
+                    }
+                }
+            }
         } catch (IOException | JsonParseException | IllegalStateException | UnsupportedOperationException e) {
             LOGGER.warn("Ignoring unreadable UI preferences at {}: {}", file, e.getMessage());
         }
@@ -93,6 +130,9 @@ public final class UiPreferences {
     private void save() {
         JsonObject json = new JsonObject();
         json.addProperty("theme", theme.id());
+        JsonArray watched = new JsonArray();
+        marketWatchlist.forEach(watched::add);
+        json.add("marketWatchlist", watched);
         try {
             Files.createDirectories(file.getParent());
             Files.writeString(file, GSON.toJson(json), StandardCharsets.UTF_8);

@@ -2303,6 +2303,7 @@
     state.territories = territories.territories || [];
     state.shipments = applyShipmentInterpolation(shipments.shipments || []);
     applySnapshotFocus();
+    applyPendingShipmentFocus();
     redrawSquaremapTerrain();
     renderLayerToggles();
     renderMarketList();
@@ -2485,9 +2486,42 @@
     state.mountedToken += 1;
   }
 
+  // 从订单页跳转过来:选中并跟随指定运单,展开右侧详情栏。运单数据还没加载时先记下,加载后再应用。
+  function focusShipment(shippingOrderId) {
+    const id = String(shippingOrderId || "");
+    if (!id) {
+      return false;
+    }
+    const shipment = (state.shipments || []).find((entry) => entry.shippingOrderId === id);
+    if (!shipment) {
+      state.pendingFocusShipmentId = id;
+      return false;
+    }
+    state.pendingFocusShipmentId = "";
+    state.selected = { type: "shipment", data: shipment };
+    state.followShipmentId = id;
+    state.panels.rightCollapsed = false;
+    syncPanelClasses();
+    const points = (shipment.points || []).map(normalizePoint);
+    if (points.length) {
+      centerOn(points[Math.min(points.length - 1, shipmentTargetIndex(shipment))], Math.max(state.zoom, 1));
+    }
+    renderSelection();
+    renderShipments();
+    scheduleRender();
+    return true;
+  }
+
+  function applyPendingShipmentFocus() {
+    if (state.pendingFocusShipmentId) {
+      focusShipment(state.pendingFocusShipmentId);
+    }
+  }
+
   window.SailboatMarketMap = {
     mount,
     unmount,
+    focusShipment,
     refresh() {
       const token = state.mountedToken;
       if (state.root) {

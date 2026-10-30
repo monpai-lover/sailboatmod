@@ -46,6 +46,35 @@ class UiPreferencesTest {
     }
 
     @Test
+    void marketWatchlistIsSavedWithTheThemeAndSurvivesBrokenEntries() throws IOException {
+        Path file = dir.resolve(UiPreferences.FILE_NAME);
+        UiPreferences prefs = new UiPreferences(file);
+        assertTrue(prefs.toggleMarketWatch("minecraft:diamond"));
+        assertTrue(prefs.toggleMarketWatch("minecraft:coal"));
+        prefs.toggleTheme();
+        UiPreferences reloaded = new UiPreferences(file);
+        assertEquals(List.of("minecraft:diamond", "minecraft:coal"), List.copyOf(reloaded.marketWatchlist()));
+        assertEquals(UiTheme.LEDGER, reloaded.theme(), "saving the watchlist keeps the theme and the other way round");
+        assertEquals(false, reloaded.toggleMarketWatch("minecraft:diamond"));
+        assertEquals(List.of("minecraft:coal"), List.copyOf(new UiPreferences(file).marketWatchlist()));
+        assertEquals(false, reloaded.toggleMarketWatch(" "));
+
+        Files.writeString(file, "{\"theme\":\"ledger\",\"marketWatchlist\":[\"minecraft:wheat\",3,\"\",{\"x\":1}]}", StandardCharsets.UTF_8);
+        assertEquals(List.of("minecraft:wheat", "3"), List.copyOf(new UiPreferences(file).marketWatchlist()));
+        Files.writeString(file, "{\"marketWatchlist\":\"minecraft:wheat\"}", StandardCharsets.UTF_8);
+        assertEquals(List.of(), List.copyOf(new UiPreferences(file).marketWatchlist()));
+    }
+
+    @Test
+    void marketWatchlistIsBounded() {
+        UiPreferences prefs = new UiPreferences(dir.resolve(UiPreferences.FILE_NAME));
+        for (int i = 0; i < UiPreferences.MAX_WATCHED + 10; i++) {
+            prefs.toggleMarketWatch("mod:item_" + i);
+        }
+        assertEquals(UiPreferences.MAX_WATCHED, prefs.marketWatchlist().size());
+    }
+
+    @Test
     void bothThemesShipAStylesheetCoveringTheSameSelectors() throws IOException {
         Path lss = Path.of("src/main/resources/assets/sailboatmod/lss");
         List<String> hall = selectors(Files.readString(lss.resolve("trading_hall.lss")));

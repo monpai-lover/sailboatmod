@@ -1,5 +1,6 @@
 package com.monpai.sailboatmod.network.packet;
 
+import com.monpai.sailboatmod.market.MarketLiveSync;
 import com.monpai.sailboatmod.block.entity.MarketBlockEntity;
 import com.monpai.sailboatmod.block.entity.TownWarehouseBlockEntity;
 import com.monpai.sailboatmod.economy.GoldStandardEconomy;
@@ -13,7 +14,6 @@ import com.monpai.sailboatmod.nation.model.NationTreasuryRecord;
 import com.monpai.sailboatmod.nation.model.TownRecord;
 import com.monpai.sailboatmod.nation.service.NationService;
 import com.monpai.sailboatmod.nation.service.TownService;
-import com.monpai.sailboatmod.network.ModNetwork;
 import net.minecraft.core.BlockPos;
 import net.minecraft.network.FriendlyByteBuf;
 import net.minecraft.network.chat.Component;
@@ -66,10 +66,7 @@ public class MarketWalletActionPacket {
             player.sendSystemMessage(Component.translatable(ok
                     ? "screen.sailboatmod.market.wallet.transfer_success"
                     : "screen.sailboatmod.market.wallet.transfer_failed"));
-            ModNetwork.CHANNEL.send(
-                    player,
-                    new OpenMarketScreenPacket(market.buildOverview(player))
-            );
+            MarketLiveSync.sendOverview(player, market);
         });
         context.setPacketHandled(true);
     }

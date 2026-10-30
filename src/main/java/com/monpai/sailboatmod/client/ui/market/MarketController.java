@@ -17,6 +17,7 @@ import com.monpai.sailboatmod.network.packet.ProbeFulfillmentModesPacket;
 import com.monpai.sailboatmod.network.packet.PurchaseMarketListingPacket;
 import com.monpai.sailboatmod.network.packet.RenameMarketPacket;
 
+import java.util.List;
 import java.util.Optional;
 import java.util.function.Consumer;
 import java.util.function.LongSupplier;
@@ -92,7 +93,16 @@ public final class MarketController {
     /** New authoritative data arrived: every in-flight action has its answer. */
     public void onDataUpdated(MarketOverviewData data) {
         model.update(data);
+        model.markReceived(clock.getAsLong());
         pending.resolveAll();
+    }
+
+    /**
+     * A snapshot pushed after someone else's change. It answers none of this player's actions, so whatever is still
+     * waiting stays pending (and cannot be sent twice). Returns the viewer's orders whose status changed.
+     */
+    public List<MarketOverviewData.MyOrderEntry> onLiveUpdate(MarketOverviewData data) {
+        return model.applyLiveUpdate(data, clock.getAsLong());
     }
 
     /** A server notice answers the action that caused it; the notice itself is displayed by the screen. */

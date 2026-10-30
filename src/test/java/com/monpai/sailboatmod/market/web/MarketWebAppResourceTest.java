@@ -240,8 +240,10 @@ class MarketWebAppResourceTest {
                 "Leaflet runtime should be vendored locally");
         assertTrue(Files.isRegularFile(Path.of("src/main/resources/marketweb/vendor/leaflet/leaflet.css")),
                 "Leaflet CSS should be vendored locally");
-        assertTrue(index.contains("/vendor/leaflet/leaflet.css"));
-        assertTrue(index.contains("/vendor/leaflet/leaflet.js"));
+        // Leaflet and the map scripts are downloaded when the map tab first opens, not on every page load.
+        String mapLoader = appFunction(appJs, "ensureMapLibraries");
+        assertTrue(mapLoader.contains("/vendor/leaflet/leaflet.css") && mapLoader.contains("/vendor/leaflet/leaflet.js"));
+        assertFalse(index.contains("/vendor/leaflet/leaflet.js"), "the map runtime is not part of the first page load");
         assertTrue(appJs.contains("data-square-map"),
                 "map host should expose a dedicated squaremap/Leaflet terrain container");
         assertTrue(appJs.contains("window.SailboatSquareMap || window.SailboatMarketMap"),
@@ -665,11 +667,12 @@ class MarketWebAppResourceTest {
 
     @Test
     void logisticsRendererIsServedAndUsedByTheMap() throws Exception {
-        String index = Files.readString(Path.of("src/main/resources/marketweb/index.html"));
+        String loader = appFunction(Files.readString(APP_JS), "ensureMapLibraries");
         String server = Files.readString(Path.of("src/main/java/com/monpai/sailboatmod/market/web/MarketWebServer.java"));
         String map = Files.readString(MAP_JS);
 
-        assertTrue(index.indexOf("/logistics-render.js") > 0 && index.indexOf("/logistics-render.js") < index.indexOf("/map.js"),
+        // Lazily inserted scripts run in insertion order (async = false), so the list order is the load order.
+        assertTrue(loader.indexOf("/logistics-render.js") > 0 && loader.indexOf("/logistics-render.js") < loader.indexOf("/map.js"),
                 "the logistics renderer must load before map.js");
         assertTrue(server.contains("\"/logistics-render.js\""), "the web server must serve the logistics renderer");
         assertTrue(map.contains(".drawVehicle("), "vehicles are drawn by the logistics renderer");
@@ -685,8 +688,9 @@ class MarketWebAppResourceTest {
         String map = Files.readString(MAP_JS);
 
         assertTrue(index.contains("value=\"zh-TW\""), "the language menu offers Traditional Chinese");
-        assertTrue(index.indexOf("/zh-tw.js") > 0 && index.indexOf("/zh-tw.js") < index.indexOf("/map.js"),
-                "the converter loads before map.js and app.js");
+        assertTrue(index.indexOf("/zh-tw.js") > 0 && index.indexOf("/zh-tw.js") < index.indexOf("/app.js"),
+                "the converter loads before app.js, which loads map.js later on demand");
+        assertTrue(appFunction(app, "ensureMapLibraries").contains("/map.js"), "map.js is loaded by app.js");
         assertTrue(server.contains("\"/zh-tw.js\""), "the web server serves the converter");
         assertTrue(app.contains("I18N[\"zh-TW\"]"), "app.js derives the zh-TW strings");
         assertTrue(map.contains("LABELS[\"zh-TW\"]"), "map.js derives the zh-TW labels");
@@ -699,13 +703,13 @@ class MarketWebAppResourceTest {
 
     @Test
     void shipmentCardsComeFromTheTestedPanelModule() throws Exception {
-        String index = Files.readString(Path.of("src/main/resources/marketweb/index.html"));
+        String loader = appFunction(Files.readString(APP_JS), "ensureMapLibraries");
         String server = Files.readString(Path.of("src/main/java/com/monpai/sailboatmod/market/web/MarketWebServer.java"));
         String map = Files.readString(MAP_JS);
 
-        int render = index.indexOf("/logistics-render.js");
-        int panel = index.indexOf("/logistics-panel.js");
-        assertTrue(render > 0 && panel > render && panel < index.indexOf("/map.js"),
+        int render = loader.indexOf("/logistics-render.js");
+        int panel = loader.indexOf("/logistics-panel.js");
+        assertTrue(render > 0 && panel > render && panel < loader.indexOf("/map.js"),
                 "the panel loads after the renderer it uses and before map.js");
         assertTrue(server.contains("\"/logistics-panel.js\""), "the web server serves the panel module");
         assertTrue(jsFunction(map, "renderShipments").contains(".cardHtml("), "list cards are built by the panel module");
@@ -726,6 +730,13 @@ class MarketWebAppResourceTest {
         assertTrue(body.contains("gameTime"), "responses carry the server time for relative times");
         assertTrue(service.contains("historyVisibleFor") && service.contains("canSee(trace,"),
                 "history and live shipments share one visibility check");
+    }
+
+    /** A top-level function of app.js (starts at column 0 and ends at the next line holding only "}"). */
+    private static String appFunction(String source, String name) {
+        String js = source.replace("\r\n", "\n");
+        int start = js.indexOf("\nfunction " + name + "(");
+        return js.substring(start, js.indexOf("\n}\n", start));
     }
 
     private static String jsFunction(String source, String name) {

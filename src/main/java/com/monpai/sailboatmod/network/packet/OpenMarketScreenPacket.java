@@ -25,7 +25,15 @@ public class OpenMarketScreenPacket {
     }
 
     public static void encode(OpenMarketScreenPacket packet, FriendlyByteBuf buffer) {
-        MarketOverviewData data = packet.data;
+        writeData(buffer, packet.data);
+    }
+
+    public static OpenMarketScreenPacket decode(FriendlyByteBuf buffer) {
+        return new OpenMarketScreenPacket(readData(buffer));
+    }
+
+    /** Wire form of a market overview, shared with {@link MarketLiveUpdatePacket}. */
+    public static void writeData(FriendlyByteBuf buffer, MarketOverviewData data) {
         buffer.writeBlockPos(data.marketPos());
         PacketStringCodec.writeUtfSafe(buffer, data.marketName(), 64);
         PacketStringCodec.writeUtfSafe(buffer, data.ownerName(), 64);
@@ -83,7 +91,7 @@ public class OpenMarketScreenPacket {
         writeMyOrderEntries(buffer, data.myOrders());
     }
 
-    public static OpenMarketScreenPacket decode(FriendlyByteBuf buffer) {
+    public static MarketOverviewData readData(FriendlyByteBuf buffer) {
         BlockPos marketPos = buffer.readBlockPos();
         String marketName = buffer.readUtf(64);
         String ownerName = buffer.readUtf(64);
@@ -141,7 +149,7 @@ public class OpenMarketScreenPacket {
         }
         boolean canChooseReceiving = buffer.readBoolean();
         List<MarketOverviewData.MyOrderEntry> myOrders = readMyOrderEntries(buffer);
-        return new OpenMarketScreenPacket(new MarketOverviewData(
+        return new MarketOverviewData(
                 marketPos,
                 marketName,
                 ownerName,
@@ -192,7 +200,7 @@ public class OpenMarketScreenPacket {
                 receivingWarehouseOptions,
                 canChooseReceiving,
                 myOrders
-        ));
+        );
     }
 
     public static void handle(OpenMarketScreenPacket packet, Supplier<NetworkEvent.Context> contextSupplier) {
@@ -524,6 +532,7 @@ public class OpenMarketScreenPacket {
         for (MarketOverviewData.CommodityBuyBook book : buyBooks) {
             PacketStringCodec.writeUtfSafe(buffer, book.commodityKey(), 128);
             PacketStringCodec.writeUtfSafe(buffer, book.displayName(), 96);
+            buffer.writeVarInt(book.referenceUnitPrice());
             buffer.writeVarInt(book.entries().size());
             for (MarketOverviewData.CommodityBuyEntry entry : book.entries()) {
                 PacketStringCodec.writeUtfSafe(buffer, entry.orderId(), 64);
@@ -543,6 +552,7 @@ public class OpenMarketScreenPacket {
         for (int i = 0; i < count; i++) {
             String commodityKey = buffer.readUtf(128);
             String displayName = buffer.readUtf(96);
+            int referenceUnitPrice = buffer.readVarInt();
             int entryCount = buffer.readVarInt();
             List<MarketOverviewData.CommodityBuyEntry> entries = new ArrayList<>(entryCount);
             for (int j = 0; j < entryCount; j++) {
@@ -556,7 +566,7 @@ public class OpenMarketScreenPacket {
                         buffer.readUtf(32)
                 ));
             }
-            buyBooks.add(new MarketOverviewData.CommodityBuyBook(commodityKey, displayName, entries));
+            buyBooks.add(new MarketOverviewData.CommodityBuyBook(commodityKey, displayName, referenceUnitPrice, entries));
         }
         return buyBooks;
     }
