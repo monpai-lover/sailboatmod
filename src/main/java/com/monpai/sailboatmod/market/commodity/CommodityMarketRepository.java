@@ -156,6 +156,8 @@ public final class CommodityMarketRepository {
             statement.setString(10, tradeRecord.actorName());
             statement.setLong(11, tradeRecord.createdAt());
             statement.executeUpdate();
+            com.monpai.sailboatmod.market.MarketChangeNotifier.traded(
+                    tradeRecord.commodityKey(), tradeRecord.unitPrice(), tradeRecord.quantity());
         }
     }
 
@@ -283,6 +285,7 @@ public final class CommodityMarketRepository {
             statement.setLong(9, order.createdAt());
             statement.setString(10, order.status());
             statement.executeUpdate();
+            com.monpai.sailboatmod.market.MarketChangeNotifier.changed();
         }
     }
 
@@ -383,6 +386,7 @@ public final class CommodityMarketRepository {
             statement.setString(1, status);
             statement.setString(2, orderId);
             statement.executeUpdate();
+            com.monpai.sailboatmod.market.MarketChangeNotifier.changed();
         }
     }
 

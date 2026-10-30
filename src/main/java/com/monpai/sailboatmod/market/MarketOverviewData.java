@@ -239,9 +239,19 @@ public record MarketOverviewData(
                                   int volume, int tradeCount) {
     }
 
-    public record CommodityBuyBook(String commodityKey, String displayName, List<CommodityBuyEntry> entries) {
+    /**
+     * Open buy orders for one commodity. Their price bands are basis points around {@code referenceUnitPrice}, the
+     * same reference the server reserves funds against (recent trade average, else lowest ask, else base price);
+     * 0 when the server could not price the commodity.
+     */
+    public record CommodityBuyBook(String commodityKey, String displayName, int referenceUnitPrice, List<CommodityBuyEntry> entries) {
         public CommodityBuyBook {
+            referenceUnitPrice = Math.max(0, referenceUnitPrice);
             entries = entries == null ? List.of() : List.copyOf(entries);
+        }
+
+        public CommodityBuyBook(String commodityKey, String displayName, List<CommodityBuyEntry> entries) {
+            this(commodityKey, displayName, 0, entries);
         }
     }
 

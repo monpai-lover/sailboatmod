@@ -52,6 +52,12 @@ public final class MarketText {
         return Math.round(Math.max(0.0F, value) * 100.0F) + "%";
     }
 
+    /** Signed change with one decimal, such as {@code +3.2%} or {@code -0.8%}. */
+    public static String change(float fraction) {
+        float percent = Math.round(fraction * 1000.0F) / 10.0F;
+        return (percent > 0 ? "+" : "") + String.format(java.util.Locale.ROOT, "%.1f%%", percent);
+    }
+
     public static String distance(int meters) {
         return meters <= 0 ? "-" : String.format(Locale.ROOT, "%dm", meters);
     }

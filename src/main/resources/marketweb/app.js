@@ -8,6 +8,20 @@
   selectedCommodityKey: "",
   activeProductTab: "all",
   browseOrderView: localStorage.getItem("marketWebBrowseOrderView") || "purchase",
+  browseLayout: localStorage.getItem("marketWebBrowseLayout") === "heatmap" ? "heatmap" : "grid",
+  watchlist: new Set((() => {
+    try {
+      const stored = JSON.parse(localStorage.getItem("marketWebWatchlist") || "[]");
+      return Array.isArray(stored) ? stored.filter((key) => typeof key === "string") : [];
+    } catch (_) {
+      return [];
+    }
+  })()),
+  mobileFiltersOpen: false,
+  mapMode: localStorage.getItem("marketWebMapMode") === "globe" ? "globe" : "flat",
+  mapWorld: null,
+  mapWorldLoading: false,
+  pendingShipmentFocus: "",
   accessPanelOpen: localStorage.getItem("marketWebAccessPanelOpenV2") === "1",
   walletCollapsed: localStorage.getItem("marketWebWalletCollapsed") !== "0",
   activeChartTimeframe: localStorage.getItem("marketWebChartTimeframe") || "1h",
@@ -32,7 +46,8 @@
     category: "all",
     rarity: "all",
     minPrice: "",
-    maxPrice: ""
+    maxPrice: "",
+    watchOnly: false
   }),
   catalogExpandedGroup: "all",
   catalogHoverGroup: "all",
@@ -41,7 +56,6 @@
   aggregatedLoaded: false,
   aggregatedAuthenticated: false,
   aggregatedViewerTownId: "",
-  aggregatedQuery: "",
   aggregatedSelectedCommodityKey: "",
   aggregatedDetail: null,
   aggregatedDetailKey: "",
@@ -343,6 +357,154 @@ function renderDetailPreservingScroll() {
   const scrollState = captureDetailScrollState();
   renderDetail();
   restoreDetailScrollState(scrollState);
+}
+
+
+// ---- 重绘保护 ----
+// renderDetail() 每次从字符串模板生成整页 HTML。更新时有三样东西不能丢:
+// 正在进行的输入法组字(拼音等)、键盘焦点与光标位置、玩家已输入但还没提交的表单内容。
+// 组字期间推迟更新;焦点和输入由下面的 morph 原地更新保留。
+const renderGuard = {
+  composing: null,
+  deferred: false,
+  resetFormsOnce: false,
+  resetWalletOnce: false,
+  lastViewKey: null
+};
+
+document.addEventListener("compositionstart", (event) => {
+  renderGuard.composing = event.target;
+}, true);
+
+document.addEventListener("compositionend", () => {
+  renderGuard.composing = null;
+  if (renderGuard.deferred) {
+    renderGuard.deferred = false;
+    window.setTimeout(renderDetailPreservingScroll, 0);
+  }
+}, true);
+
+function isComposingIn(root) {
+  const node = renderGuard.composing;
+  return !!(node && node.isConnected && root && root.contains(node));
+}
+
+// 没有 id 的按钮靠这些属性找回"同一个"元素(对话框关闭后把焦点还给触发按钮)。
+const FOCUS_KEY_ATTRIBUTES = [
+  "data-route", "data-catalog-group", "data-catalog-subcategory", "data-catalog-rarity", "data-catalog-sort",
+  "data-browse-order-view", "data-aggregate-tab", "data-chart-timeframe", "data-chart-indicator", "data-chart-flag",
+  "data-card-commodity-key", "data-aggregate-card-commodity-key", "data-purchase-index", "data-aggregate-purchase",
+  "data-storage-choice", "data-wallet-action", "data-market-id"
+];
+
+function focusSelectorFor(node) {
+  if (!node || node === document.body || node.nodeType !== Node.ELEMENT_NODE) {
+    return "";
+  }
+  if (node.id) {
+    return `#${CSS.escape(node.id)}`;
+  }
+  for (const attribute of FOCUS_KEY_ATTRIBUTES) {
+    if (node.hasAttribute(attribute)) {
+      return `[${attribute}="${CSS.escape(node.getAttribute(attribute) || "")}"]`;
+    }
+  }
+  return "";
+}
+
+// ---- 原地更新(morph) ----
+// 模板仍是字符串,但不再整体替换 innerHTML:用 Idiomorph 对比新 HTML 与现有 DOM,只改变化的部分。
+// 元素长期存在,焦点、光标、输入法组字、悬停和滚动都不会被打断。
+// 玩家改过但还没提交的输入("脏"控件)不会被模板默认值覆盖;切换视图或提交成功后清掉脏标记。
+// 带 data-island 的元素(图表容器、地图根节点)由各自的控制代码管理,morph 整个跳过。
+const dirtyControls = new WeakMap();
+const dirtyGenerations = { detail: 1, wallet: 1, other: 1 };
+
+function dirtyScopeOf(node) {
+  if (els.marketDetail?.contains(node)) {
+    return "detail";
+  }
+  if (els.walletDock?.contains(node)) {
+    return "wallet";
+  }
+  return "other";
+}
+
+function isDirtyControl(node) {
+  return !!node && dirtyControls.get(node) === dirtyGenerations[dirtyScopeOf(node)];
+}
+
+function clearDirtyControls(scope) {
+  dirtyGenerations[scope] += 1;
+}
+
+function trackDirtyControl(event) {
+  const node = event.target;
+  if (node instanceof HTMLInputElement || node instanceof HTMLTextAreaElement || node instanceof HTMLSelectElement) {
+    dirtyControls.set(node, dirtyGenerations[dirtyScopeOf(node)]);
+  }
+}
+
+document.addEventListener("input", trackDirtyControl, true);
+document.addEventListener("change", trackDirtyControl, true);
+
+const morphCallbacks = {
+  beforeNodeMorphed(oldNode, newNode) {
+    if (oldNode.nodeType !== Node.ELEMENT_NODE || newNode.nodeType !== Node.ELEMENT_NODE) {
+      return true;
+    }
+    const island = oldNode.getAttribute("data-island");
+    if (island && island === newNode.getAttribute("data-island")) {
+      return false;
+    }
+    // 求购物品预览由解析请求就地更新;玩家输入了物品 ID 时保留解析结果。
+    if (oldNode.id === "buy-order-preview" && isDirtyControl(document.querySelector("#buy-order-key"))) {
+      return false;
+    }
+    return true;
+  },
+  beforeAttributeUpdated(attribute, element) {
+    if ((attribute === "value" || attribute === "checked") && isDirtyControl(element)) {
+      return false;
+    }
+    if (attribute === "selected" && isDirtyControl(element.closest("select"))) {
+      return false;
+    }
+    if (element.id === "buy-order-button"
+        && (attribute === "data-item-valid" || attribute === "data-resolved-commodity-key")
+        && isDirtyControl(document.querySelector("#buy-order-key"))) {
+      return false;
+    }
+    return true;
+  }
+};
+
+function morphInto(root, html) {
+  if (!root) {
+    return;
+  }
+  if (!window.Idiomorph) {
+    // 运行库没加载成功时退回整体替换,页面仍然可用。
+    root.innerHTML = html;
+    return;
+  }
+  window.Idiomorph.morph(root, html, {
+    morphStyle: "innerHTML",
+    ignoreActiveValue: true,
+    restoreFocus: true,
+    callbacks: morphCallbacks
+  });
+}
+
+// 同一视图内更新时保留玩家输入;切换视图(换商品/换页签)或提交成功后清掉脏标记,表单回到默认值。
+function commitDetailHtml(html) {
+  const viewKey = currentViewKey();
+  if (viewKey !== renderGuard.lastViewKey || renderGuard.resetFormsOnce) {
+    clearDirtyControls("detail");
+  }
+  renderGuard.resetFormsOnce = false;
+  morphInto(els.marketDetail, html);
+  renderGuard.lastViewKey = viewKey;
 }
 
 function selectedDispatchOrder(detail = state.detail) {
@@ -650,7 +812,7 @@ const I18N = {
     low: "Low",
     high: "High",
     volume: "Volume",
-    buy_1: "Buy 1",
+    buy_1: "Buy",
     cancel: "Cancel",
     confirm: "Confirm",
     buy_modal_title: "Confirm Order",
@@ -982,7 +1144,7 @@ Object.assign(I18N["zh-CN"], I18N["en-US"], {
   low: "低",
   high: "高",
   volume: "成交",
-  buy_1: "购买 1",
+  buy_1: "购买",
   cancel: "取消",
   confirm: "确认",
   buy_modal_title: "确认下单",
@@ -1214,6 +1376,172 @@ Object.assign(I18N["zh-CN"], {
   mc_warehouse_listed: "已从殖民地仓库上架。"
 });
 
+Object.assign(I18N["en-US"], {
+  dismiss: "Dismiss",
+  close: "Close",
+  qty_decrease: "Decrease quantity",
+  qty_increase: "Increase quantity",
+  qty_max: "Max",
+  qty_available: "{count} in stock",
+  qty_unlimited: "Unlimited stock",
+  qty_affordable: "wallet covers {count}",
+  purchase_total: "Total",
+  wallet_available: "Available balance",
+  wallet_after: "Balance after",
+  fulfillment_label: "Delivery",
+  purchase_over_stock: "Only {count} in stock.",
+  purchase_qty_invalid: "Enter a whole number of at least 1.",
+  purchase_insufficient_funds: "Not enough available balance in your market wallet.",
+  purchase_mode_unavailable: "This delivery option is not available for this listing.",
+  purchase_confirm_total: "Buy · {total}",
+  purchase_submitting: "Placing order…",
+  purchase_success: "Ordered {name} × {qty}.",
+  mode_checking: "Checking…",
+  receiving_default: "Default receiving point",
+  confirm_keep: "Keep",
+  confirm_cancel_listing_title: "Take down this listing?",
+  confirm_cancel_listing_message: "Buyers will no longer see it on the market.",
+  confirm_cancel_listing_action: "Take down",
+  confirm_cancel_buy_order_title: "Withdraw this buy order?",
+  confirm_cancel_buy_order_message: "Sellers will no longer be able to fill it.",
+  confirm_cancel_buy_order_action: "Withdraw",
+  confirm_cancel_order_title: "Cancel this order?",
+  confirm_cancel_order_message: "A cancelled order can't be restored.",
+  confirm_cancel_order_action: "Cancel order",
+  session_expired: "Your sign-in has expired. Sign in again to trade.",
+  order_word: "Order",
+  order_item_title: "{name} × {qty}",
+  chart_loading: "Loading chart…",
+  live_status_live: "Live",
+  live_status_connecting: "Connecting",
+  live_status_offline: "Reconnecting",
+  live_status_polling: "Auto refresh",
+  live_ticker_label: "Latest trades",
+  live_order_update: "Order {id}: {status}",
+  trend_24h: "24h change",
+  trend_7d: "7-day change",
+  layout_label: "Layout",
+  layout_grid: "Grid",
+  layout_heatmap: "Heatmap",
+  heatmap_label: "Market heatmap: size is 24h turnover, colour is 24h change",
+  order_book_kicker: "Order Book",
+  order_book_title: "Market Depth",
+  order_book_spread: "Spread",
+  watch_add: "Watch",
+  watch_on: "Watching",
+  watch_filter: "Watchlist",
+  filters_toggle: "Filters",
+  palette_launch: "Jump to",
+  palette_title: "Search goods, terminals and pages",
+  palette_placeholder: "Item, terminal, page… (pinyin initials work: zs = 钻石)",
+  palette_empty: "Nothing matches.",
+  palette_footer: "↑↓ to choose · Enter to open · Esc to close",
+  palette_kind_page: "Page",
+  palette_kind_market: "Terminal",
+  palette_kind_commodity: "Item",
+  palette_kind_action: "Action",
+  palette_toggle_theme: "Switch light / dark theme",
+  palette_language: "Language",
+  order_progress: "Order progress",
+  order_track_on_map: "Show the ship on the map",
+  eta_any_moment: "shipping any moment now",
+  eta_countdown: "ships in {time}",
+  order_queue_place: "Queue #{position}",
+  map_mode_label: "Map view",
+  map_mode_flat: "Flat map",
+  map_mode_globe: "3D globe",
+  globe_loading: "Loading the globe…",
+  globe_failed: "The 3D globe needs WebGL, which this browser could not start. Switch back to the flat map.",
+  globe_open_market: "Open this terminal",
+  globe_not_tellus: "The 3D globe is only available on Tellus real-Earth worlds.",
+  globe_ship_progress: "{percent}% of the route done",
+  globe_ship_eta: "Arrives in {time}",
+  map_library_failed: "The map failed to load. Check your connection and reload the page."
+});
+
+Object.assign(I18N["zh-CN"], {
+  dismiss: "关闭",
+  close: "关闭",
+  qty_decrease: "减少数量",
+  qty_increase: "增加数量",
+  qty_max: "最大",
+  qty_available: "库存 {count}",
+  qty_unlimited: "库存不限",
+  qty_affordable: "余额可买 {count}",
+  purchase_total: "合计",
+  wallet_available: "可用余额",
+  wallet_after: "下单后余额",
+  fulfillment_label: "配送方式",
+  purchase_over_stock: "库存只有 {count}。",
+  purchase_qty_invalid: "请输入不小于 1 的整数。",
+  purchase_insufficient_funds: "市场钱包可用余额不足。",
+  purchase_mode_unavailable: "这条挂单不支持该配送方式。",
+  purchase_confirm_total: "确认购买 · {total}",
+  purchase_submitting: "正在下单…",
+  purchase_success: "已下单:{name} × {qty}。",
+  mode_checking: "检测中…",
+  receiving_default: "默认收货地",
+  confirm_keep: "保留",
+  confirm_cancel_listing_title: "撤下这条挂单?",
+  confirm_cancel_listing_message: "撤下后买家将在市场上看不到它。",
+  confirm_cancel_listing_action: "撤下挂单",
+  confirm_cancel_buy_order_title: "撤销这条求购?",
+  confirm_cancel_buy_order_message: "撤销后卖家将无法再向它供货。",
+  confirm_cancel_buy_order_action: "撤销求购",
+  confirm_cancel_order_title: "取消这笔订单?",
+  confirm_cancel_order_message: "订单取消后无法恢复。",
+  confirm_cancel_order_action: "取消订单",
+  session_expired: "登录已过期,请重新登录后再交易。",
+  order_word: "订单",
+  order_item_title: "{name} × {qty}",
+  chart_loading: "图表加载中…",
+  live_status_live: "实时",
+  live_status_connecting: "连接中",
+  live_status_offline: "重连中",
+  live_status_polling: "定时刷新",
+  live_ticker_label: "最新成交",
+  live_order_update: "订单 {id}:{status}",
+  trend_24h: "24 小时涨跌",
+  trend_7d: "7 天涨跌",
+  layout_label: "显示方式",
+  layout_grid: "网格",
+  layout_heatmap: "热力图",
+  heatmap_label: "市场热力图:面积为 24 小时成交额,颜色为 24 小时涨跌",
+  order_book_kicker: "盘口",
+  order_book_title: "买卖深度",
+  order_book_spread: "价差",
+  watch_add: "加入自选",
+  watch_on: "已自选",
+  watch_filter: "自选",
+  filters_toggle: "筛选",
+  palette_launch: "快速跳转",
+  palette_title: "搜索商品、终端与页面",
+  palette_placeholder: "物品、终端、页面…(支持拼音首字母,如 zs = 钻石)",
+  palette_empty: "没有匹配的结果。",
+  palette_footer: "↑↓ 选择 · Enter 打开 · Esc 关闭",
+  palette_kind_page: "页面",
+  palette_kind_market: "终端",
+  palette_kind_commodity: "商品",
+  palette_kind_action: "操作",
+  palette_toggle_theme: "切换浅色 / 深色主题",
+  palette_language: "语言",
+  order_progress: "订单进度",
+  order_track_on_map: "在地图上查看船只",
+  eta_any_moment: "即将发货",
+  eta_countdown: "{time} 后发货",
+  order_queue_place: "排第 {position} 位",
+  map_mode_label: "地图视图",
+  map_mode_flat: "平面地图",
+  map_mode_globe: "3D 地球",
+  globe_loading: "正在加载地球…",
+  globe_failed: "3D 地球需要 WebGL,这个浏览器没能启动它。请切回平面地图。",
+  globe_open_market: "进入这个终端",
+  globe_not_tellus: "3D 地球只在 Tellus 真实地球世界可用。",
+  globe_ship_progress: "航程已完成 {percent}%",
+  globe_ship_eta: "预计 {time} 后到达",
+  map_library_failed: "地图加载失败,请检查网络后刷新页面。"
+});
+
 // Traditional Chinese is derived from the Simplified strings by the generated table in zh-tw.js.
 I18N["zh-TW"] = window.SailboatZhTw ? window.SailboatZhTw.convertAll(I18N["zh-CN"]) : I18N["zh-CN"];
 
@@ -1306,28 +1634,124 @@ function updateStaticCopy() {
 }
 
 function setStatus(message, isError = false) {
-  state.status = isError ? "" : message || "";
-  state.error = isError ? message || "" : "";
+  const text = String(message || "");
+  state.status = isError ? "" : text;
+  state.error = isError ? text : "";
   if (els.statusLive) {
-    els.statusLive.textContent = message || "";
+    els.statusLive.textContent = text;
   }
-  renderDetail();
+  if (text) {
+    showToast(text, isError ? "error" : "info");
+  }
+}
+
+// 状态消息以浮动通知显示,不再触发整页重绘;成功消息几秒后自动消失,错误消息停留更久并可手动关闭。
+// 读屏软件通过 #status-live 播报,浮动通知本身只负责视觉。
+function toastRegion() {
+  let region = document.querySelector("#toast-region");
+  if (!region) {
+    region = document.createElement("div");
+    region.id = "toast-region";
+    region.className = "toast-region";
+    document.body.appendChild(region);
+  }
+  return region;
+}
+
+function showToast(message, tone = "info") {
+  const region = toastRegion();
+  Array.from(region.children)
+    .filter((node) => node.dataset.message === message)
+    .forEach((node) => node.remove());
+  const toast = document.createElement("div");
+  toast.className = `toast${tone === "error" ? " is-error" : ""}`;
+  toast.dataset.message = message;
+  const text = document.createElement("span");
+  text.className = "toast-text";
+  text.textContent = message;
+  const close = document.createElement("button");
+  close.type = "button";
+  close.className = "toast-close";
+  close.setAttribute("aria-label", t("dismiss"));
+  close.textContent = "×";
+  close.addEventListener("click", () => dismissToast(toast));
+  toast.append(text, close);
+  region.appendChild(toast);
+  while (region.children.length > 3) {
+    region.firstElementChild.remove();
+  }
+  toast.dismissTimer = window.setTimeout(() => dismissToast(toast), tone === "error" ? 9000 : 4500);
+}
+
+function dismissToast(toast) {
+  window.clearTimeout(toast.dismissTimer);
+  if (!toast.isConnected || toast.classList.contains("is-leaving")) {
+    return;
+  }
+  toast.classList.add("is-leaving");
+  window.setTimeout(() => toast.remove(), prefersReducedMotion() ? 0 : 180);
 }
 
 async function api(path, options = {}) {
-  const headers = new Headers(options.headers || {});
-  if (!headers.has("Content-Type") && options.body) {
+  const { idempotencyKey, ...fetchOptions } = options;
+  const headers = new Headers(fetchOptions.headers || {});
+  if (!headers.has("Content-Type") && fetchOptions.body) {
     headers.set("Content-Type", "application/json");
   }
   if (state.sessionToken) {
     headers.set("Authorization", `Bearer ${state.sessionToken}`);
   }
-  const response = await fetch(path, { ...options, headers });
+  // 同一次下单意图复用同一个 key,服务端可据此丢弃重复提交(网络重试、连点)。
+  if (idempotencyKey) {
+    headers.set("Idempotency-Key", idempotencyKey);
+  }
+  const response = await fetch(path, { ...fetchOptions, headers });
   const data = await response.json().catch(() => ({}));
   if (!response.ok) {
-    throw new Error(data.message || `Request failed: ${response.status}`);
+    if (response.status === 401 && state.sessionToken && !String(path).startsWith("/api/auth/")) {
+      expireSession();
+    }
+    const error = new Error(data.message || `Request failed: ${response.status}`);
+    error.status = response.status;
+    throw error;
   }
   return data;
+}
+
+// 会话失效(服务器重启、令牌过期):清掉本地令牌,页面退回游客模式继续可浏览。
+function expireSession() {
+  state.sessionToken = "";
+  state.session = null;
+  localStorage.removeItem("marketWebSessionToken");
+  renderSession();
+  restartLiveFeed();
+}
+
+// crypto.randomUUID 只在 HTTPS/localhost 可用;普通 http:// 部署退回 getRandomValues。
+function newIdempotencyKey() {
+  try {
+    if (typeof window.crypto?.randomUUID === "function") {
+      return window.crypto.randomUUID();
+    }
+    const bytes = new Uint8Array(16);
+    window.crypto.getRandomValues(bytes);
+    bytes[6] = (bytes[6] & 0x0f) | 0x40;
+    bytes[8] = (bytes[8] & 0x3f) | 0x80;
+    const hex = Array.from(bytes, (value) => value.toString(16).padStart(2, "0")).join("");
+    return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20)}`;
+  } catch (_) {
+    return `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 12)}`;
+  }
+}
+
+// 绑定实际请求内容；改正业务失败的输入使用新 key，网络结果不明时重试原内容仍复用原 key。
+// 保留弹窗里所有已提交内容的 key，避免改动后再改回时重复执行已成功但丢失响应的购买。
+function idempotencyKeyForRequest(keys, path, body) {
+  const signature = JSON.stringify([path, body]);
+  if (!keys.has(signature)) {
+    keys.set(signature, newIdempotencyKey());
+  }
+  return keys.get(signature);
 }
 
 async function loadSettings() {
@@ -1406,6 +1830,7 @@ async function bindAccountLogin() {
     clearAuthInputs(true);
     await hydrateSession();
     await loadMarkets();
+    restartLiveFeed();
     setStatus(t("account_bound", { name: data.accountUsername || username }));
   } catch (error) {
     setStatus(error.message, true);
@@ -1430,6 +1855,7 @@ async function login() {
     clearAuthInputs(false);
     await hydrateSession();
     await loadMarkets();
+    restartLiveFeed();
     setStatus(t("account_login_success", { name: data.accountUsername || username }));
   } catch (error) {
     setStatus(error.message, true);
@@ -1530,7 +1956,7 @@ async function hydrateSession() {
   }
 }
 
-async function loadMarkets(historyMode = "replace") {
+async function loadMarkets(historyMode = "replace", { silent = false } = {}) {
   const data = await api("/api/markets");
   state.markets = data.markets || [];
   if (!state.selectedMarketId && state.markets.length > 0) {
@@ -1542,14 +1968,16 @@ async function loadMarkets(historyMode = "replace") {
   renderMarkets();
 
   if (state.selectedMarketId) {
-    await loadMarketDetail(state.selectedMarketId, historyMode);
+    await loadMarketDetail(state.selectedMarketId, historyMode, { silent });
   } else {
     state.detail = null;
     renderDetail();
   }
 }
 
-async function loadMarketDetail(marketId, historyMode = "replace") {
+const loadSequence = { detail: 0, aggregated: 0 };
+
+async function loadMarketDetail(marketId, historyMode = "replace", { silent = false } = {}) {
   if (!marketId) {
     state.detail = null;
     state.selectedCommodityKey = "";
@@ -1558,8 +1986,15 @@ async function loadMarketDetail(marketId, historyMode = "replace") {
     return;
   }
 
+  const sequence = ++loadSequence.detail;
   try {
-    state.detail = await api(`/api/markets/${marketId}`);
+    const detail = await api(`/api/markets/${marketId}`);
+    // 防竞态:只采用最后一次请求的结果(快速切换终端,或后台刷新与点击交错)。
+    if (sequence !== loadSequence.detail) {
+      return;
+    }
+    state.detail = detail;
+    state.detailFetchedAt = Date.now();
     state.selectedMarketId = marketId;
     if (state.mineColoniesMarketId !== marketId) {
       state.mineColoniesItems = [];
@@ -1571,6 +2006,13 @@ async function loadMarketDetail(marketId, historyMode = "replace") {
     renderMarkets();
     renderDetail();
   } catch (error) {
+    if (sequence !== loadSequence.detail) {
+      return;
+    }
+    if (silent) {
+      console.warn("[marketweb] background refresh failed", error);
+      return;
+    }
     setStatus(error.message, true);
   }
 }
@@ -1592,6 +2034,7 @@ async function loadMineColoniesWarehouse(marketId) {
   } catch (error) {
     state.mineColoniesLoaded = true;
     setStatus(error.message, true);
+    renderDetail();
   }
 }
 
@@ -1614,81 +2057,96 @@ async function postMineColoniesListing(itemId, payload = {}) {
     state.mineColoniesLoaded = false;
     syncCommoditySelection();
     syncRouteUrl(true);
-    setStatus(t("mc_warehouse_listed"));
+    renderGuard.resetFormsOnce = true;
     renderDetail();
+    setStatus(t("mc_warehouse_listed"));
   } catch (error) {
     setStatus(error.message, true);
   }
 }
 
-async function postMarketAction(suffix, payload = {}) {
+const actionsInFlight = new Set();
+
+function setActionBusy(trigger, busy) {
+  if (!trigger || !trigger.isConnected) {
+    return;
+  }
+  trigger.disabled = busy;
+  trigger.setAttribute("aria-busy", busy ? "true" : "false");
+}
+
+// 所有终端写操作的统一入口:同一操作进行中时忽略重复点击,触发按钮在请求期间禁用。
+async function postMarketAction(suffix, payload = {}, options = {}) {
   if (!state.session) {
     setStatus(t("sign_in_to_trade"), true);
-    return;
+    return false;
   }
   if (!state.selectedMarketId) {
-    return;
+    return false;
   }
+  const marketId = state.selectedMarketId;
+  const actionKey = `${marketId}${suffix}`;
+  if (actionsInFlight.has(actionKey)) {
+    return false;
+  }
+  actionsInFlight.add(actionKey);
+  setActionBusy(options.trigger, true);
   try {
-    const data = await api(`/api/markets/${state.selectedMarketId}${suffix}`, {
+    const data = await api(`/api/markets/${marketId}${suffix}`, {
       method: "POST",
-      body: JSON.stringify(payload)
+      body: JSON.stringify(payload),
+      idempotencyKey: options.idempotencyKey || newIdempotencyKey()
     });
-    state.detail = data;
-    syncCommoditySelection();
-    syncRouteUrl(true);
-    setStatus(t("action_completed"));
-    renderDetail();
+    if (state.selectedMarketId === marketId) {
+      state.detail = data;
+      syncCommoditySelection();
+      syncRouteUrl(true);
+      if (suffix === "/wallet/transfer") {
+        renderGuard.resetWalletOnce = true;
+      } else {
+        renderGuard.resetFormsOnce = true;
+      }
+      renderDetail();
+    }
+    setStatus(options.successMessage || t("action_completed"));
+    return true;
   } catch (error) {
     setStatus(error.message, true);
+    return false;
+  } finally {
+    actionsInFlight.delete(actionKey);
+    setActionBusy(options.trigger, false);
   }
 }
 
-async function loadAggregatedListings() {
+async function loadAggregatedListings({ silent = false } = {}) {
+  const sequence = ++loadSequence.aggregated;
   try {
     const data = await api("/api/listings");
+    if (sequence !== loadSequence.aggregated) {
+      return;
+    }
     state.aggregatedListings = Array.isArray(data.listings) ? data.listings : [];
     state.aggregatedAuthenticated = !!data.authenticated;
     state.aggregatedViewerTownId = String(data.viewerTownId || "");
     state.aggregatedLoaded = true;
     renderDetail();
   } catch (error) {
+    if (sequence !== loadSequence.aggregated) {
+      return;
+    }
+    if (silent && state.aggregatedLoaded) {
+      console.warn("[marketweb] background refresh failed", error);
+      return;
+    }
     state.aggregatedLoaded = true;
     setStatus(error.message, true);
-  }
-}
-
-async function postAggregatedPurchase(listingId, payload = {}) {
-  if (!state.session) {
-    setStatus(t("sign_in_to_trade"), true);
-    return;
-  }
-  if (!state.selectedMarketId) {
-    setStatus(t("reason_no_market_selected"), true);
-    return;
-  }
-  if (!listingId) {
-    return;
-  }
-  try {
-    await api(`/api/listings/${listingId}/purchase`, {
-      method: "POST",
-      body: JSON.stringify(payload)
-    });
-    setStatus(t("all_listings_purchased"));
-    // 详情上下文:刷新该商品的全服伪 detail(挂单数随购买变化);否则刷新聚合网格。
-    if (state.aggregatedDetailKey) {
-      await loadAggregatedDetail(state.aggregatedDetailKey, { force: true });
-    } else {
-      await loadAggregatedListings();
-    }
-  } catch (error) {
-    setStatus(error.message, true);
+    renderDetail();
   }
 }
 
 // 拉取某商品的全服"伪 detail"(对标终端详情,数据全服聚合)。race-guard:返回时选中商品已切换则丢弃。
-async function loadAggregatedDetail(commodityKey, { force = false } = {}) {
+async function loadAggregatedDetail(commodityKey, { force = false, silent = false } = {}) {
   const key = String(commodityKey || "").trim();
   if (!key) {
     return;
@@ -1696,11 +2154,15 @@ async function loadAggregatedDetail(commodityKey, { force = false } = {}) {
   if (!force && state.aggregatedDetailKey === key && state.aggregatedDetailLoaded) {
     return;
   }
+  // 后台刷新时保留现有内容直到新数据到达,避免页面闪回"加载中"。
+  const quiet = silent && state.aggregatedDetailKey === key && state.aggregatedDetailLoaded && !!state.aggregatedDetail;
   state.aggregatedDetailKey = key;
-  state.aggregatedDetailLoaded = false;
-  state.aggregatedDetailLoading = true;
-  state.aggregatedDetail = null;
-  renderDetail();
+  if (!quiet) {
+    state.aggregatedDetailLoaded = false;
+    state.aggregatedDetailLoading = true;
+    state.aggregatedDetail = null;
+    renderDetail();
+  }
   try {
     const data = await api(`/api/listings/commodity?key=${encodeURIComponent(key)}`);
     // 防竞态:返回时用户已切到别的商品或离开详情则丢弃。
@@ -1715,8 +2177,10 @@ async function loadAggregatedDetail(commodityKey, { force = false } = {}) {
     if (state.aggregatedSelectedCommodityKey === key) {
       state.aggregatedDetailLoaded = true;
       state.aggregatedDetailLoading = false;
-      setStatus(error.message, true);
-      renderDetail();
+      if (!quiet) {
+        setStatus(error.message, true);
+        renderDetail();
+      }
     }
   }
 }
@@ -1727,211 +2191,583 @@ function currentProductTab(options) {
   return options && options.aggregate ? state.aggregatedDetailTab : state.activeProductTab;
 }
 
-function renderPurchaseModalInner(options, canReceive, fulfillment, targetWarehouse, modes) {
-  const row = (mode, key, reachable) => {
-    const disabled = mode === "REAL_PICKUP" ? !reachable : !(canReceive && reachable);
-    const reason = !canReceive ? t("mode_need_warehouse") : t("mode_unreachable");
-    return `<div class="purchase-modal-mode${fulfillment === mode ? " is-selected" : ""}${disabled ? " is-disabled" : ""}" data-mode="${mode}" data-disabled="${disabled ? "1" : "0"}">` +
-        `<span>${escapeHtml(t(key))}</span>` +
-        (disabled && mode !== "REAL_PICKUP" ? `<small>${escapeHtml(reason)}</small>` : "") +
-        `</div>`;
-  };
-  let html = `<h3>${escapeHtml(t("buy_modal_title"))}</h3>`;
-  html += `<input class="purchase-modal-qty" data-qty type="number" min="1" value="${(state.settings && state.settings.defaultPurchaseQuantity) || 1}">`;
-  html += row("SELLER_SHIP", "mode_seller_ship", modes.sellerShip);
-  html += row("AUTO_PICKUP", "mode_auto_pickup", modes.autoPickup);
-  html += row("REAL_PICKUP", "mode_real_pickup", modes.realPickup);
-  if (fulfillment !== "REAL_PICKUP") {
-    if (!options.length) {
-      html += `<div class="purchase-modal-warning">${escapeHtml(t("receiving_none"))}</div>`;
-    } else {
-      html += `<label class="purchase-modal-label">${escapeHtml(t("receiving_label"))}</label>`;
-      html += `<select class="purchase-modal-receiving" data-receiving>` +
-          options.map((o) => `<option value="${escapeHtml(o.pos)}"${o.pos === targetWarehouse ? " selected" : ""}>` +
-              `${escapeHtml(o.displayName + (o.townName ? " · " + o.townName : ""))}</option>`).join("") +
-          `</select>`;
-    }
+// ---- 对话框 ----
+// 统一用原生 <dialog>:showModal() 自带焦点限制、Esc 关闭和背景遮罩;关闭后焦点回到触发按钮。
+let dialogSequence = 0;
+
+function createMarketDialog(className, titleId) {
+  const dialog = document.createElement("dialog");
+  dialog.className = `market-dialog ${className}`;
+  if (titleId) {
+    dialog.setAttribute("aria-labelledby", titleId);
   }
-  html += `<div class="purchase-modal-actions">` +
-      `<button class="secondary" data-cancel>${escapeHtml(t("cancel"))}</button>` +
-      `<button data-confirm>${escapeHtml(t("confirm"))}</button></div>`;
-  return html;
+  document.body.appendChild(dialog);
+  return dialog;
 }
 
-function openPurchaseModal(listingIndex) {
-  const overview = state.detail || {};
-  const options = overview.receivingWarehouseOptions || [];
-  const canReceive = !!overview.canChooseReceiving;
-  let fulfillment = "SELLER_SHIP";
-  let targetWarehouse = options.length ? options[0].pos : "";
-  const modes = { sellerShip: false, autoPickup: false, realPickup: true };
-
-  const scrim = document.createElement("div");
-  scrim.className = "purchase-modal-scrim";
-  const card = document.createElement("div");
-  card.className = "purchase-modal-card";
-  scrim.appendChild(card);
-  document.body.appendChild(scrim);
-
-  function close() {
-    scrim.remove();
-  }
-  function refresh() {
-    card.innerHTML = renderPurchaseModalInner(options, canReceive, fulfillment, targetWarehouse, modes);
-    bind();
-  }
-  async function probe() {
-    try {
-      const res = await api(`/api/markets/${state.selectedMarketId}/probe-modes`, {
-        method: "POST",
-        body: JSON.stringify({ listingIndex, targetWarehouse })
-      });
-      if (res && typeof res === "object") {
-        modes.sellerShip = !!res.sellerShip;
-        modes.autoPickup = !!res.autoPickup;
-        modes.realPickup = res.realPickup !== false;
-        refresh();
-      }
-    } catch (error) {
-      /* 探测失败保持全置灰，不阻断真人自提 */
+function showMarketDialog(dialog, { trigger = null, onDismiss = null } = {}) {
+  const returnNode = trigger || document.activeElement;
+  const returnSelector = focusSelectorFor(returnNode);
+  const dismiss = () => (onDismiss ? onDismiss() : dialog.close());
+  dialog.addEventListener("cancel", (event) => {
+    event.preventDefault();
+    dismiss();
+  });
+  // 只有按下和松开都落在遮罩上才关闭,避免在输入框里拖选文字时误关。
+  let pressedOnBackdrop = false;
+  dialog.addEventListener("pointerdown", (event) => {
+    pressedOnBackdrop = event.target === dialog;
+  });
+  dialog.addEventListener("click", (event) => {
+    if (event.target === dialog && pressedOnBackdrop) {
+      dismiss();
     }
-  }
-  function bind() {
-    card.querySelectorAll("[data-mode]").forEach((el) => el.addEventListener("click", () => {
-      if (el.getAttribute("data-disabled") === "1") {
-        return;
-      }
-      fulfillment = el.getAttribute("data-mode");
-      refresh();
-    }));
-    const sel = card.querySelector("[data-receiving]");
-    if (sel) {
-      sel.addEventListener("change", () => {
-        targetWarehouse = sel.value;
-        probe();
-      });
-    }
-    const cancel = card.querySelector("[data-cancel]");
-    if (cancel) {
-      cancel.addEventListener("click", close);
-    }
-    const confirm = card.querySelector("[data-confirm]");
-    if (confirm) {
-      confirm.addEventListener("click", async () => {
-        const qtyInput = card.querySelector("[data-qty]");
-        const qty = parseInt(qtyInput && qtyInput.value, 10) || 1;
-        await postMarketAction("/purchase", { listingIndex, quantity: qty, fulfillment, targetWarehouse });
-        close();
-      });
-    }
-  }
-  scrim.addEventListener("click", (event) => {
-    if (event.target === scrim) {
-      close();
+    pressedOnBackdrop = false;
+  });
+  dialog.addEventListener("close", () => {
+    dialog.remove();
+    const target = returnNode?.isConnected ? returnNode : (returnSelector ? document.querySelector(returnSelector) : null);
+    if (target && typeof target.focus === "function") {
+      target.focus({ preventScroll: true });
     }
   });
-  refresh();
+  dialog.showModal();
+}
+
+function confirmDialog({ title, message = "", confirmLabel = "", keepLabel = "", danger = false, trigger = null }) {
+  return new Promise((resolve) => {
+    const titleId = `confirm-title-${++dialogSequence}`;
+    const dialog = createMarketDialog("confirm-dialog", titleId);
+    dialog.setAttribute("role", "alertdialog");
+    dialog.innerHTML = `
+      <form class="market-dialog-body" method="dialog">
+        <h3 id="${titleId}" class="market-dialog-title">${escapeHtml(title)}</h3>
+        ${message ? `<p class="market-dialog-message">${escapeHtml(message)}</p>` : ""}
+        <div class="market-dialog-actions">
+          <button type="button" class="secondary" data-dialog-cancel autofocus>${escapeHtml(keepLabel || t("cancel"))}</button>
+          <button type="submit"${danger ? ' class="danger"' : ""} data-dialog-confirm>${escapeHtml(confirmLabel || t("confirm"))}</button>
+        </div>
+      </form>
+    `;
+    let confirmed = false;
+    const close = (value) => {
+      confirmed = value;
+      if (dialog.open) {
+        dialog.close();
+      }
+    };
+    dialog.querySelector("form").addEventListener("submit", (event) => {
+      event.preventDefault();
+      close(true);
+    });
+    dialog.querySelector("[data-dialog-cancel]").addEventListener("click", () => close(false));
+    dialog.addEventListener("close", () => resolve(confirmed));
+    showMarketDialog(dialog, { trigger, onDismiss: () => close(false) });
+  });
+}
+
+// 撤单类操作统一先确认;kind 对应 confirm_<kind>_title / _message / _action 文案。
+async function confirmMarketAction(node, kind, run) {
+  const confirmed = await confirmDialog({
+    title: t(`confirm_${kind}_title`),
+    message: t(`confirm_${kind}_message`),
+    confirmLabel: t(`confirm_${kind}_action`),
+    keepLabel: t("confirm_keep"),
+    danger: true,
+    trigger: node
+  });
+  if (confirmed) {
+    run();
+  }
+}
+
+const PURCHASE_MODES = [
+  ["SELLER_SHIP", "mode_seller_ship"],
+  ["AUTO_PICKUP", "mode_auto_pickup"],
+  ["REAL_PICKUP", "mode_real_pickup"]
+];
+
+// 下单对话框:终端挂单(aggregate=false,走 /api/markets/{id}/purchase,先探测可用配送方式)
+// 与全部商品(aggregate=true,走 /api/listings/{listingId}/purchase)共用。
+// 数量、配送方式、收货地都保存在 model 里,局部更新 DOM,不会因为重绘丢失输入。
+function openPurchaseDialog({ listing, aggregate = false, trigger = null }) {
+  if (!listing) {
+    return;
+  }
+  if (!state.session) {
+    setStatus(t("sign_in_to_trade"), true);
+    return;
+  }
+  const overview = (aggregate ? state.aggregatedDetail : state.detail) || state.detail || {};
+  const unitPrice = Math.max(0, Number(listing.unitPrice) || 0);
+  const available = isInfiniteStock(listing) ? Infinity : Math.max(0, Math.floor(Number(listing.availableCount) || 0));
+  const walletRaw = overview.walletAvailableBalance ?? overview.walletBalance;
+  const walletKnown = walletRaw != null && walletRaw !== "" && Number.isFinite(Number(walletRaw));
+  const wallet = walletKnown ? Number(walletRaw) : Infinity;
+  const options = Array.isArray(overview.receivingWarehouseOptions) ? overview.receivingWarehouseOptions : [];
+  const canReceive = !!overview.canChooseReceiving;
+  const commodityKey = listing.commodityKey || "";
+  const displayName = listing.itemName || listing.displayName || commodityKey;
+  const origin = [listing.sellerName, listing.sourceTownName || "", listing.sourceDockName].filter(Boolean).join(" · ");
+  const affordableUnits = walletKnown && unitPrice > 0 ? Math.floor(wallet / unitPrice) : Infinity;
+  const maxUnits = Math.min(available, affordableUnits);
+  const defaultQuantity = clampNumber(
+    Math.floor(Number(state.settings.defaultPurchaseQuantity) || 1),
+    1,
+    Number.isFinite(available) ? Math.max(1, available) : Number.MAX_SAFE_INTEGER
+  );
+  const model = {
+    fulfillment: "SELLER_SHIP",
+    targetWarehouse: aggregate ? "" : String(options[0]?.pos || ""),
+    modes: aggregate ? null : { sellerShip: false, autoPickup: false, realPickup: true, probed: false },
+    submitting: false,
+    error: "",
+    idempotencyKeys: new Map(),
+    probeSequence: 0
+  };
+
+  const titleId = `purchase-title-${++dialogSequence}`;
+  const dialog = createMarketDialog("purchase-dialog", titleId);
+  dialog.innerHTML = `
+    <form class="market-dialog-body" method="dialog" novalidate>
+      <header class="market-dialog-head">
+        ${renderCommodityIcon(commodityKey, displayName)}
+        <div class="market-dialog-heading">
+          <p class="section-kicker">${escapeHtml(t("buy_modal_title"))}</p>
+          <h3 id="${titleId}" class="market-dialog-title">${escapeHtml(displayName)}</h3>
+          ${origin ? `<p class="market-dialog-origin">${escapeHtml(origin)}</p>` : ""}
+        </div>
+        <button type="button" class="dialog-close" data-dialog-cancel aria-label="${escapeHtml(t("close"))}">×</button>
+      </header>
+      <div class="purchase-dialog-qty">
+        <label class="tiny-label" for="${titleId}-qty">${escapeHtml(t("quantity"))}</label>
+        <div class="qty-stepper">
+          <button type="button" class="secondary" data-qty-step="-1" aria-label="${escapeHtml(t("qty_decrease"))}">−</button>
+          <input id="${titleId}-qty" data-qty type="number" inputmode="numeric" min="1" step="1"${Number.isFinite(available) ? ` max="${available}"` : ""} value="${defaultQuantity}" autofocus>
+          <button type="button" class="secondary" data-qty-step="1" aria-label="${escapeHtml(t("qty_increase"))}">+</button>
+          ${Number.isFinite(maxUnits) && maxUnits >= 1 ? `<button type="button" class="secondary" data-qty-max>${escapeHtml(t("qty_max"))}</button>` : ""}
+        </div>
+        <small class="purchase-dialog-hint" data-qty-hint></small>
+      </div>
+      <dl class="purchase-dialog-summary">
+        <div><dt>${escapeHtml(t("unit_price"))}</dt><dd class="coin-figure">${number(unitPrice)}</dd></div>
+        <div class="is-total"><dt>${escapeHtml(t("purchase_total"))}</dt><dd class="coin-figure" data-total>--</dd></div>
+        ${walletKnown ? `
+          <div><dt>${escapeHtml(t("wallet_available"))}</dt><dd class="coin-figure">${number(wallet)}</dd></div>
+          <div><dt>${escapeHtml(t("wallet_after"))}</dt><dd class="coin-figure" data-after>--</dd></div>
+        ` : ""}
+      </dl>
+      ${aggregate ? "" : `
+        <fieldset class="purchase-dialog-modes">
+          <legend class="tiny-label">${escapeHtml(t("fulfillment_label"))}</legend>
+          ${PURCHASE_MODES.map(([mode, labelKey]) => `
+            <label class="purchase-mode">
+              <input type="radio" name="${titleId}-mode" value="${mode}" data-mode${mode === model.fulfillment ? " checked" : ""}>
+              <span class="purchase-mode-label">${escapeHtml(t(labelKey))}</span>
+              <small class="purchase-mode-reason" data-mode-reason></small>
+            </label>
+          `).join("")}
+        </fieldset>
+      `}
+      ${options.length ? `
+        <div class="purchase-dialog-receiving" data-receiving-wrap>
+          <label class="tiny-label" for="${titleId}-receiving">${escapeHtml(t("receiving_label"))}</label>
+          <select id="${titleId}-receiving" data-receiving>
+            ${aggregate ? `<option value="">${escapeHtml(t("receiving_default"))}</option>` : ""}
+            ${options.map((option) => {
+              const value = String(option.pos || "");
+              const label = option.displayName + (option.townName ? ` · ${option.townName}` : "");
+              return `<option value="${escapeHtml(value)}"${value === model.targetWarehouse ? " selected" : ""}>${escapeHtml(label)}</option>`;
+            }).join("")}
+          </select>
+        </div>
+      ` : (aggregate ? "" : `<p class="purchase-dialog-note" data-receiving-none>${escapeHtml(t("receiving_none"))}</p>`)}
+      <p class="purchase-dialog-error" data-error role="alert" hidden></p>
+      <div class="market-dialog-actions">
+        <button type="button" class="secondary" data-dialog-cancel>${escapeHtml(t("cancel"))}</button>
+        <button type="submit" data-confirm>${escapeHtml(t("confirm"))}</button>
+      </div>
+    </form>
+  `;
+
+  const form = dialog.querySelector("form");
+  const qtyInput = dialog.querySelector("[data-qty]");
+  const hint = dialog.querySelector("[data-qty-hint]");
+  const totalNode = dialog.querySelector("[data-total]");
+  const afterNode = dialog.querySelector("[data-after]");
+  const errorNode = dialog.querySelector("[data-error]");
+  const confirmButton = dialog.querySelector("[data-confirm]");
+  const receivingWrap = dialog.querySelector("[data-receiving-wrap]");
+  const receivingNone = dialog.querySelector("[data-receiving-none]");
+  const receivingSelect = dialog.querySelector("[data-receiving]");
+
+  function readQuantity() {
+    const raw = String(qtyInput.value || "").trim();
+    return /^\d+$/.test(raw) ? Number(raw) : NaN;
+  }
+
+  function modeDisabled(mode) {
+    if (!model.modes) {
+      return false;
+    }
+    if (!model.modes.probed && mode !== "REAL_PICKUP") {
+      return true;
+    }
+    const reachable = mode === "SELLER_SHIP"
+      ? model.modes.sellerShip
+      : (mode === "AUTO_PICKUP" ? model.modes.autoPickup : model.modes.realPickup);
+    return mode === "REAL_PICKUP" ? !reachable : !(canReceive && reachable);
+  }
+
+  function modeReason(mode) {
+    if (!model.modes || !modeDisabled(mode)) {
+      return "";
+    }
+    if (!model.modes.probed) {
+      return t("mode_checking");
+    }
+    return mode !== "REAL_PICKUP" && !canReceive ? t("mode_need_warehouse") : t("mode_unreachable");
+  }
+
+  function update() {
+    const quantity = readQuantity();
+    const quantityValid = Number.isInteger(quantity) && quantity >= 1 && quantity <= available;
+    const total = quantityValid ? quantity * unitPrice : NaN;
+    const affordable = !walletKnown || !quantityValid || total <= wallet;
+    hint.textContent = [
+      Number.isFinite(available) ? t("qty_available", { count: number(available) }) : t("qty_unlimited"),
+      Number.isFinite(affordableUnits) ? t("qty_affordable", { count: number(affordableUnits) }) : ""
+    ].filter(Boolean).join(" · ");
+    totalNode.textContent = quantityValid ? number(total) : "--";
+    totalNode.classList.toggle("is-empty", !quantityValid);
+    if (afterNode) {
+      afterNode.textContent = quantityValid ? number(wallet - total) : "--";
+      afterNode.classList.toggle("is-empty", !quantityValid);
+      afterNode.classList.toggle("is-negative", quantityValid && total > wallet);
+    }
+    dialog.querySelectorAll("[data-mode]").forEach((radio) => {
+      const disabled = modeDisabled(radio.value);
+      const row = radio.closest(".purchase-mode");
+      radio.disabled = disabled || model.submitting;
+      radio.checked = radio.value === model.fulfillment;
+      row?.classList.toggle("is-disabled", disabled);
+      const reason = row?.querySelector("[data-mode-reason]");
+      if (reason) {
+        reason.textContent = modeReason(radio.value);
+      }
+    });
+    const needsReceiving = !aggregate && model.fulfillment !== "REAL_PICKUP";
+    if (receivingWrap) {
+      receivingWrap.hidden = !aggregate && !needsReceiving;
+    }
+    if (receivingNone) {
+      receivingNone.hidden = !needsReceiving;
+    }
+    if (receivingSelect) {
+      receivingSelect.disabled = model.submitting;
+    }
+    let problem = "";
+    if (!state.selectedMarketId) {
+      problem = t("reason_no_market_selected");
+    } else if (!quantityValid) {
+      problem = Number.isInteger(quantity) && quantity > available
+        ? t("purchase_over_stock", { count: number(available) })
+        : t("purchase_qty_invalid");
+    } else if (!affordable) {
+      problem = t("purchase_insufficient_funds");
+    } else if (model.modes && model.modes.probed && modeDisabled(model.fulfillment)) {
+      problem = t("purchase_mode_unavailable");
+    } else if (needsReceiving && !options.length) {
+      problem = t("receiving_none");
+    }
+    const waitingForProbe = !!model.modes && !model.modes.probed && model.fulfillment !== "REAL_PICKUP";
+    const message = model.error || problem;
+    errorNode.hidden = !message;
+    errorNode.textContent = message;
+    confirmButton.disabled = model.submitting || !!problem || waitingForProbe;
+    confirmButton.setAttribute("aria-busy", model.submitting ? "true" : "false");
+    confirmButton.textContent = model.submitting
+      ? t("purchase_submitting")
+      : (quantityValid ? t("purchase_confirm_total", { total: number(total) }) : t("confirm"));
+    qtyInput.readOnly = model.submitting;
+  }
+
+  // 探测结果回来时若当前方式不可用,自动切到第一个可用方式。
+  function ensureEnabledMode() {
+    if (!model.modes || !modeDisabled(model.fulfillment)) {
+      return;
+    }
+    const firstEnabled = PURCHASE_MODES.map(([mode]) => mode).find((mode) => !modeDisabled(mode));
+    if (firstEnabled) {
+      model.fulfillment = firstEnabled;
+    }
+  }
+
+  async function probe() {
+    if (aggregate) {
+      return;
+    }
+    const sequence = ++model.probeSequence;
+    model.modes = { ...model.modes, probed: false };
+    update();
+    let result = { sellerShip: false, autoPickup: false, realPickup: true };
+    try {
+      const response = await api(`/api/markets/${state.selectedMarketId}/probe-modes`, {
+        method: "POST",
+        body: JSON.stringify({ listingIndex: listing.index, targetWarehouse: model.targetWarehouse })
+      });
+      if (response && typeof response === "object") {
+        result = {
+          sellerShip: !!response.sellerShip,
+          autoPickup: !!response.autoPickup,
+          realPickup: response.realPickup !== false
+        };
+      }
+    } catch (_) {
+      // 探测失败:其余方式置灰,不阻断真人自提。
+    }
+    if (sequence !== model.probeSequence || !dialog.open) {
+      return;
+    }
+    model.modes = { ...result, probed: true };
+    ensureEnabledMode();
+    update();
+  }
+
+  function setQuantity(value) {
+    const upper = Number.isFinite(available) ? Math.max(1, available) : Number.MAX_SAFE_INTEGER;
+    qtyInput.value = String(clampNumber(Math.floor(value) || 1, 1, upper));
+    model.error = "";
+    update();
+  }
+
+  qtyInput.addEventListener("input", () => {
+    model.error = "";
+    update();
+  });
+  qtyInput.addEventListener("blur", () => {
+    const quantity = readQuantity();
+    if (Number.isInteger(quantity)) {
+      setQuantity(quantity);
+    }
+  });
+  dialog.querySelectorAll("[data-qty-step]").forEach((button) => {
+    button.addEventListener("click", () => {
+      const current = readQuantity();
+      setQuantity((Number.isInteger(current) ? current : 0) + Number(button.getAttribute("data-qty-step") || 0));
+    });
+  });
+  dialog.querySelector("[data-qty-max]")?.addEventListener("click", () => setQuantity(maxUnits));
+  dialog.querySelectorAll("[data-mode]").forEach((radio) => {
+    radio.addEventListener("change", () => {
+      if (radio.checked) {
+        model.fulfillment = radio.value;
+        model.error = "";
+        update();
+      }
+    });
+  });
+  receivingSelect?.addEventListener("change", () => {
+    model.targetWarehouse = receivingSelect.value;
+    model.error = "";
+    probe();
+  });
+
+  const dismiss = () => {
+    if (!model.submitting && dialog.open) {
+      dialog.close();
+    }
+  };
+  dialog.querySelectorAll("[data-dialog-cancel]").forEach((button) => button.addEventListener("click", dismiss));
+
+  form.addEventListener("submit", async (event) => {
+    event.preventDefault();
+    update();
+    if (model.submitting || confirmButton.disabled) {
+      return;
+    }
+    const quantity = readQuantity();
+    model.submitting = true;
+    model.error = "";
+    update();
+    const marketId = state.selectedMarketId;
+    const purchasePath = aggregate ? `/api/listings/${listing.listingId}/purchase` : `/api/markets/${marketId}/purchase`;
+    const body = JSON.stringify(aggregate ? {
+      executorMarketId: marketId,
+      quantity,
+      fulfillment: "SELLER_SHIP",
+      targetWarehouse: model.targetWarehouse
+    } : {
+      listingIndex: listing.index,
+      quantity,
+      fulfillment: model.fulfillment,
+      targetWarehouse: model.targetWarehouse
+    });
+    const request = {
+      method: "POST",
+      body,
+      idempotencyKey: idempotencyKeyForRequest(model.idempotencyKeys, purchasePath, body)
+    };
+    try {
+      if (aggregate) {
+        await api(purchasePath, request);
+        model.submitting = false;
+        dialog.close();
+        setStatus(t("purchase_success", { qty: number(quantity), name: displayName }));
+        // 详情上下文:刷新该商品的全服伪 detail(挂单数随购买变化);否则刷新聚合网格。钱包随后静默刷新。
+        if (state.aggregatedDetailKey) {
+          await loadAggregatedDetail(state.aggregatedDetailKey, { force: true, silent: true });
+        } else {
+          await loadAggregatedListings({ silent: true });
+        }
+        if (state.selectedMarketId) {
+          loadMarketDetail(state.selectedMarketId, "replace", { silent: true });
+        }
+      } else {
+        const data = await api(purchasePath, request);
+        model.submitting = false;
+        dialog.close();
+        if (state.selectedMarketId === marketId) {
+          state.detail = data;
+          syncCommoditySelection();
+          syncRouteUrl(true);
+          renderGuard.resetFormsOnce = true;
+          renderDetail();
+        }
+        setStatus(t("purchase_success", { qty: number(quantity), name: displayName }));
+      }
+    } catch (error) {
+      model.submitting = false;
+      model.error = error.message || String(error);
+      if (dialog.open) {
+        update();
+        qtyInput.focus({ preventScroll: true });
+      }
+    }
+  });
+
+  showMarketDialog(dialog, { trigger, onDismiss: dismiss });
+  update();
+  qtyInput.select();
+  hydrateCommodityIcons();
   probe();
 }
 
-function bindDetailActions() {
-  const marketStrip = document.querySelector(".market-strip");
-  marketStrip?.addEventListener("toggle", (event) => {
-    const open = !!event.target.open;
-    // Rebuilding <details open> also emits toggle; only animate a new opening.
+// ---- 交互(事件委托) ----
+// 内容由 morph 原地更新,元素会长期存在,也可能被改造成别的按钮,所以不在每次渲染后逐个绑定监听器:
+// 所有交互在 document 上委托一次,事件发生时按元素当前的属性分派。
+const delegatedHandlers = { click: [], change: [], input: [], compositionend: [] };
+
+function onDelegated(type, selector, handler) {
+  delegatedHandlers[type].push({ selector, handler });
+}
+
+function installDelegatedHandlers() {
+  Object.keys(delegatedHandlers).forEach((type) => {
+    document.addEventListener(type, (event) => {
+      const origin = event.target instanceof Element ? event.target : event.target?.parentElement;
+      if (!origin) {
+        return;
+      }
+      delegatedHandlers[type].forEach(({ selector, handler }) => {
+        const node = origin.closest(selector);
+        if (node) {
+          handler(node, event);
+        }
+      });
+    });
+  });
+  // toggle 不冒泡,在捕获阶段接收"更多"折叠面板的开合。
+  document.addEventListener("toggle", (event) => {
+    const strip = event.target;
+    if (!(strip instanceof Element) || !strip.matches(".market-strip")) {
+      return;
+    }
+    const open = !!strip.open;
+    // 模板改变 open 属性时也会触发 toggle;只在新展开时播放动画。
     const opening = open && !state.marketStripOpen;
     state.marketStripOpen = open;
-    marketStrip.classList.toggle("is-opening", opening && !prefersReducedMotion());
-  });
-  marketStrip?.addEventListener("animationend", (event) => {
-    if (event.animationName === "panelDrop") {
-      marketStrip.classList.remove("is-opening");
+    strip.classList.toggle("is-opening", opening && !prefersReducedMotion());
+  }, true);
+  document.addEventListener("animationend", (event) => {
+    if (event.animationName === "panelDrop" && event.target instanceof Element && event.target.matches(".market-strip")) {
+      event.target.classList.remove("is-opening");
     }
   });
+}
 
-  const search = document.querySelector("#commodity-search");
-  if (search) {
-    search.addEventListener("input", (event) => {
-      const value = event.target.value || "";
-      state.commodityQuery = value;
-      renderDetailPreservingScroll();
-      const nextSearch = document.querySelector("#commodity-search");
-      if (nextSearch) {
-        nextSearch.focus({ preventScroll: true });
-        nextSearch.setSelectionRange(value.length, value.length);
-      }
-    });
-  }
-
-  document.querySelectorAll("[data-catalog-group]").forEach((node) => {
-    node.addEventListener("click", () => {
-      const group = normalizeCatalogGroup(node.getAttribute("data-catalog-group") || "all");
-      if (group === "all") {
-        state.catalogFilters.categoryGroup = "all";
-        state.catalogFilters.category = "all";
-        state.catalogExpandedGroup = "all";
-        state.catalogHoverGroup = "all";
-      } else {
-        state.catalogFilters.categoryGroup = group;
-        state.catalogFilters.category = "all";
-        state.catalogExpandedGroup = group;
-        state.catalogHoverGroup = "all";
-      }
-      persistCatalogFilters();
-      renderDetailPreservingScroll();
-    });
+function registerDetailActions() {
+  // 搜索:输入法组字期间(拼音还没选字)不更新结果,选字完成后再搜索。
+  const applySearch = (search) => {
+    const value = search.value || "";
+    if (value === state.commodityQuery) {
+      return;
+    }
+    state.commodityQuery = value;
+    renderDetailPreservingScroll();
+  };
+  onDelegated("input", "#commodity-search", (search, event) => {
+    if (!event.isComposing) {
+      applySearch(search);
+    }
   });
+  onDelegated("compositionend", "#commodity-search", (search) => applySearch(search));
 
-  document.querySelectorAll("[data-catalog-subcategory]").forEach((node) => {
-    node.addEventListener("click", () => {
-      const category = normalizeCatalogCategory(node.getAttribute("data-catalog-subcategory") || "all");
-      const group = normalizeCatalogGroup(node.getAttribute("data-catalog-subcategory-group") || categoryGroupForCategory(category));
+  onDelegated("click", "[data-catalog-group]", (node) => {
+    const group = normalizeCatalogGroup(node.getAttribute("data-catalog-group") || "all");
+    if (group === "all") {
+      state.catalogFilters.categoryGroup = "all";
+      state.catalogFilters.category = "all";
+      state.catalogExpandedGroup = "all";
+      state.catalogHoverGroup = "all";
+    } else {
       state.catalogFilters.categoryGroup = group;
-      state.catalogFilters.category = category;
+      state.catalogFilters.category = "all";
       state.catalogExpandedGroup = group;
       state.catalogHoverGroup = "all";
-      persistCatalogFilters();
-      renderDetailPreservingScroll();
-    });
+    }
+    persistCatalogFilters();
+    renderDetailPreservingScroll();
   });
 
-  document.querySelectorAll("[data-catalog-rarity]").forEach((node) => {
-    node.addEventListener("click", () => {
-      state.catalogFilters.rarity = normalizeCatalogRarity(node.getAttribute("data-catalog-rarity") || "all");
-      persistCatalogFilters();
-      renderDetailPreservingScroll();
-    });
+  onDelegated("click", "[data-catalog-subcategory]", (node) => {
+    const category = normalizeCatalogCategory(node.getAttribute("data-catalog-subcategory") || "all");
+    const group = normalizeCatalogGroup(node.getAttribute("data-catalog-subcategory-group") || categoryGroupForCategory(category));
+    state.catalogFilters.categoryGroup = group;
+    state.catalogFilters.category = category;
+    state.catalogExpandedGroup = group;
+    state.catalogHoverGroup = "all";
+    persistCatalogFilters();
+    renderDetailPreservingScroll();
   });
 
-  const minPrice = document.querySelector("#catalog-price-min");
-  if (minPrice) {
-    minPrice.addEventListener("change", (event) => {
-      state.catalogFilters.minPrice = sanitizeCatalogPriceInput(event.target.value);
-      persistCatalogFilters();
-      renderDetailPreservingScroll();
-    });
-  }
-
-  const maxPrice = document.querySelector("#catalog-price-max");
-  if (maxPrice) {
-    maxPrice.addEventListener("change", (event) => {
-      state.catalogFilters.maxPrice = sanitizeCatalogPriceInput(event.target.value);
-      persistCatalogFilters();
-      renderDetailPreservingScroll();
-    });
-  }
-
-  document.querySelectorAll("[data-browse-order-view]").forEach((node) => {
-    node.addEventListener("click", () => {
-      setBrowseOrderView(node.getAttribute("data-browse-order-view") || "purchase");
-      state.activeProductTab = "browse";
-      syncRouteUrl(false);
-      renderDetailPreservingScroll();
-    });
+  onDelegated("click", "[data-catalog-rarity]", (node) => {
+    state.catalogFilters.rarity = normalizeCatalogRarity(node.getAttribute("data-catalog-rarity") || "all");
+    persistCatalogFilters();
+    renderDetailPreservingScroll();
   });
 
-  document.querySelectorAll("[data-card-commodity-key]").forEach((node) => {
-    node.addEventListener("click", () => {
+  onDelegated("change", "#catalog-price-min", (node) => {
+    state.catalogFilters.minPrice = sanitizeCatalogPriceInput(node.value);
+    persistCatalogFilters();
+    renderDetailPreservingScroll();
+  });
+
+  onDelegated("change", "#catalog-price-max", (node) => {
+    state.catalogFilters.maxPrice = sanitizeCatalogPriceInput(node.value);
+    persistCatalogFilters();
+    renderDetailPreservingScroll();
+  });
+
+  onDelegated("click", "[data-browse-order-view]", (node) => {
+    setBrowseOrderView(node.getAttribute("data-browse-order-view") || "purchase");
+    state.activeProductTab = "browse";
+    syncRouteUrl(false);
+    renderDetailPreservingScroll();
+  });
+
+  onDelegated("click", "[data-card-commodity-key]", (node) => {
+    withViewTransition(node, () => {
       state.selectedCommodityKey = node.getAttribute("data-card-commodity-key") || "";
       state.activeProductTab = normalizePageRoute(node.getAttribute("data-card-route") || "buy");
       syncRouteUrl(false);
@@ -1939,275 +2775,566 @@ function bindDetailActions() {
     });
   });
 
-  document.querySelectorAll("[data-aggregate-card-commodity-key]").forEach((node) => {
-    node.addEventListener("click", () => {
-      const key = node.getAttribute("data-aggregate-card-commodity-key") || "";
-      state.aggregatedSelectedCommodityKey = key;
-      state.aggregatedDetailTab = "browse";
-      renderDetailPreservingScroll();
-      if (key) {
-        loadAggregatedDetail(key);
-      }
-    });
+  onDelegated("click", "[data-watch-toggle]", (node) => toggleWatch(node.getAttribute("data-watch-toggle") || ""));
+
+  onDelegated("click", "[data-catalog-watch]", () => {
+    state.catalogFilters.watchOnly = !state.catalogFilters.watchOnly;
+    persistCatalogFilters();
+    renderDetailPreservingScroll();
+  });
+
+  onDelegated("click", "[data-toggle-filters]", () => {
+    state.mobileFiltersOpen = !state.mobileFiltersOpen;
+    renderDetailPreservingScroll();
+  });
+
+  onDelegated("click", "[data-open-palette]", () => openCommandPalette());
+
+  // 订单 → 地图:切到地图页并跟随这笔订单的运输船。
+  onDelegated("click", "[data-track-shipment]", (node) => {
+    state.pendingShipmentFocus = node.getAttribute("data-track-shipment") || "";
+    navigateToRoute("map");
+  });
+
+  onDelegated("click", "[data-map-mode]", (node) => setMapMode(node.getAttribute("data-map-mode")));
+
+  onDelegated("click", "[data-aggregate-card-commodity-key]", (node) => {
+    const key = node.getAttribute("data-aggregate-card-commodity-key") || "";
+    state.aggregatedSelectedCommodityKey = key;
+    state.aggregatedDetailTab = "browse";
+    renderDetailPreservingScroll();
+    if (key) {
+      loadAggregatedDetail(key);
+    }
   });
 
   // 聚合详情子 tab 切换:只改 aggregatedDetailTab(与终端 activeProductTab 隔离,保持在 "all" 视图内)。
-  document.querySelectorAll("[data-aggregate-tab]").forEach((node) => {
-    node.addEventListener("click", () => {
-      state.aggregatedDetailTab = normalizePageRoute(node.getAttribute("data-aggregate-tab") || "browse");
-      renderDetailPreservingScroll();
+  onDelegated("click", "[data-aggregate-tab]", (node) => {
+    state.aggregatedDetailTab = normalizePageRoute(node.getAttribute("data-aggregate-tab") || "browse");
+    renderDetailPreservingScroll();
+  });
+
+  onDelegated("click", "[data-aggregate-detail-back]", () => {
+    state.aggregatedSelectedCommodityKey = "";
+    state.aggregatedDetail = null;
+    state.aggregatedDetailKey = "";
+    state.aggregatedDetailLoaded = false;
+    state.aggregatedDetailTab = "browse";
+    renderDetailPreservingScroll();
+  });
+
+  onDelegated("click", "[data-browse-layout]", (node) => {
+    state.browseLayout = node.getAttribute("data-browse-layout") === "heatmap" ? "heatmap" : "grid";
+    localStorage.setItem("marketWebBrowseLayout", state.browseLayout);
+    renderDetailPreservingScroll();
+  });
+
+  onDelegated("click", "[data-catalog-sort]", (node) => {
+    cycleCatalogSort(node.getAttribute("data-catalog-sort") || "activity");
+    renderDetailPreservingScroll();
+  });
+
+  onDelegated("click", "#market-detail [data-route], #workspace-nav [data-route]", (node) => {
+    navigateToRoute(node.getAttribute("data-route") || "browse");
+  });
+
+  onDelegated("click", "[data-inventory-overview]", () => {
+    state.selectedCommodityKey = "";
+    state.activeProductTab = "inventory";
+    syncRouteUrl(false);
+    renderDetailPreservingScroll();
+  });
+
+  onDelegated("click", "[data-storage-choice]", (node) => {
+    const storageIndex = node.getAttribute("data-storage-choice") || "";
+    const input = document.querySelector("#create-listing-storage");
+    if (input) {
+      input.value = storageIndex;
+    }
+    document.querySelectorAll("[data-storage-choice]").forEach((candidate) => {
+      const active = candidate === node;
+      candidate.classList.toggle("active", active);
+      candidate.setAttribute("aria-pressed", active ? "true" : "false");
+    });
+    updateCreateListingFormState();
+  });
+
+  onDelegated("click", "[data-chart-timeframe]", (node) => {
+    state.activeChartTimeframe = node.getAttribute("data-chart-timeframe") || "1h";
+    persistChartPreferences();
+    renderDetailPreservingScroll();
+  });
+
+  onDelegated("click", "[data-chart-indicator]", (node) => {
+    const key = node.getAttribute("data-chart-indicator") || "";
+    if (!key) {
+      return;
+    }
+    state.chartIndicators[key] = !state.chartIndicators[key];
+    persistChartPreferences();
+    renderDetailPreservingScroll();
+  });
+
+  onDelegated("change", "[data-chart-flag]", (node) => {
+    const key = node.getAttribute("data-chart-flag") || "";
+    if (!key) {
+      return;
+    }
+    state.chartFlags[key] = !!node.checked;
+    persistChartPreferences();
+    renderDetailPreservingScroll();
+  });
+
+  onDelegated("click", "[data-chart-reset]", () => {
+    if (chartState.chart) {
+      chartState.chart.timeScale().fitContent();
+    }
+  });
+
+  onDelegated("change", "#create-listing-storage", () => updateCreateListingFormState());
+  onDelegated("input", "#create-listing-price, #create-listing-quantity", () => updateCreateListingFormState());
+  onDelegated("click", "#create-listing-button", (button) => postMarketAction("/listings", {
+    storageIndex: numberValue("#create-listing-storage", -1),
+    quantity: numberValue("#create-listing-quantity", 1),
+    unitPrice: numberValue("#create-listing-price", 0),
+    sellerNote: valueOf("#create-listing-note")
+  }, { trigger: button }));
+
+  // 求购物品 ID:输入停顿 360ms 后解析,失焦(change)时立即解析。
+  onDelegated("input", "#buy-order-key", () => {
+    window.clearTimeout(buyOrderResolveTimer);
+    buyOrderResolveSequence += 1;
+    const sequence = buyOrderResolveSequence;
+    setBuyOrderPreviewPending(t("buy_order_item_resolving"));
+    buyOrderResolveTimer = window.setTimeout(() => resolveBuyOrderItemInput(sequence), 360);
+  });
+  onDelegated("change", "#buy-order-key", () => {
+    window.clearTimeout(buyOrderResolveTimer);
+    buyOrderResolveSequence += 1;
+    resolveBuyOrderItemInput(buyOrderResolveSequence);
+  });
+  onDelegated("click", "#buy-order-button", (buyOrderButton) => {
+    const resolvedKey = normalizeCommodityKey(buyOrderButton.getAttribute("data-resolved-commodity-key") || valueOf("#buy-order-key"));
+    if (buyOrderButton.getAttribute("data-item-valid") !== "true" || !resolvedKey) {
+      setBuyOrderPreviewError(t("buy_order_item_not_found"));
+      return;
+    }
+    const referencePrice = numberValue("#buy-order-reference-price", 1);
+    const unitPrice = numberValue("#buy-order-unit-price", referencePrice);
+    const derivedBp = buyOrderPriceToBp(unitPrice, referencePrice);
+    postMarketAction("/buy-orders", {
+      commodityKey: resolvedKey,
+      quantity: numberValue("#buy-order-quantity", 1),
+      minPriceBp: derivedBp,
+      maxPriceBp: derivedBp
+    }, { trigger: buyOrderButton });
+  });
+  onDelegated("input", "#buy-order-unit-price", () => updateBuyOrderPricePreview());
+
+  onDelegated("click", "#claim-credits-button", (button) => postMarketAction("/credits/claim", {}, { trigger: button }));
+
+  onDelegated("click", "#dispatch-button", (button) => postMarketAction("/dispatch/retry", {
+    orderIndex: numberValue("#dispatch-order-index", 0),
+    terminalType: valueOf("#dispatch-terminal-type") || state.selectedDispatchTerminal || "PORT"
+  }, { trigger: button }));
+
+  onDelegated("click", "#cancel-order-button", (button) => {
+    const orderId = button.getAttribute("data-order-id");
+    if (orderId) {
+      confirmMarketAction(button, "cancel_order", () => postMarketAction(`/purchase-orders/${orderId}/cancel`, {}, { trigger: button }));
+    }
+  });
+
+  onDelegated("change", "#dispatch-terminal-type", () => {
+    state.selectedDispatchTerminal = valueOf("#dispatch-terminal-type") || "PORT";
+    localStorage.setItem("marketWebDispatchTerminal", state.selectedDispatchTerminal);
+    renderDetailPreservingScroll();
+  });
+
+  onDelegated("change", "#dispatch-order-index", () => {
+    state.selectedDispatchOrderIndex = Math.max(0, numberValue("#dispatch-order-index", 0));
+    renderDetailPreservingScroll();
+  });
+
+  onDelegated("click", "[data-purchase-index]", (node) => {
+    const index = Number(node.getAttribute("data-purchase-index") || "-1");
+    const listing = (state.detail?.listings || []).find((entry) => Number(entry.index) === index);
+    openPurchaseDialog({ listing, trigger: node });
+  });
+
+  onDelegated("click", "[data-aggregate-purchase]", (node) => {
+    const listingId = node.getAttribute("data-aggregate-purchase") || "";
+    const listing = (state.aggregatedDetail?.listings || []).find((entry) => String(entry.listingId) === listingId)
+      || state.aggregatedListings.find((entry) => String(entry.listingId) === listingId);
+    openPurchaseDialog({ listing, aggregate: true, trigger: node });
+  });
+
+  onDelegated("click", "[data-cancel-listing]", (node) => confirmMarketAction(node, "cancel_listing", () => postMarketAction(
+    `/listings/${node.getAttribute("data-cancel-listing")}/cancel`, {}, { trigger: node }
+  )));
+
+  onDelegated("click", "[data-cancel-buy-order]", (node) => confirmMarketAction(node, "cancel_buy_order", () => postMarketAction(
+    `/buy-orders/${node.getAttribute("data-cancel-buy-order")}/cancel`, {}, { trigger: node }
+  )));
+
+  onDelegated("click", "[data-cancel-purchase-order]", (node) => {
+    const orderId = node.getAttribute("data-cancel-purchase-order");
+    if (orderId) {
+      confirmMarketAction(node, "cancel_order", () => postMarketAction(`/purchase-orders/${orderId}/cancel`, {}, { trigger: node }));
+    }
+  });
+
+  onDelegated("click", "[data-mc-list]", (node) => {
+    const itemId = node.getAttribute("data-mc-list") || "";
+    const index = node.getAttribute("data-mc-index") || "";
+    const colonyId = Number(node.getAttribute("data-mc-colony") || "0");
+    if (!itemId) {
+      return;
+    }
+    postMineColoniesListing(itemId, {
+      colonyId,
+      quantity: numberValue(`#mc-qty-${index}`, 1),
+      unitPrice: numberValue(`#mc-price-${index}`, 0),
+      sellerNote: ""
     });
   });
 
-  document.querySelectorAll("[data-aggregate-detail-back]").forEach((node) => {
-    node.addEventListener("click", () => {
-      state.aggregatedSelectedCommodityKey = "";
-      state.aggregatedDetail = null;
-      state.aggregatedDetailKey = "";
-      state.aggregatedDetailLoaded = false;
-      state.aggregatedDetailTab = "browse";
-      renderDetailPreservingScroll();
-    });
+  onDelegated("click", "#wallet-dock-toggle", () => {
+    state.walletCollapsed = !state.walletCollapsed;
+    localStorage.setItem("marketWebWalletCollapsed", state.walletCollapsed ? "1" : "0");
+    renderTopbarWallet();
   });
 
-  document.querySelectorAll("[data-catalog-sort]").forEach((node) => {
-    node.addEventListener("click", () => {
-      cycleCatalogSort(node.getAttribute("data-catalog-sort") || "activity");
-      renderDetailPreservingScroll();
-    });
+  onDelegated("click", "[data-wallet-action]", (node) => {
+    const action = node.getAttribute("data-wallet-action") || "";
+    const amount = action === "CLAIM_CREDITS_TO_WALLET"
+      ? 0
+      : numberValue("#wallet-transfer-amount", 0);
+    postMarketAction("/wallet/transfer", { action, amount }, { trigger: node });
   });
 
-  document.querySelectorAll("#market-detail [data-route], #workspace-nav [data-route]").forEach((node) => {
-    node.addEventListener("click", () => {
-      const nextRoute = normalizePageRoute(node.getAttribute("data-route") || "browse");
-      if (nextRoute === "inventory" && state.activeProductTab !== "inventory") {
-        state.selectedCommodityKey = "";
-      }
-      state.activeProductTab = nextRoute === "inventory" && !(state.detail?.canManage) ? "browse" : nextRoute;
-      syncRouteUrl(false);
-      renderDetailPreservingScroll();
+  // 成交跑马灯:点一条成交,打开该商品的全服详情。
+  onDelegated("click", "[data-ticker-commodity]", (node) => openAggregatedCommodity(node.getAttribute("data-ticker-commodity") || ""));
+
+  // 只处理顶栏终端列表;地图侧栏里的市场行也带 data-market-id,由 map.js 自己处理。
+  onDelegated("click", "#market-list [data-market-id]", (node) => switchMarket(node.getAttribute("data-market-id") || ""));
+}
+
+// ---- 导航 ----
+function navigateToRoute(route) {
+  const nextRoute = normalizePageRoute(route);
+  if (nextRoute === "inventory" && state.activeProductTab !== "inventory") {
+    state.selectedCommodityKey = "";
+  }
+  state.activeProductTab = nextRoute === "inventory" && !(state.detail?.canManage) ? "browse" : nextRoute;
+  syncRouteUrl(false);
+  renderDetailPreservingScroll();
+}
+
+function switchMarket(marketId) {
+  if (!marketId) {
+    return;
+  }
+  state.commodityQuery = "";
+  state.activeProductTab = "browse";
+  state.selectedCommodityKey = "";
+  state.catalogHoverGroup = "all";
+  state.catalogExpandedGroup = currentCatalogActiveGroup();
+  setTerminalPanelOpen(false);
+  loadMarketDetail(marketId, "push");
+}
+
+// 在当前终端打开商品(交易页:挂单、盘口深度与下单)。
+function openMarketCommodity(commodityKey) {
+  if (!commodityKey) {
+    return;
+  }
+  state.selectedCommodityKey = commodityKey;
+  state.activeProductTab = "sell";
+  syncRouteUrl(false);
+  renderDetailPreservingScroll();
+}
+
+// 打开商品的全服详情(全部商品)。
+function openAggregatedCommodity(commodityKey) {
+  if (!commodityKey) {
+    return;
+  }
+  state.activeProductTab = "all";
+  state.aggregatedSelectedCommodityKey = commodityKey;
+  state.aggregatedDetailTab = "browse";
+  syncRouteUrl(false);
+  renderDetailPreservingScroll();
+  loadAggregatedDetail(commodityKey);
+}
+
+function switchLocale(locale) {
+  state.locale = locale || "zh-CN";
+  localStorage.setItem("marketWebLocale", state.locale);
+  if (els.localeSelect) {
+    els.localeSelect.value = state.locale;
+  }
+  updateStaticCopy();
+  renderMarkets();
+  renderDetail();
+  renderLiveStatus();
+  renderLiveTicker();
+}
+
+// 商品卡片 → 详情页:支持 View Transitions 的浏览器里,物品图标从卡片"飞"到详情页大图的位置。
+function withViewTransition(sourceNode, update) {
+  const art = sourceNode?.querySelector?.(".goods-art");
+  if (typeof document.startViewTransition !== "function" || prefersReducedMotion() || !art) {
+    update();
+    return;
+  }
+  art.style.viewTransitionName = "commodity-art";
+  renderGuard.inViewTransition = true;
+  const transition = document.startViewTransition(() => {
+    art.style.viewTransitionName = "";
+    update();
+    const hero = document.querySelector(".goods-hero > .goods-art");
+    if (hero) {
+      hero.style.viewTransitionName = "commodity-art";
+    }
+  });
+  transition.finished.finally(() => {
+    renderGuard.inViewTransition = false;
+    const hero = document.querySelector(".goods-hero > .goods-art");
+    if (hero) {
+      hero.style.viewTransitionName = "";
+    }
+  });
+}
+
+// ---- 命令面板 ----
+// Ctrl+K(Mac 为 ⌘K)或 "/" 打开:搜索商品、终端、页面与常用操作,支持拼音首字母;↑↓ 选择,Enter 执行,Esc 关闭。
+// 用 lit-html 渲染:列表增量更新,输入框不会因重绘丢失焦点或输入法组字。
+const palette = { dialog: null, query: "", active: 0, results: [], items: null };
+
+const PALETTE_PAGES = [
+  ["all", "all_listings_tab"],
+  ["browse", "explore_tab"],
+  ["sell", "trade_tab"],
+  ["my_orders", "my_orders_tab"],
+  ["demand", "buy_order_tab"],
+  ["chart", "analytics_tab"],
+  ["map", "map_tab"]
+];
+
+function paletteItems() {
+  const items = [];
+  PALETTE_PAGES.forEach(([route, labelKey]) => {
+    items.push({ id: `page:${route}`, kind: "page", label: t(labelKey), run: () => navigateToRoute(route) });
+  });
+  state.markets.forEach((market) => {
+    items.push({
+      id: `market:${market.marketId}`,
+      kind: "market",
+      label: market.marketName || market.marketId,
+      hint: [market.townName, market.ownerName].filter(Boolean).join(" · "),
+      run: () => switchMarket(market.marketId)
     });
   });
-
-  document.querySelectorAll("[data-inventory-overview]").forEach((node) => {
-    node.addEventListener("click", () => {
-      state.selectedCommodityKey = "";
-      state.activeProductTab = "inventory";
-      syncRouteUrl(false);
-      renderDetailPreservingScroll();
-    });
-  });
-
-  document.querySelectorAll("[data-storage-choice]").forEach((node) => {
-    node.addEventListener("click", () => {
-      const storageIndex = node.getAttribute("data-storage-choice") || "";
-      const input = document.querySelector("#create-listing-storage");
-      if (input) {
-        input.value = storageIndex;
-      }
-      document.querySelectorAll("[data-storage-choice]").forEach((candidate) => {
-        const active = candidate === node;
-        candidate.classList.toggle("active", active);
-        candidate.setAttribute("aria-pressed", active ? "true" : "false");
+  const seen = new Set();
+  if (state.detail) {
+    buildCommodityCatalog(state.detail).forEach((commodity) => {
+      seen.add(commodity.commodityKey);
+      items.push({
+        id: `commodity:${commodity.commodityKey}`,
+        kind: "commodity",
+        label: commodity.displayName,
+        key: commodity.commodityKey,
+        hint: [commodity.bestSell == null ? "" : number(commodity.bestSell), state.detail.marketName].filter(Boolean).join(" · "),
+        run: () => openMarketCommodity(commodity.commodityKey)
       });
-      updateCreateListingFormState();
     });
-  });
-
-  document.querySelectorAll("[data-chart-timeframe]").forEach((node) => {
-    node.addEventListener("click", () => {
-      state.activeChartTimeframe = node.getAttribute("data-chart-timeframe") || "1h";
-      persistChartPreferences();
-      renderDetailPreservingScroll();
-    });
-  });
-
-  document.querySelectorAll("[data-chart-indicator]").forEach((node) => {
-    node.addEventListener("click", () => {
-      const key = node.getAttribute("data-chart-indicator") || "";
-      if (!key) {
+  }
+  if (state.aggregatedLoaded) {
+    buildCommodityCatalog({ listings: state.aggregatedListings }).forEach((commodity) => {
+      if (seen.has(commodity.commodityKey)) {
         return;
       }
-      state.chartIndicators[key] = !state.chartIndicators[key];
-      persistChartPreferences();
-      renderDetailPreservingScroll();
+      items.push({
+        id: `all:${commodity.commodityKey}`,
+        kind: "commodity",
+        label: commodity.displayName,
+        key: commodity.commodityKey,
+        hint: [commodity.bestSell == null ? "" : number(commodity.bestSell), t("all_listings_tab")].filter(Boolean).join(" · "),
+        run: () => openAggregatedCommodity(commodity.commodityKey)
+      });
     });
-  });
-
-  document.querySelectorAll("[data-chart-flag]").forEach((node) => {
-    node.addEventListener("change", (event) => {
-      const key = node.getAttribute("data-chart-flag") || "";
-      if (!key) {
-        return;
-      }
-      state.chartFlags[key] = !!event.target.checked;
-      persistChartPreferences();
-      renderDetailPreservingScroll();
-    });
-  });
-
-  document.querySelectorAll("[data-chart-reset]").forEach((node) => {
-    node.addEventListener("click", () => {
-      if (chartState.chart) {
-        chartState.chart.timeScale().fitContent();
-      }
-    });
-  });
-
-  const createListingButton = document.querySelector("#create-listing-button");
-  const createListingStorage = document.querySelector("#create-listing-storage");
-  const createListingPrice = document.querySelector("#create-listing-price");
-  const createListingQuantity = document.querySelector("#create-listing-quantity");
-  if (createListingStorage) {
-    createListingStorage.addEventListener("change", () => updateCreateListingFormState());
   }
-  if (createListingPrice) {
-    createListingPrice.addEventListener("input", () => updateCreateListingFormState());
+  items.push({ id: "action:theme", kind: "action", label: t("palette_toggle_theme"), run: () => applyTheme(currentTheme() === "light" ? "dark" : "light", true) });
+  [["zh-CN", "简体中文"], ["zh-TW", "繁體中文"], ["en-US", "English"]].forEach(([locale, name]) => {
+    if (locale !== state.locale) {
+      items.push({ id: `action:locale:${locale}`, kind: "action", label: `${t("palette_language")} · ${name}`, run: () => switchLocale(locale) });
+    }
+  });
+  return items;
+}
+
+function paletteScore(item, query) {
+  if (!query) {
+    if (item.kind === "commodity") {
+      return isWatched(item.key) ? 4 : 0;
+    }
+    return item.kind === "page" ? 3 : (item.kind === "market" ? 2 : 1);
   }
-  if (createListingQuantity) {
-    createListingQuantity.addEventListener("input", () => updateCreateListingFormState());
+  const label = String(item.label || "").toLowerCase();
+  const initials = pinyinInitials(item.label);
+  const key = String(item.key || "").toLowerCase();
+  const bonus = isWatched(item.key) ? 5 : 0;
+  if (label.startsWith(query)) {
+    return 100 + bonus;
   }
-  if (createListingButton) {
-    createListingButton.addEventListener("click", () => postMarketAction("/listings", {
-      storageIndex: numberValue("#create-listing-storage", -1),
-      quantity: numberValue("#create-listing-quantity", 1),
-      unitPrice: numberValue("#create-listing-price", 0),
-      sellerNote: valueOf("#create-listing-note")
-    }));
+  if (initials && initials.startsWith(query)) {
+    return 90 + bonus;
+  }
+  if (label.includes(query)) {
+    return 70 + bonus;
+  }
+  if (key && (key.split(":").pop().startsWith(query) || key.includes(query))) {
+    return 60 + bonus;
+  }
+  if (initials && initials.includes(query)) {
+    return 50 + bonus;
+  }
+  return String(item.hint || "").toLowerCase().includes(query) ? 30 : 0;
+}
+
+function searchPalette(query) {
+  const normalized = String(query || "").trim().toLowerCase();
+  palette.items = palette.items || paletteItems();
+  return palette.items
+    .map((item) => ({ item, score: paletteScore(item, normalized) }))
+    .filter(({ score }) => (normalized ? score > 0 : score > 0 || palette.items.length < 15))
+    .sort((left, right) => right.score - left.score || String(left.item.label).localeCompare(String(right.item.label), "zh-Hans-CN"))
+    .slice(0, normalized ? 30 : 14)
+    .map(({ item }) => item);
+}
+
+function openCommandPalette() {
+  if (palette.dialog || !window.litHtml) {
+    return;
+  }
+  const dialog = createMarketDialog("command-palette", "");
+  dialog.setAttribute("aria-label", t("palette_title"));
+  palette.dialog = dialog;
+  palette.query = "";
+  palette.active = 0;
+  palette.items = null;
+  dialog.addEventListener("close", () => {
+    palette.dialog = null;
+    palette.items = null;
+  });
+  renderCommandPalette();
+  showMarketDialog(dialog, { onDismiss: () => dialog.close() });
+  dialog.querySelector(".palette-input")?.focus();
+}
+
+function renderCommandPalette({ scroll = false } = {}) {
+  const dialog = palette.dialog;
+  if (!dialog) {
+    return;
+  }
+  const { html, render, repeat, nothing, live: liveValue } = window.litHtml;
+  palette.results = searchPalette(palette.query);
+  palette.active = Math.min(palette.active, Math.max(0, palette.results.length - 1));
+  const activeId = palette.results.length ? `palette-option-${palette.active}` : "";
+  render(html`
+    <div class="palette-body">
+      <div class="palette-search">
+        <input class="palette-input" type="text" role="combobox" aria-expanded="true" aria-controls="palette-listbox"
+          aria-activedescendant=${activeId || nothing} aria-label=${t("palette_title")} autocomplete="off" spellcheck="false"
+          placeholder=${t("palette_placeholder")} .value=${liveValue(palette.query)}
+          @input=${onPaletteInput} @compositionend=${onPaletteInput} @keydown=${onPaletteKeydown}>
+        <kbd>Esc</kbd>
+      </div>
+      <ul id="palette-listbox" class="palette-list" role="listbox" aria-label=${t("palette_title")}>
+        ${repeat(palette.results, (item) => item.id, (item, index) => html`
+          <li id=${`palette-option-${index}`} role="option" aria-selected=${index === palette.active ? "true" : "false"}
+            class=${index === palette.active ? "palette-option is-active" : "palette-option"}
+            @click=${() => runPaletteItem(item)} @pointermove=${() => setPaletteActive(index)}>
+            <span class="palette-kind">${t(`palette_kind_${item.kind}`)}</span>
+            <span class="palette-label">${isWatched(item.key) ? "★ " : ""}${item.label}</span>
+            ${item.hint ? html`<span class="palette-hint">${item.hint}</span>` : nothing}
+          </li>
+        `)}
+      </ul>
+      ${palette.results.length ? nothing : html`<p class="palette-empty">${t("palette_empty")}</p>`}
+      <p class="palette-footer">${t("palette_footer")}</p>
+    </div>
+  `, dialog);
+  if (scroll) {
+    dialog.querySelector(".palette-option.is-active")?.scrollIntoView({ block: "nearest" });
+  }
+}
+
+function onPaletteInput(event) {
+  if (event.type === "input" && event.isComposing) {
+    return;
+  }
+  palette.query = event.target.value;
+  palette.active = 0;
+  renderCommandPalette();
+}
+
+function setPaletteActive(index) {
+  if (palette.active !== index) {
+    palette.active = index;
+    renderCommandPalette();
+  }
+}
+
+function onPaletteKeydown(event) {
+  if (event.isComposing) {
+    return;
+  }
+  const count = palette.results.length;
+  if (event.key === "ArrowDown" && count) {
+    event.preventDefault();
+    palette.active = (palette.active + 1) % count;
+    renderCommandPalette({ scroll: true });
+  } else if (event.key === "ArrowUp" && count) {
+    event.preventDefault();
+    palette.active = (palette.active - 1 + count) % count;
+    renderCommandPalette({ scroll: true });
+  } else if (event.key === "Enter" && count) {
+    event.preventDefault();
+    runPaletteItem(palette.results[palette.active]);
+  }
+}
+
+function runPaletteItem(item) {
+  palette.dialog?.close();
+  item?.run?.();
+}
+
+document.addEventListener("keydown", (event) => {
+  if (event.defaultPrevented || event.isComposing || palette.dialog) {
+    return;
+  }
+  const target = event.target;
+  const editing = target instanceof HTMLElement && (target.isContentEditable || /^(INPUT|TEXTAREA|SELECT)$/.test(target.tagName));
+  const shortcut = (event.key === "k" || event.key === "K") && (event.ctrlKey || event.metaKey) && !event.altKey;
+  if (shortcut || (event.key === "/" && !editing && !event.ctrlKey && !event.metaKey && !event.altKey)) {
+    event.preventDefault();
+    openCommandPalette();
+  }
+});
+
+// 每次渲染后同步依赖当前 DOM 的派生状态:挂单价格预览、求购物品预览与按钮状态。
+function syncDetailControls() {
+  flashChangedPrices();
+  syncEtaCountdowns();
+  if (document.querySelector("#create-listing-button")) {
     updateCreateListingFormState();
   }
-
-  const buyOrderButton = document.querySelector("#buy-order-button");
-  if (buyOrderButton) {
-    attachBuyOrderItemResolver();
-    buyOrderButton.addEventListener("click", () => {
-      const resolvedKey = normalizeCommodityKey(buyOrderButton.getAttribute("data-resolved-commodity-key") || valueOf("#buy-order-key"));
-      if (buyOrderButton.getAttribute("data-item-valid") !== "true" || !resolvedKey) {
-        setBuyOrderPreviewError(t("buy_order_item_not_found"));
-        return;
-      }
-      const referencePrice = numberValue("#buy-order-reference-price", 1);
-      const unitPrice = numberValue("#buy-order-unit-price", referencePrice);
-      const derivedBp = buyOrderPriceToBp(unitPrice, referencePrice);
-      postMarketAction("/buy-orders", {
-        commodityKey: resolvedKey,
-        quantity: numberValue("#buy-order-quantity", 1),
-        minPriceBp: derivedBp,
-        maxPriceBp: derivedBp
-      });
-    });
-  }
-  const buyOrderUnitPrice = document.querySelector("#buy-order-unit-price");
-  if (buyOrderUnitPrice) {
-    buyOrderUnitPrice.addEventListener("input", updateBuyOrderPricePreview);
+  syncBuyOrderControls();
+  if (document.querySelector("#buy-order-unit-price")) {
     updateBuyOrderPricePreview();
   }
-
-  const claimCreditsButton = document.querySelector("#claim-credits-button");
-  if (claimCreditsButton) {
-    claimCreditsButton.addEventListener("click", () => postMarketAction("/credits/claim"));
-  }
-
-  const dispatchButton = document.querySelector("#dispatch-button");
-  if (dispatchButton) {
-    dispatchButton.addEventListener("click", () => postMarketAction("/dispatch/retry", {
-      orderIndex: numberValue("#dispatch-order-index", 0),
-      terminalType: valueOf("#dispatch-terminal-type") || state.selectedDispatchTerminal || "PORT"
-    }));
-  }
-
-  const cancelOrderButton = document.querySelector("#cancel-order-button");
-  if (cancelOrderButton) {
-    cancelOrderButton.addEventListener("click", () => {
-      const orderId = cancelOrderButton.getAttribute("data-order-id");
-      if (orderId) {
-        postMarketAction(`/purchase-orders/${orderId}/cancel`);
-      }
-    });
-  }
-
-  const dispatchTerminal = document.querySelector("#dispatch-terminal-type");
-  if (dispatchTerminal) {
-    dispatchTerminal.addEventListener("change", () => {
-      state.selectedDispatchTerminal = valueOf("#dispatch-terminal-type") || "PORT";
-      localStorage.setItem("marketWebDispatchTerminal", state.selectedDispatchTerminal);
-      renderDetailPreservingScroll();
-    });
-  }
-
-  const dispatchOrder = document.querySelector("#dispatch-order-index");
-  if (dispatchOrder) {
-    dispatchOrder.addEventListener("change", () => {
-      state.selectedDispatchOrderIndex = Math.max(0, numberValue("#dispatch-order-index", 0));
-      renderDetailPreservingScroll();
-    });
-  }
-
-  document.querySelectorAll("[data-purchase-index]").forEach((node) => {
-    node.addEventListener("click", () => openPurchaseModal(
-      Number(node.getAttribute("data-purchase-index") || "-1")
-    ));
-  });
-
-  const aggregatedSearch = document.querySelector("#aggregated-search");
-  if (aggregatedSearch) {
-    aggregatedSearch.addEventListener("input", (event) => {
-      const value = event.target.value || "";
-      state.aggregatedQuery = value;
-      renderDetailPreservingScroll();
-      const nextSearch = document.querySelector("#aggregated-search");
-      if (nextSearch) {
-        nextSearch.focus({ preventScroll: true });
-        nextSearch.setSelectionRange(value.length, value.length);
-      }
-    });
-  }
-
-  document.querySelectorAll("[data-aggregate-purchase]").forEach((node) => {
-    node.addEventListener("click", () => postAggregatedPurchase(
-      node.getAttribute("data-aggregate-purchase") || "",
-      {
-        executorMarketId: state.selectedMarketId,
-        quantity: 1,
-        fulfillment: "SELLER_SHIP",
-        targetWarehouse: ""
-      }
-    ));
-  });
-
-  document.querySelectorAll("[data-cancel-listing]").forEach((node) => {
-    node.addEventListener("click", () => postMarketAction(`/listings/${node.getAttribute("data-cancel-listing")}/cancel`));
-  });
-
-  document.querySelectorAll("[data-cancel-buy-order]").forEach((node) => {
-    node.addEventListener("click", () => postMarketAction(`/buy-orders/${node.getAttribute("data-cancel-buy-order")}/cancel`));
-  });
-
-  document.querySelectorAll("[data-cancel-purchase-order]").forEach((node) => {
-    node.addEventListener("click", () => {
-      const orderId = node.getAttribute("data-cancel-purchase-order");
-      if (orderId) {
-        postMarketAction(`/purchase-orders/${orderId}/cancel`);
-      }
-    });
-  });
-
-  document.querySelectorAll("[data-mc-list]").forEach((node) => {
-    node.addEventListener("click", () => {
-      const itemId = node.getAttribute("data-mc-list") || "";
-      const index = node.getAttribute("data-mc-index") || "";
-      const colonyId = Number(node.getAttribute("data-mc-colony") || "0");
-      if (!itemId) {
-        return;
-      }
-      postMineColoniesListing(itemId, {
-        colonyId,
-        quantity: numberValue(`#mc-qty-${index}`, 1),
-        unitPrice: numberValue(`#mc-price-${index}`, 0),
-        sellerNote: ""
-      });
-    });
-  });
 }
 
 function normalizeCatalogSortMode(mode) {
@@ -2612,7 +3739,8 @@ function renderBrowseOrderModeSwitch(purchaseCount, demandCount) {
 }
 
 // 商品目录:左侧筛选栏(分类 → 展开的子分类、稀有度、价格),右侧结果区(标题、买/求购切换、搜索、排序、商品格)。
-function renderCatalogShelf({ catalog, filteredCatalog, kicker, title, emptyMessage, cardRenderer, headExtra = "" }) {
+function renderCatalogShelf({ catalog, filteredCatalog, kicker, title, emptyMessage, cardRenderer, headExtra = "", heatmapRoute = "" }) {
+  const heatmap = !!heatmapRoute && state.browseLayout === "heatmap";
   const groups = catalogGroups(catalog);
   const expandedGroup = resolvedCatalogExpandedGroup(catalog);
   const subcategories = expandedGroup === "all" ? [] : categoriesForGroup(expandedGroup, catalog);
@@ -2627,9 +3755,16 @@ function renderCatalogShelf({ catalog, filteredCatalog, kicker, title, emptyMess
     const button = renderCatalogGroupButton(group, catalog);
     return normalizeCatalogGroup(group) === expandedGroup && group !== "all" ? `${button}${subcategoryList}` : button;
   }).join("");
+  const watchedCount = catalog.filter((commodity) => isWatched(commodity.commodityKey)).length;
+  const filterCount = activeFilterCount();
   return `
     <div class="market-browse">
-      <aside class="catalog-rail" aria-label="${escapeHtml(t("filters_label"))}">
+      <aside id="catalog-rail" class="catalog-rail ${state.mobileFiltersOpen ? "is-open" : ""}" aria-label="${escapeHtml(t("filters_label"))}">
+        <section class="rail-section">
+          <button type="button" class="watch-filter ${state.catalogFilters.watchOnly ? "active" : ""}" data-catalog-watch aria-pressed="${state.catalogFilters.watchOnly ? "true" : "false"}">
+            <span aria-hidden="true">★</span> ${escapeHtml(t("watch_filter"))} <strong>${number(watchedCount)}</strong>
+          </button>
+        </section>
         <section class="rail-section catalog-navigation">
           <h4 class="rail-title">${escapeHtml(t("category_filter"))}</h4>
           <div id="catalog-group-strip" class="catalog-category-strip tap-enabled">
@@ -2659,11 +3794,15 @@ function renderCatalogShelf({ catalog, filteredCatalog, kicker, title, emptyMess
             <h3>${escapeHtml(title)}</h3>
             <span class="result-count">${escapeHtml(t("results_count").replace("%1", number(filteredCatalog.length)))}</span>
           </div>
+          <button type="button" class="filters-toggle secondary" data-toggle-filters aria-controls="catalog-rail" aria-expanded="${state.mobileFiltersOpen ? "true" : "false"}">${escapeHtml(t("filters_toggle"))}${filterCount ? ` · ${number(filterCount)}` : ""}</button>
           ${headExtra}
         </div>
         <div class="catalog-toolbar">
           <div class="shelf-tools">
             <input id="commodity-search" class="goods-search" type="search" value="${escapeHtml(state.commodityQuery)}" placeholder="${escapeHtml(t("search_placeholder"))}" aria-label="${escapeHtml(t("search_placeholder"))}">
+            <button type="button" class="palette-launch" data-open-palette aria-keyshortcuts="Control+K" title="${escapeHtml(t("palette_title"))} (Ctrl+K)">
+              <span>${escapeHtml(t("palette_launch"))}</span><kbd>Ctrl K</kbd>
+            </button>
           </div>
           <div class="sort-controls" role="group" aria-label="${escapeHtml(t("sort_label"))}">
             ${renderCatalogSortButton("name", t("sort_name"))}
@@ -2671,12 +3810,13 @@ function renderCatalogShelf({ catalog, filteredCatalog, kicker, title, emptyMess
             ${renderCatalogSortButton("time", t("sort_time"))}
             ${renderCatalogSortButton("quantity", t("sort_quantity"))}
           </div>
+          ${heatmapRoute ? renderBrowseLayoutSwitch() : ""}
         </div>
-        ${filteredCatalog.length ? `
+        ${filteredCatalog.length ? (heatmap ? renderCatalogHeatmap(filteredCatalog, heatmapRoute) : `
           <div class="goods-grid">
             ${filteredCatalog.map((commodity) => cardRenderer(commodity)).join("")}
           </div>
-        ` : `<div class="empty-state">${escapeHtml(emptyMessage)}</div>`}
+        `) : `<div class="empty-state">${escapeHtml(emptyMessage)}</div>`}
       </div>
     </div>
   `;
@@ -2860,7 +4000,10 @@ function filterCatalog(catalog) {
   const minPrice = Number(state.catalogFilters.minPrice || 0);
   const maxPrice = Number(state.catalogFilters.maxPrice || 0);
   const filtered = catalog.filter((commodity) => {
-    if (query && !commodity.displayName.toLowerCase().includes(query) && !commodity.commodityKey.toLowerCase().includes(query)) {
+    if (query && !commoditySearchText(commodity).includes(query)) {
+      return false;
+    }
+    if (state.catalogFilters.watchOnly && !isWatched(commodity.commodityKey)) {
       return false;
     }
     if (category !== "all") {
@@ -2883,6 +4026,94 @@ function filterCatalog(catalog) {
     return true;
   });
   return sortCatalog(filtered);
+}
+
+// 搜索范围:商品名、物品 ID、分类名,以及挂单的卖家、来源城镇、港口、卖家留言和求购方。
+function commoditySearchText(commodity) {
+  if (typeof commodity.searchText !== "string") {
+    const parts = [commodity.displayName, pinyinInitials(commodity.displayName), commodity.commodityKey, categoryLabel(commodity.category)];
+    (commodity.listings || []).forEach((listing) => {
+      parts.push(listing.sellerName, listing.sourceTownName, listing.sourceDockName, listing.sellerNote);
+    });
+    (commodity.buyBookEntries || []).forEach((entry) => parts.push(entry.buyerName));
+    commodity.searchText = parts.filter(Boolean).join(" ").toLowerCase();
+  }
+  return commodity.searchText;
+}
+
+// ---- 拼音首字母 ----
+// 不带字典:借助浏览器 ICU 的中文拼音排序,用每个声母排序最靠前的字做边界查找。"钻石" → "zs"。
+const PINYIN_BOUNDARIES = "阿八嚓哒妸发旮哈丌咔垃妈拏噢妑七呥仨他屲夕丫帀";
+const PINYIN_LETTERS = "abcdefghjklmnopqrstwxyz";
+const pinyinCache = new Map();
+let pinyinCollator = null;
+
+function pinyinInitials(text) {
+  const source = String(text || "");
+  if (!/[一-鿿]/.test(source)) {
+    return "";
+  }
+  if (pinyinCache.has(source)) {
+    return pinyinCache.get(source);
+  }
+  try {
+    pinyinCollator = pinyinCollator || new Intl.Collator("zh-Hans-CN");
+  } catch (_) {
+    return "";
+  }
+  let initials = "";
+  for (const char of source) {
+    if (!/[一-鿿]/.test(char)) {
+      if (/[a-z0-9]/i.test(char)) {
+        initials += char.toLowerCase();
+      }
+      continue;
+    }
+    for (let index = PINYIN_BOUNDARIES.length - 1; index >= 0; index--) {
+      if (pinyinCollator.compare(char, PINYIN_BOUNDARIES[index]) >= 0) {
+        initials += PINYIN_LETTERS[index];
+        break;
+      }
+    }
+  }
+  if (pinyinCache.size > 5000) {
+    pinyinCache.clear();
+  }
+  pinyinCache.set(source, initials);
+  return initials;
+}
+
+// ---- 自选 ----
+function isWatched(commodityKey) {
+  return !!commodityKey && state.watchlist.has(commodityKey);
+}
+
+function toggleWatch(commodityKey) {
+  if (!commodityKey) {
+    return;
+  }
+  if (state.watchlist.has(commodityKey)) {
+    state.watchlist.delete(commodityKey);
+  } else {
+    state.watchlist.add(commodityKey);
+  }
+  try {
+    localStorage.setItem("marketWebWatchlist", JSON.stringify(Array.from(state.watchlist)));
+  } catch (_) {
+    // 存储不可用时仅本次会话生效。
+  }
+  renderDetailPreservingScroll();
+}
+
+function activeFilterCount() {
+  const filters = state.catalogFilters;
+  return [
+    normalizeCatalogGroup(filters.categoryGroup) !== "all" || normalizeCatalogCategory(filters.category) !== "all",
+    normalizeCatalogRarity(filters.rarity) !== "all",
+    !!filters.minPrice,
+    !!filters.maxPrice,
+    !!filters.watchOnly
+  ].filter(Boolean).length;
 }
 
 function purchaseBrowseCatalog(catalog) {
@@ -3280,6 +4511,7 @@ function renderCommodityBrowseCard(commodity, route, footerValue, footerLabel, e
       ${renderCommodityIcon(commodity.commodityKey, commodity.displayName)}
       <div class="goods-card-topline">
         <span class="goods-category-tag">${escapeHtml(categoryLabel(commodity.category))}</span>
+        ${isWatched(commodity.commodityKey) ? `<span class="watch-star" title="${escapeHtml(t("watch_on"))}">★<span class="sr-only">${escapeHtml(t("watch_on"))}</span></span>` : ""}
         <span class="goods-rarity-tag ${rarityClassName(commodity.rarity)}">${escapeHtml(rarityLabel(commodity.rarity))}</span>
       </div>
       <h3>${escapeHtml(commodity.displayName)}</h3>
@@ -3289,8 +4521,9 @@ function renderCommodityBrowseCard(commodity, route, footerValue, footerLabel, e
         <span class="goods-badge">${number(commodity.demandUnits)} ${escapeHtml(t("buying"))}</span>
         <span class="goods-badge">${escapeHtml(extraBadge)}</span>
       </div>
+      ${renderTrendRow(commodityTrend(commodity))}
       <div class="goods-card-footer">
-        <strong>${footerValue == null ? "--" : number(footerValue)}</strong>
+        <strong data-live-price="${escapeHtml(livePriceKey("card", commodity.commodityKey, route))}" data-price-value="${footerValue == null ? "" : escapeHtml(String(footerValue))}">${footerValue == null ? "--" : number(footerValue)}</strong>
         <span>${escapeHtml(footerLabel)}</span>
       </div>
     </button>
@@ -3311,10 +4544,276 @@ function renderDemandCommodityCard(commodity) {
   return renderCommodityBrowseCard(
     commodity,
     "demand",
-    commodity.bestBuy,
+    bestBidPrice(commodity),
     t("highest_buy"),
     `${number(commodity.demandUnits)} ${t("units_wanted")}`
   );
+}
+
+// 求购单的价格以参考价的基点(bp)表示;换算成绿宝石价格再展示,玩家不需要自己算。
+function bestBidPrice(commodity) {
+  if (commodity?.bestBuy == null) {
+    return null;
+  }
+  return Math.max(1, Math.round(buyOrderReferencePrice(commodity) * (1 + Number(commodity.bestBuy) / 10000)));
+}
+
+// 24 小时走势:取 1h K 线最近 25 个收盘价(24 段);没有 1h 数据时退到 1d 的最近 8 个点(约 7 天)。
+function commodityTrend(commodity) {
+  if (commodity.trend !== undefined) {
+    return commodity.trend;
+  }
+  let points = normalizedChartPoints(commodity?.candles?.["1h"]).slice(-25);
+  let windowKey = "trend_24h";
+  if (points.length < 2) {
+    points = normalizedChartPoints(commodity?.candles?.["1d"] || commodity?.priceChart).slice(-8);
+    windowKey = "trend_7d";
+  }
+  const closes = points.map((point) => Number(point.closeUnitPrice || point.averageUnitPrice || 0)).filter((value) => value > 0);
+  if (closes.length < 2) {
+    commodity.trend = null;
+    return null;
+  }
+  const first = closes[0];
+  const last = closes[closes.length - 1];
+  commodity.trend = {
+    closes,
+    change: (last - first) / first,
+    volume: points.reduce((sum, point) => sum + (Number(point.volume) || 0), 0),
+    last,
+    windowKey
+  };
+  return commodity.trend;
+}
+
+function trendDirection(change) {
+  if (change > 0.0005) {
+    return "up";
+  }
+  return change < -0.0005 ? "down" : "flat";
+}
+
+function formatChange(ratio) {
+  const percent = Number(ratio) * 100;
+  const sign = percent > 0.05 ? "+" : (percent < -0.05 ? "−" : "");
+  return `${sign}${Math.abs(percent).toFixed(Math.abs(percent) >= 10 ? 0 : 1)}%`;
+}
+
+function sparklinePoints(values, width, height) {
+  const min = Math.min(...values);
+  const max = Math.max(...values);
+  const span = max - min || 1;
+  const step = width / (values.length - 1);
+  return values.map((value, index) => `${(index * step).toFixed(1)},${(height - 2 - ((value - min) / span) * (height - 4)).toFixed(1)}`).join(" ");
+}
+
+function renderTrendRow(trend) {
+  if (!trend) {
+    return "";
+  }
+  const direction = trendDirection(trend.change);
+  return `
+    <div class="goods-trend is-${direction}" title="${escapeHtml(t(trend.windowKey))}">
+      <svg class="sparkline" viewBox="0 0 96 24" preserveAspectRatio="none" aria-hidden="true" focusable="false"><polyline points="${sparklinePoints(trend.closes, 96, 24)}"></polyline></svg>
+      <span class="trend-change"><span class="sr-only">${escapeHtml(t(trend.windowKey))} </span>${formatChange(trend.change)}</span>
+    </div>
+  `;
+}
+
+// ---- 热力图(矩形树图) ----
+// 面积 = 近 24 小时成交额(成交量 × 最新价,开 0.7 次方压缩差距),颜色 = 24 小时涨跌。
+// 用 squarified 算法在虚拟画布上排布,输出百分比坐标,窗口缩放时不必重算。
+function squarifyTreemap(items, width, height) {
+  const total = items.reduce((sum, item) => sum + item.value, 0);
+  if (!total) {
+    return [];
+  }
+  const scale = (width * height) / total;
+  let rest = items.map((item) => ({ ...item, area: item.value * scale }));
+  let x = 0;
+  let y = 0;
+  let w = width;
+  let h = height;
+  const placed = [];
+  const worst = (row, side) => {
+    const sum = row.reduce((acc, item) => acc + item.area, 0);
+    const max = Math.max(...row.map((item) => item.area));
+    const min = Math.min(...row.map((item) => item.area));
+    return Math.max((side * side * max) / (sum * sum), (sum * sum) / (side * side * min));
+  };
+  while (rest.length) {
+    const side = Math.min(w, h);
+    let row = [rest[0]];
+    let best = worst(row, side);
+    for (let index = 1; index < rest.length; index++) {
+      const candidate = row.concat(rest[index]);
+      const ratio = worst(candidate, side);
+      if (ratio > best) {
+        break;
+      }
+      row = candidate;
+      best = ratio;
+    }
+    const rowArea = row.reduce((acc, item) => acc + item.area, 0);
+    if (w >= h) {
+      const columnWidth = rowArea / h;
+      let cursor = y;
+      row.forEach((item) => {
+        const itemHeight = item.area / columnWidth;
+        placed.push({ ...item, x, y: cursor, w: columnWidth, h: itemHeight });
+        cursor += itemHeight;
+      });
+      x += columnWidth;
+      w -= columnWidth;
+    } else {
+      const rowHeight = rowArea / w;
+      let cursor = x;
+      row.forEach((item) => {
+        const itemWidth = item.area / rowHeight;
+        placed.push({ ...item, x: cursor, y, w: itemWidth, h: rowHeight });
+        cursor += itemWidth;
+      });
+      y += rowHeight;
+      h -= rowHeight;
+    }
+    rest = rest.slice(row.length);
+  }
+  return placed;
+}
+
+function renderCatalogHeatmap(catalog, route) {
+  const narrow = window.matchMedia?.("(max-width: 720px)")?.matches;
+  const canvas = narrow ? { w: 600, h: 900 } : { w: 1000, h: 560 };
+  const items = catalog.map((commodity) => {
+    const trend = commodityTrend(commodity);
+    const price = Number(trend?.last || commodityFilterPrice(commodity) || 0);
+    const turnover = (Number(trend?.volume) || 0) * (Number.isFinite(price) ? price : 0);
+    const fallback = Number(commodity.sellUnits || 0) + Number(commodity.demandUnits || 0);
+    return { commodity, trend, value: Math.pow((turnover || fallback) + 1, 0.7) };
+  }).sort((left, right) => right.value - left.value);
+  const tiles = squarifyTreemap(items, canvas.w, canvas.h);
+  const totalArea = canvas.w * canvas.h;
+  return `
+    <div class="heatmap" role="list" aria-label="${escapeHtml(t("heatmap_label"))}">
+      ${tiles.map((tile) => {
+        const { commodity, trend } = tile;
+        const change = trend ? trend.change : 0;
+        const direction = trend ? trendDirection(change) : "flat";
+        const intensity = Math.round(Math.min(1, Math.abs(change) / 0.05) * 70 + (direction === "flat" ? 0 : 10));
+        const share = (tile.w * tile.h) / totalArea;
+        const size = share < 0.012 ? "tiny" : (share < 0.03 ? "small" : "large");
+        const price = commodity.bestSell ?? trend?.last;
+        const label = `${commodity.displayName} · ${price == null ? "--" : number(price)} · ${trend ? formatChange(change) : "--"}`;
+        return `
+          <button type="button" role="listitem" class="heat-tile is-${direction} is-${size}" data-card-commodity-key="${escapeHtml(commodity.commodityKey)}" data-card-route="${escapeHtml(route)}"
+            title="${escapeHtml(label)}" aria-label="${escapeHtml(label)}"
+            style="left:${(tile.x / canvas.w * 100).toFixed(3)}%;top:${(tile.y / canvas.h * 100).toFixed(3)}%;width:${(tile.w / canvas.w * 100).toFixed(3)}%;height:${(tile.h / canvas.h * 100).toFixed(3)}%;--heat:${intensity}%;">
+            <span class="heat-name">${escapeHtml(commodity.displayName)}</span>
+            <span class="heat-meta"><span class="coin-figure">${price == null ? "--" : number(price)}</span> <span class="heat-change">${trend ? formatChange(change) : "--"}</span></span>
+          </button>
+        `;
+      }).join("")}
+    </div>
+  `;
+}
+
+function renderBrowseLayoutSwitch() {
+  const current = state.browseLayout;
+  return `
+    <div class="layout-switch" role="group" aria-label="${escapeHtml(t("layout_label"))}">
+      <button type="button" class="${current === "grid" ? "active" : ""}" data-browse-layout="grid" aria-pressed="${current === "grid" ? "true" : "false"}">${escapeHtml(t("layout_grid"))}</button>
+      <button type="button" class="${current === "heatmap" ? "active" : ""}" data-browse-layout="heatmap" aria-pressed="${current === "heatmap" ? "true" : "false"}">${escapeHtml(t("layout_heatmap"))}</button>
+    </div>
+  `;
+}
+
+// ---- 盘口深度 ----
+// 卖盘 = 挂单(价格升序),买盘 = 求购(按参考价换算的出价,降序);同价合并、累计数量,画深度图和阶梯。
+function orderBookLevels(entries, ascending) {
+  const merged = new Map();
+  entries.forEach(({ price, qty }) => {
+    if (price > 0 && qty > 0) {
+      merged.set(price, (merged.get(price) || 0) + qty);
+    }
+  });
+  let cumulative = 0;
+  return Array.from(merged.entries())
+    .sort((left, right) => (ascending ? left[0] - right[0] : right[0] - left[0]))
+    .slice(0, 8)
+    .map(([price, qty]) => {
+      cumulative += qty;
+      return { price, qty, cumulative };
+    });
+}
+
+function renderOrderBook(commodity) {
+  const asks = orderBookLevels((commodity.listings || [])
+    .filter((listing) => !isInfiniteStock(listing))
+    .map((listing) => ({ price: Number(listing.unitPrice) || 0, qty: Number(listing.availableCount) || 0 })), true);
+  const reference = buyOrderReferencePrice(commodity);
+  const bids = orderBookLevels((commodity.buyBookEntries || []).map((entry) => ({
+    price: Math.max(1, Math.round(reference * (1 + (Number(entry.maxPriceBp) || 0) / 10000))),
+    qty: Number(entry.quantity) || 0
+  })), false);
+  if (!asks.length && !bids.length) {
+    return "";
+  }
+  const bestAsk = asks[0]?.price;
+  const bestBid = bids[0]?.price;
+  const spread = bestAsk != null && bestBid != null ? bestAsk - bestBid : null;
+  const maxDepth = Math.max(1, asks[asks.length - 1]?.cumulative || 0, bids[bids.length - 1]?.cumulative || 0);
+  const prices = [...asks, ...bids].map((level) => level.price);
+  const minPrice = Math.min(...prices);
+  const maxPrice = Math.max(...prices);
+  const span = maxPrice - minPrice || 1;
+  const width = 320;
+  const height = 120;
+  const px = (price) => ((price - minPrice) / span) * width;
+  const py = (depth) => height - (depth / maxDepth) * (height - 8);
+  const stepPath = (levels) => {
+    if (!levels.length) {
+      return "";
+    }
+    let path = `M${px(levels[0].price).toFixed(1)},${height} `;
+    levels.forEach((level, index) => {
+      path += `L${px(level.price).toFixed(1)},${py(level.cumulative).toFixed(1)} `;
+      const next = levels[index + 1];
+      if (next) {
+        path += `L${px(next.price).toFixed(1)},${py(level.cumulative).toFixed(1)} `;
+      }
+    });
+    const last = levels[levels.length - 1];
+    return `${path}L${px(last.price).toFixed(1)},${height} Z`;
+  };
+  const ladderRow = (level, side, max) => `
+    <li class="ladder-row is-${side}" style="--depth:${Math.round((level.qty / max) * 100)}%;">
+      <span class="coin-figure">${number(level.price)}</span>
+      <span>${number(level.qty)}</span>
+    </li>
+  `;
+  const maxAskQty = Math.max(1, ...asks.map((level) => level.qty));
+  const maxBidQty = Math.max(1, ...bids.map((level) => level.qty));
+  return `
+    <section class="order-book surface-card" aria-label="${escapeHtml(t("order_book_title"))}">
+      <div class="panel-head">
+        <div>
+          <p class="section-kicker">${escapeHtml(t("order_book_kicker"))}</p>
+          <h3>${escapeHtml(t("order_book_title"))}</h3>
+        </div>
+        <span class="pill">${escapeHtml(t("order_book_spread"))} ${spread == null ? "--" : number(spread)}</span>
+      </div>
+      <svg class="depth-chart" viewBox="0 0 ${width} ${height}" preserveAspectRatio="none" aria-hidden="true" focusable="false">
+        <path class="depth-bids" d="${stepPath(bids)}"></path>
+        <path class="depth-asks" d="${stepPath(asks)}"></path>
+      </svg>
+      <div class="ladder">
+        <div class="ladder-head"><span>${escapeHtml(t("unit_price"))}</span><span>${escapeHtml(t("quantity"))}</span></div>
+        <ol class="ladder-side is-asks">${asks.slice(0, 5).reverse().map((level) => ladderRow(level, "ask", maxAskQty)).join("")}</ol>
+        <div class="ladder-mid">${bestAsk != null ? `${escapeHtml(t("lowest_sell"))} ${number(bestAsk)}` : ""}${bestAsk != null && bestBid != null ? " · " : ""}${bestBid != null ? `${escapeHtml(t("highest_buy"))} ${number(bestBid)}` : ""}</div>
+        <ol class="ladder-side is-bids">${bids.slice(0, 5).map((level) => ladderRow(level, "bid", maxBidQty)).join("")}</ol>
+      </div>
+    </section>
+  `;
 }
 
 function renderCommodityCard(commodity) {
@@ -3529,7 +5028,12 @@ function renderInventoryDetailPage(commodity, detail, canManage, canAct) {
         ${renderCommodityIcon(commodity.commodityKey, commodity.displayName)}
         <div class="goods-main">
           <div class="tiny-label">${escapeHtml(t("inventory_title"))}</div>
-          <h2>${escapeHtml(commodity.displayName)}</h2>
+          <div class="goods-title-row">
+            <h2>${escapeHtml(commodity.displayName)}</h2>
+            <button type="button" class="watch-toggle ${isWatched(commodity.commodityKey) ? "is-on" : ""}" data-watch-toggle="${escapeHtml(commodity.commodityKey)}" aria-pressed="${isWatched(commodity.commodityKey) ? "true" : "false"}">
+              <span aria-hidden="true">${isWatched(commodity.commodityKey) ? "★" : "☆"}</span> ${escapeHtml(isWatched(commodity.commodityKey) ? t("watch_on") : t("watch_add"))}
+            </button>
+          </div>
           <div class="muted">${escapeHtml(commodity.commodityKey)}</div>
           <div class="goods-stats">
             ${metricBox(t("in_storage"), number(commodity.storageUnits))}
@@ -3672,6 +5176,7 @@ function renderAggregateSellingTab(commodity) {
   `).join("");
   return `
     <div class="goods-detail">
+      ${renderOrderBook(commodity)}
       ${tableSection(
         t("all_listings_title"),
         [
@@ -3730,6 +5235,7 @@ function renderSellingTab(commodity, detail, canManage, canAct, options = null) 
       )}
 
       <div class="stack">
+        ${renderOrderBook(commodity)}
         <div class="surface-card stack">
           <div class="panel-head">
             <div>
@@ -3989,7 +5495,7 @@ function renderChartTab(commodity, detail, options = null) {
               <span class="chart-legend-item"><span class="chart-legend-swatch ma-long"></span>MA20</span>
             </div>
             <div class="kline-chart">
-              <div id="lw-chart" class="chart-canvas" data-chart-key="${escapeHtml(commodity.commodityKey)}"></div>
+              <div id="lw-chart" class="chart-canvas" data-island="chart" data-chart-key="${escapeHtml(commodity.commodityKey)}"></div>
             </div>
             <div id="chart-hover-details" class="chart-hover-details">${escapeHtml(t("chart_hover_empty"))}</div>
           </div>
@@ -4048,25 +5554,25 @@ function renderIndexTab(commodity, detail, options = null) {
         ${marketIndex?.points?.length ? `
           <div class="macro-chart-card">
             <div class="panel-subtitle">${escapeHtml(t("market_index_chart"))}</div>
-            <div id="market-index-chart" class="macro-chart"></div>
+            <div id="market-index-chart" class="macro-chart" data-island="macro"></div>
           </div>
         ` : ""}
         ${categoryIndex?.points?.length ? `
           <div class="macro-chart-card">
             <div class="panel-subtitle">${escapeHtml(t("category_index_chart"))}</div>
-            <div id="category-index-chart" class="macro-chart"></div>
+            <div id="category-index-chart" class="macro-chart" data-island="macro"></div>
           </div>
         ` : ""}
         ${cpiSeries?.points?.length ? `
           <div class="macro-chart-card">
             <div class="panel-subtitle">${escapeHtml(t("cpi_chart"))}</div>
-            <div id="cpi-chart" class="macro-chart macro-chart-compact"></div>
+            <div id="cpi-chart" class="macro-chart macro-chart-compact" data-island="macro"></div>
           </div>
         ` : ""}
         ${loansSeries?.points?.length ? `
           <div class="macro-chart-card">
             <div class="panel-subtitle">${escapeHtml(t("loans_chart"))}</div>
-            <div id="loans-chart" class="macro-chart macro-chart-compact"></div>
+            <div id="loans-chart" class="macro-chart macro-chart-compact" data-island="macro"></div>
           </div>
         ` : ""}
         <div class="chart-list">
@@ -4146,7 +5652,11 @@ function renderTopbarWallet() {
   const total = detail?.walletTotalBalance ?? detail?.walletBalance ?? 0;
   const selectedName = detail?.marketName || t("selected_market");
   els.walletDock.hidden = false;
-  els.walletDock.innerHTML = `
+  if (renderGuard.resetWalletOnce) {
+    clearDirtyControls("wallet");
+    renderGuard.resetWalletOnce = false;
+  }
+  morphInto(els.walletDock, `
     <div class="wallet-dock-card">
       <button id="wallet-dock-toggle" type="button" class="wallet-dock-toggle" aria-expanded="${collapsed ? "false" : "true"}">
         <span>
@@ -4176,30 +5686,12 @@ function renderTopbarWallet() {
         <p class="wallet-dock-hint">${escapeHtml(t("wallet_transfer_hint"))}</p>
       </div>
     </div>
-  `;
+  `);
 
   const toggle = els.walletDock.querySelector("#wallet-dock-toggle");
   if (toggle) {
     toggle.setAttribute("aria-label", t(collapsed ? "wallet_expand" : "wallet_collapse"));
-    toggle.addEventListener("click", () => {
-      state.walletCollapsed = !state.walletCollapsed;
-      localStorage.setItem("marketWebWalletCollapsed", state.walletCollapsed ? "1" : "0");
-      renderTopbarWallet();
-    });
   }
-  bindWalletTransferActions(els.walletDock);
-}
-
-function bindWalletTransferActions(root = document) {
-  root.querySelectorAll("[data-wallet-action]").forEach((node) => {
-    node.addEventListener("click", () => {
-      const action = node.getAttribute("data-wallet-action") || "";
-      const amount = action === "CLAIM_CREDITS_TO_WALLET"
-        ? 0
-        : numberValue("#wallet-transfer-amount", 0);
-      postMarketAction("/wallet/transfer", { action, amount });
-    });
-  });
 }
 
 function renderWalletTransferPanel(detail, canAct) {
@@ -4549,6 +6041,13 @@ function destroyLightweightChart() {
     chartState.loansResizeObserver.disconnect();
     chartState.loansResizeObserver = null;
   }
+  if (chartState.chart && chartState.viewKey) {
+    try {
+      chartState.savedRange = { key: chartState.viewKey, range: chartState.chart.timeScale().getVisibleLogicalRange() };
+    } catch (_) {
+      chartState.savedRange = null;
+    }
+  }
   if (chartState.chart) {
     chartState.chart.remove();
   }
@@ -4574,35 +6073,94 @@ function destroyLightweightChart() {
   chartState.cpiChart = null;
   chartState.loansChart = null;
   chartState.lastFailure = null;
+  chartState.signature = "";
+  chartState.anchor = null;
+}
+
+function seriesFingerprint(series) {
+  const points = series?.points || [];
+  const last = points[points.length - 1] || {};
+  return [points.length, last.bucketAt ?? null, last.closeUnitPrice ?? last.averageUnitPrice ?? last.value ?? null, last.volume ?? null];
+}
+
+// 图表签名:商品、周期、指标、主题和最新数据点。签名不变就保留现有图表,重绘不会闪烁、缩放不会重置。
+function chartSignature(activeTab, aggregate, detail, commodity) {
+  const parts = [activeTab, aggregate ? "all" : state.selectedMarketId, commodity?.commodityKey || "", currentTheme(), !!chartState.libraryFailed];
+  if (activeTab === "index") {
+    parts.push(
+      seriesFingerprint(analyticsSeries(detail, "MARKET_INDEX", "global")),
+      seriesFingerprint(analyticsSeries(detail, "CATEGORY_INDEX", firstListingCategory(commodity) || "")),
+      seriesFingerprint(analyticsSeries(detail, "MACRO_INDEX", "cpi")),
+      seriesFingerprint(analyticsSeries(detail, "MACRO_INDEX", "outstanding_loans"))
+    );
+  } else {
+    parts.push(
+      state.activeChartTimeframe,
+      state.chartIndicators,
+      state.chartFlags,
+      seriesFingerprint(commodity ? primaryChartSeriesForTimeframe(commodity, state.activeChartTimeframe) : null),
+      state.chartFlags.inflationAdjusted ? seriesFingerprint(analyticsSeries(detail, "MACRO_INDEX", "cpi")) : null
+    );
+  }
+  return JSON.stringify(parts);
+}
+
+function showChartLoading(activeTab) {
+  const selectors = activeTab === "index"
+    ? ["#market-index-chart", "#category-index-chart", "#cpi-chart", "#loans-chart"]
+    : ["#lw-chart"];
+  selectors.forEach((selector) => {
+    const container = document.querySelector(selector);
+    if (container && !container.childElementCount) {
+      renderChartFallbackMessage(container, "chart_loading");
+    }
+  });
 }
 
 function hydrateLightweightChart() {
-  destroyLightweightChart();
   if (!state.settings.showPriceCharts) {
+    destroyLightweightChart();
     return;
   }
   // 聚合详情上下文:用 aggregatedDetail + 选中商品 + 子 tab,与终端隔离。
   const aggregate = state.activeProductTab === "all" && !!state.aggregatedSelectedCommodityKey;
   const detail = aggregate ? state.aggregatedDetail : state.detail;
-  if (!detail) {
+  const activeTab = aggregate ? state.aggregatedDetailTab : state.activeProductTab;
+  const anchor = detail && (activeTab === "chart" || activeTab === "index")
+    ? document.querySelector(activeTab === "index" ? "#market-index-chart" : "#lw-chart")
+    : null;
+  if (!anchor) {
+    destroyLightweightChart();
     return;
   }
-  const activeTab = aggregate ? state.aggregatedDetailTab : state.activeProductTab;
   const catalog = buildCommodityCatalog(detail);
   const commodity = aggregate
     ? findCommodityByKey(catalog, state.aggregatedSelectedCommodityKey)
     : getSelectedCommodity(filterCatalog(catalog), catalog);
+  // 图表库按需加载:第一次打开图表时才下载,期间显示"加载中";加载失败则用内置渲染。
+  if (typeof LightweightCharts === "undefined" && !chartState.libraryFailed) {
+    showChartLoading(activeTab);
+    ensureChartLibrary().then(
+      () => hydrateLightweightChart(),
+      () => {
+        chartState.libraryFailed = true;
+        hydrateLightweightChart();
+      }
+    );
+    return;
+  }
+  const signature = chartSignature(activeTab, aggregate, detail, commodity);
+  if (signature === chartState.signature && chartState.anchor === anchor && anchor.isConnected) {
+    return;
+  }
+  destroyLightweightChart();
+  chartState.signature = signature;
+  chartState.anchor = anchor;
   if (activeTab === "index") {
     hydrateMacroCharts(detail, commodity);
     return;
   }
-  if (activeTab !== "chart") {
-    return;
-  }
-  const container = document.querySelector("#lw-chart");
-  if (!container) {
-    return;
-  }
+  const container = anchor;
   if (!commodity) {
     setChartFailure("no-selection", "No selected commodity while hydrating chart.");
     renderChartFallbackMessage(container, "chart_no_selection");
@@ -4624,6 +6182,7 @@ function hydrateLightweightChart() {
   }
   clearChartFailure();
 
+  container.replaceChildren();
   let chart;
   const palette = currentChartPalette();
   try {
@@ -4717,7 +6276,20 @@ function hydrateLightweightChart() {
   chartState.volumeSeries.setData(state.chartIndicators.volume ? volumeData : []);
   chartState.maShortSeries.setData(state.chartIndicators.ma5 ? movingAverageData(priceData, 5) : []);
   chartState.maLongSeries.setData(state.chartIndicators.ma20 ? movingAverageData(priceData, 20) : []);
-  chart.timeScale().fitContent();
+  // 同一商品、同一周期重建图表(切换指标、主题、后台刷新)时保留缩放与平移位置。
+  const chartViewKey = [
+    aggregate ? "all" : state.selectedMarketId,
+    commodity.commodityKey,
+    state.activeChartTimeframe,
+    state.chartFlags.inflationAdjusted ? "real" : "nominal"
+  ].join("|");
+  const savedRange = chartState.savedRange;
+  if (savedRange && savedRange.key === chartViewKey && savedRange.range) {
+    chart.timeScale().setVisibleLogicalRange(savedRange.range);
+  } else {
+    chart.timeScale().fitContent();
+  }
+  chartState.viewKey = chartViewKey;
   bindChartCrosshair(chart, hoverPoints);
 
   chartState.resizeObserver = new ResizeObserver((entries) => {
@@ -4832,6 +6404,7 @@ function createMacroChart(selector, series, color) {
     return null;
   }
   const palette = currentChartPalette();
+  container.replaceChildren();
   const chart = LightweightCharts.createChart(container, {
     autoSize: true,
     layout: {
@@ -5196,7 +6769,7 @@ async function resolveBuyOrderItemInput(sequence) {
   }
 }
 
-function attachBuyOrderItemResolver() {
+function syncBuyOrderControls() {
   const input = document.querySelector("#buy-order-key");
   const preview = document.querySelector("#buy-order-preview");
   if (!input || !preview) {
@@ -5204,18 +6777,6 @@ function attachBuyOrderItemResolver() {
   }
   const initialKey = normalizeCommodityKey(preview.getAttribute("data-resolved-commodity-key"));
   setBuyOrderButtonState(preview.getAttribute("data-item-valid") === "true", initialKey);
-  input.addEventListener("input", () => {
-    window.clearTimeout(buyOrderResolveTimer);
-    buyOrderResolveSequence += 1;
-    const sequence = buyOrderResolveSequence;
-    setBuyOrderPreviewPending(t("buy_order_item_resolving"));
-    buyOrderResolveTimer = window.setTimeout(() => resolveBuyOrderItemInput(sequence), 360);
-  });
-  input.addEventListener("change", () => {
-    window.clearTimeout(buyOrderResolveTimer);
-    buyOrderResolveSequence += 1;
-    resolveBuyOrderItemInput(buyOrderResolveSequence);
-  });
 }
 
 function normalizeCommodityKey(value) {
@@ -5493,11 +7054,11 @@ function renderMarkets() {
   syncTerminalPicker();
 
   if (!markets.length) {
-    els.marketList.innerHTML = `<div class="empty-state">${escapeHtml(state.marketQuery ? t("no_match") : t("no_markets"))}</div>`;
+    morphInto(els.marketList, `<div class="empty-state">${escapeHtml(state.marketQuery ? t("no_match") : t("no_markets"))}</div>`);
     return;
   }
 
-  els.marketList.innerHTML = markets.map((market) => `
+  morphInto(els.marketList, markets.map((market) => `
     <button type="button" class="market-card ${market.marketId === state.selectedMarketId ? "active" : ""} ${market.loaded ? "" : "is-cold"}" data-market-id="${escapeHtml(market.marketId)}">
       <p class="panel-meta">${market.loaded ? t("live_terminal") : t("chunk_cold")}</p>
       <h3>${escapeHtml(market.marketName)}</h3>
@@ -5508,19 +7069,7 @@ function renderMarkets() {
         ${market.loaded ? `<span class="pill">${escapeHtml(t("loaded"))}</span>` : `<span class="pill warning">${escapeHtml(t("cold"))}</span>`}
       </div>
     </button>
-  `).join("");
-
-  document.querySelectorAll("[data-market-id]").forEach((node) => {
-    node.addEventListener("click", () => {
-      state.commodityQuery = "";
-      state.activeProductTab = "browse";
-      state.selectedCommodityKey = "";
-      state.catalogHoverGroup = "all";
-      state.catalogExpandedGroup = currentCatalogActiveGroup();
-      setTerminalPanelOpen(false);
-      loadMarketDetail(node.getAttribute("data-market-id") || "", "push");
-    });
-  });
+  `).join(""));
 }
 
 // 市场单行摘要:默认只显示终端名、状态与几个关键数字;"更多"展开完整账本(钱包/国库/库存等)。
@@ -5573,9 +7122,11 @@ function renderMarketMapPlaceholder(detail, canAct, canManage) {
   const focusedMarketId = detail?.marketId || state.selectedMarketId || "";
   return `
     <section
+      id="market-map-root"
       class="market-map-reserved market-map-workspace map-panel-left-collapsed map-panel-right-collapsed"
       aria-label="${escapeHtml(t("map_tab"))}"
       data-market-map-root
+      data-island="map"
       data-focused-market="${escapeHtml(focusedMarketId)}"
       data-selected-name="${escapeHtml(selectedName)}"
       data-selected-town="${escapeHtml(selectedTown)}"
@@ -5607,22 +7158,224 @@ function renderMarketMapPlaceholder(detail, canAct, canManage) {
   `;
 }
 
+// ---- 3D 地球视图 ----
+// Tellus 真实地球世界才提供:终端和运输船画在 MapLibre 地球仪上。平面地图仍是默认,玩家的选择记在本机。
+function isTellusWorld(world) {
+  return !!(world && world.tellus === true && Number(world.worldScale) > 0);
+}
+
+// 选了地球但还不知道是不是 Tellus 世界时先按地球渲染(显示加载中),确认不是再退回平面地图。
+function effectiveMapMode() {
+  if (state.mapMode !== "globe") {
+    return "flat";
+  }
+  return state.mapWorld === null || isTellusWorld(state.mapWorld) ? "globe" : "flat";
+}
+
+// 世界信息只取一次(公开接口,很小);失败按非 Tellus 处理,不反复重试。
+function loadMapWorld() {
+  if (state.mapWorld !== null || state.mapWorldLoading) {
+    return;
+  }
+  state.mapWorldLoading = true;
+  api("/api/map/world")
+    .catch(() => ({ tellus: false }))
+    .then((world) => {
+      state.mapWorldLoading = false;
+      state.mapWorld = world || { tellus: false };
+      if (state.activeProductTab === "map") {
+        renderDetailPreservingScroll();
+      }
+    });
+}
+
+function renderMapModeSwitch() {
+  if (!isTellusWorld(state.mapWorld)) {
+    return "";
+  }
+  const current = effectiveMapMode();
+  return `
+    <div class="map-mode-bar">
+      <div class="layout-switch" role="group" aria-label="${escapeHtml(t("map_mode_label"))}">
+        <button type="button" class="${current === "flat" ? "active" : ""}" data-map-mode="flat" aria-pressed="${current === "flat" ? "true" : "false"}">${escapeHtml(t("map_mode_flat"))}</button>
+        <button type="button" class="${current === "globe" ? "active" : ""}" data-map-mode="globe" aria-pressed="${current === "globe" ? "true" : "false"}">${escapeHtml(t("map_mode_globe"))}</button>
+      </div>
+    </div>
+  `;
+}
+
+function renderGlobeStage(detail) {
+  const focusedMarketId = detail?.marketId || state.selectedMarketId || "";
+  return `
+    <section
+      id="market-globe-root"
+      class="globe-stage"
+      aria-label="${escapeHtml(t("map_mode_globe"))}"
+      data-globe-root
+      data-island="globe"
+      data-focused-market="${escapeHtml(focusedMarketId)}">
+      <div class="globe-canvas"></div>
+      <p class="globe-message" role="status">${escapeHtml(t("globe_loading"))}</p>
+    </section>
+  `;
+}
+
+function renderMapWorkspace(detail, canAct, canManage) {
+  return `${renderMapModeSwitch()}${effectiveMapMode() === "globe" ? renderGlobeStage(detail) : renderMarketMapPlaceholder(detail, canAct, canManage)}`;
+}
+
+function setMapMode(mode) {
+  const next = mode === "globe" ? "globe" : "flat";
+  if (next === state.mapMode) {
+    return;
+  }
+  state.mapMode = next;
+  try {
+    localStorage.setItem("marketWebMapMode", next);
+  } catch (_) {
+  }
+  renderDetailPreservingScroll();
+}
+
+function mountGlobeIfNeeded(onMap) {
+  const root = document.querySelector("[data-globe-root]");
+  if (!root || !onMap) {
+    window.SailboatGlobe?.unmount();
+    return;
+  }
+  if (!isTellusWorld(state.mapWorld)) {
+    return; // 世界信息还在加载,加载完会重新渲染再挂载
+  }
+  if (!window.SailboatGlobe || !window.maplibregl) {
+    ensureGlobeLibraries().then(
+      () => mountGlobeIfNeeded(state.activeProductTab === "map"),
+      () => {
+        const note = root.querySelector(".globe-message");
+        if (note) {
+          note.textContent = t("map_library_failed");
+        }
+        setStatus(t("map_library_failed"), true);
+      }
+    );
+    return;
+  }
+  const mounted = window.SailboatGlobe.mount(root, {
+    fetchJson: (path) => api(path),
+    includeShipments: !!state.sessionToken,
+    focusedMarketId: state.selectedMarketId || root.getAttribute("data-focused-market") || "",
+    formatEta: formatEtaSeconds,
+    t,
+    onSelectMarket: (marketId) => switchMarket(marketId)
+  });
+  if (mounted && state.pendingShipmentFocus) {
+    window.SailboatGlobe.focusShipment(state.pendingShipmentFocus);
+    state.pendingShipmentFocus = "";
+  }
+}
+
 function mountMarketMapIfNeeded() {
+  const onMap = state.activeProductTab === "map";
+  if (onMap) {
+    loadMapWorld();
+  }
+  mountGlobeIfNeeded(onMap);
   const root = document.querySelector("[data-market-map-root]");
   const mapApi = window.SailboatSquareMap || window.SailboatMarketMap;
-  if (!root || state.activeProductTab !== "map") {
+  if (!root || !onMap) {
     if (mapApi && typeof mapApi.unmount === "function") {
       mapApi.unmount();
     }
     return;
   }
-  if (mapApi && typeof mapApi.mount === "function") {
+  // 地图脚本(Leaflet + map.js 等)按需加载;根节点是 data-island,map.js 在其中自行渲染,重绘不会重新挂载。
+  if (!mapApi) {
+    ensureMapLibraries().then(
+      () => mountMarketMapIfNeeded(),
+      () => setStatus(t("map_library_failed"), true)
+    );
+    return;
+  }
+  const focusedMarketId = state.selectedMarketId || root.getAttribute("data-focused-market") || "";
+  root.setAttribute("data-focused-market", focusedMarketId);
+  if (typeof mapApi.mount === "function") {
     mapApi.mount(root, {
-      focusedMarketId: root.getAttribute("data-focused-market") || state.selectedMarketId || "",
+      focusedMarketId,
       locale: state.locale || "zh-CN",
       apiBase: ""
     });
   }
+  if (state.pendingShipmentFocus && typeof mapApi.focusShipment === "function") {
+    mapApi.focusShipment(state.pendingShipmentFocus);
+    state.pendingShipmentFocus = "";
+  }
+}
+
+// ---- 按需加载 ----
+// 图表库与地图相关脚本只在第一次打开对应页面时下载,首屏少下载约 450 KB。
+const assetLoads = new Map();
+
+function loadAssetOnce(url, kind = "script") {
+  if (!assetLoads.has(url)) {
+    assetLoads.set(url, new Promise((resolve, reject) => {
+      let node;
+      if (kind === "style") {
+        node = document.createElement("link");
+        node.rel = "stylesheet";
+        node.href = url;
+      } else {
+        node = document.createElement("script");
+        node.src = url;
+        node.async = false;
+      }
+      node.addEventListener("load", () => resolve());
+      node.addEventListener("error", () => {
+        assetLoads.delete(url);
+        node.remove();
+        reject(new Error(`Failed to load ${url}`));
+      });
+      if (kind === "style") {
+        // 插在 app.css 之前,保持原来的层叠顺序(app.css 可以覆盖第三方样式)。
+        document.head.insertBefore(node, document.querySelector('link[href="/app.css"]'));
+      } else {
+        document.head.appendChild(node);
+      }
+    }));
+  }
+  return assetLoads.get(url);
+}
+
+function ensureChartLibrary() {
+  if (typeof LightweightCharts !== "undefined") {
+    return Promise.resolve();
+  }
+  return loadAssetOnce("/lightweight-charts.standalone.production.js");
+}
+
+function ensureMapLibraries() {
+  if (window.SailboatSquareMap || window.SailboatMarketMap) {
+    return Promise.resolve();
+  }
+  return Promise.all([
+    loadAssetOnce("/vendor/leaflet/leaflet.css", "style"),
+    loadAssetOnce("/vendor/leaflet/leaflet.js"),
+    loadAssetOnce("/tellus-basemap.js"),
+    loadAssetOnce("/logistics-render.js"),
+    loadAssetOnce("/logistics-panel.js"),
+    loadAssetOnce("/map.js")
+  ]);
+}
+
+// 地球视图:MapLibre GL(约 280 KB gzip)只在第一次切到 3D 地球时下载。
+function ensureGlobeLibraries() {
+  if (window.SailboatGlobe && window.maplibregl && window.SailboatTellusBasemap) {
+    return Promise.resolve();
+  }
+  return Promise.all([
+    loadAssetOnce("/maplibre-gl.css", "style"),
+    loadAssetOnce("/maplibre-gl.js"),
+    loadAssetOnce("/tellus-basemap.js"),
+    loadAssetOnce("/market-globe.js")
+  ]);
 }
 
 function aggregatedPurchaseReasonText(reason) {
@@ -5638,23 +7391,6 @@ function aggregatedPurchaseReasonText(reason) {
     default:
       return "";
   }
-}
-
-function filteredAggregatedListings() {
-  const query = String(state.aggregatedQuery || "").trim().toLowerCase();
-  if (!query) {
-    return state.aggregatedListings;
-  }
-  return state.aggregatedListings.filter((listing) => {
-    const haystack = [
-      listing.itemName,
-      listing.commodityKey,
-      listing.sourceTownName,
-      listing.sellerName,
-      listing.sourceDockName
-    ].filter(Boolean).join(" ").toLowerCase();
-    return haystack.includes(query);
-  });
 }
 
 function renderAggregatedPurchaseButton(listing) {
@@ -5685,7 +7421,7 @@ function renderAggregatedCommodityCard(commodity) {
         <span class="goods-badge">${number(commodity.sellUnits)} ${escapeHtml(t("units_live"))}</span>
       </div>
       <div class="goods-card-footer">
-        <strong>${commodity.bestSell == null ? "--" : number(commodity.bestSell)}</strong>
+        <strong data-live-price="${escapeHtml(livePriceKey("card", commodity.commodityKey, "all"))}" data-price-value="${commodity.bestSell == null ? "" : escapeHtml(String(commodity.bestSell))}">${commodity.bestSell == null ? "--" : number(commodity.bestSell)}</strong>
         <span>${escapeHtml(t("lowest_sell"))}</span>
       </div>
     </button>
@@ -5821,7 +7557,7 @@ function playViewMotion() {
 
   const body = document.body;
   body.classList.remove("view-enter", "grid-enter", "status-enter");
-  if (prefersReducedMotion()) {
+  if (prefersReducedMotion() || renderGuard.inViewTransition) {
     return;
   }
   if (viewChanged) {
@@ -5842,15 +7578,13 @@ function playViewMotion() {
 }
 
 function renderDetail() {
+  // 输入法正在组字时推迟重绘,组字结束(compositionend)后补一次,避免拼音字母被当成文字提交。
+  if (isComposingIn(els.marketDetail)) {
+    renderGuard.deferred = true;
+    return;
+  }
   if (els.allListingsNav) {
     els.allListingsNav.classList.toggle("active", state.activeProductTab === "all");
-  }
-  const bars = [];
-  if (state.status) {
-    bars.push(`<div class="status-bar" aria-live="polite">${escapeHtml(state.status)}</div>`);
-  }
-  if (state.error) {
-    bars.push(`<div class="status-bar error" aria-live="polite">${escapeHtml(state.error)}</div>`);
   }
 
   // 全部商品作为一级入口放导航首位;点它留在全服视图,点其余进选中市场对应功能。全服视图与市场详情共用这排导航。
@@ -5866,16 +7600,19 @@ function renderDetail() {
         ${workspaceButton("map", t("map_tab"))}
     </div>
   `;
-  // 一级导航渲染在顶栏 #workspace-nav;每次整体替换,不会累积监听器。
+  // 一级导航渲染在顶栏 #workspace-nav,原地更新;点击由事件委托处理。
   if (els.workspaceNav) {
-    els.workspaceNav.innerHTML = workspaceNav;
+    morphInto(els.workspaceNav, workspaceNav);
+    // 顶栏放不下全部页签时在右侧淡出,提示可以横向滚动。
+    const navStrip = els.workspaceNav.querySelector(".workspace-switch");
+    navStrip?.classList.toggle("is-overflowing", navStrip.scrollWidth > navStrip.clientWidth + 2);
   }
   syncTerminalPicker();
 
   if (state.activeProductTab === "all") {
     renderTopbarWallet();
-    els.marketDetail.innerHTML = `${bars.join("")}<div class="market-shell">${renderAggregatedView()}</div>`;
-    bindDetailActions();
+    commitDetailHtml(`<div class="market-shell">${renderAggregatedView()}</div>`);
+    syncDetailControls();
     playViewMotion();
     if (!state.aggregatedLoaded) {
       loadAggregatedListings();
@@ -5897,8 +7634,8 @@ function renderDetail() {
 
   if (!state.detail) {
     renderTopbarWallet();
-    els.marketDetail.innerHTML = `${bars.join("")}<div class="market-shell">${state.activeProductTab === "map" ? renderMarketMapPlaceholder(null, !!state.session, false) : `<div class="empty-state">${escapeHtml(t("select_market_prompt"))}</div>`}</div>`;
-    bindDetailActions();
+    commitDetailHtml(`<div class="market-shell">${state.activeProductTab === "map" ? renderMapWorkspace(null, !!state.session, false) : `<div class="empty-state">${escapeHtml(t("select_market_prompt"))}</div>`}</div>`);
+    syncDetailControls();
     playViewMotion();
     mountMarketMapIfNeeded();
     return;
@@ -5933,7 +7670,8 @@ function renderDetail() {
     cardRenderer: (commodity) => normalizeBrowseOrderView(state.browseOrderView) === "demand"
       ? renderDemandCommodityCard(commodity)
       : renderPurchaseCommodityCard(commodity),
-    headExtra: renderBrowseOrderModeSwitch(purchaseCatalog.length, demandCatalog.length)
+    headExtra: renderBrowseOrderModeSwitch(purchaseCatalog.length, demandCatalog.length),
+    heatmapRoute: normalizeBrowseOrderView(state.browseOrderView) === "demand" ? "demand" : "sell"
   });
   const inventorySection = renderCatalogShelf({
     catalog: inventoryCatalog,
@@ -5944,8 +7682,7 @@ function renderDetail() {
     cardRenderer: (commodity) => renderInventoryCard(commodity)
   });
 
-  els.marketDetail.innerHTML = `
-    ${bars.join("")}
+  commitDetailHtml(`
     <div class="market-shell">
       ${renderMarketStrip(detail, catalog, canAct, canManage)}
 
@@ -5953,7 +7690,7 @@ function renderDetail() {
         ${activeWorkspaceSection() === "orders"
           ? renderMyOrdersPage(detail)
           : (state.activeProductTab === "map"
-          ? renderMarketMapPlaceholder(detail, canAct, canManage)
+          ? renderMapWorkspace(detail, canAct, canManage)
           : (state.activeProductTab === "browse"
           ? browseSection
           : (state.activeProductTab === "inventory"
@@ -5965,9 +7702,9 @@ function renderDetail() {
               : browseSection))))}
       </section>
     </div>
-  `;
+  `);
 
-  bindDetailActions();
+  syncDetailControls();
   playViewMotion();
   hydrateCommodityIcons();
   hydrateLightweightChart();
@@ -6003,6 +7740,87 @@ function orderQueueText(order) {
   return t("queue_position").replace("%1", position).replace("%2", minutes);
 }
 
+// 后端 myOrders 目前只带 listingId:能在当前终端的挂单里找到时显示物品名和图标;
+// 找不到(已售罄下架,或是在别的终端买的)时标题显示订单号。
+function orderCommodity(order, detail) {
+  const listing = (detail?.listings || []).find((entry) => String(entry.listingId) === String(order.listingId));
+  return {
+    key: order.commodityKey || listing?.commodityKey || "",
+    name: order.itemName || order.displayName || listing?.itemName || ""
+  };
+}
+
+// ---- 物流时间轴 ----
+// 卖家发货 / 自动自提:已付款 → 等待发货 → 运输中 → 已送达;真人自提:已付款 → 已锁定自提 → 已送达。
+const ORDER_FLOW_SHIP = ["PAID", "WAITING_SHIPMENT", "IN_TRANSIT", "DELIVERED"];
+const ORDER_FLOW_PICKUP = ["PAID", "PICKUP_LOCKED", "DELIVERED"];
+
+function renderOrderTimeline(order) {
+  const status = String(order.status || "").toUpperCase();
+  const cancelled = status === "CANCELLED";
+  const flow = status === "PICKUP_LOCKED" ? ORDER_FLOW_PICKUP : ORDER_FLOW_SHIP;
+  const reached = cancelled ? -1 : flow.indexOf(status);
+  if (!cancelled && reached < 0) {
+    return "";
+  }
+  return `
+    <ol class="order-timeline ${cancelled ? "is-cancelled" : ""}" aria-label="${escapeHtml(t("order_progress"))}">
+      ${flow.map((step, index) => {
+        const stage = cancelled ? "is-pending" : (index < reached ? "is-done" : (index === reached ? "is-current" : "is-pending"));
+        return `<li class="${stage}"${stage === "is-current" ? ' aria-current="step"' : ""}><span>${escapeHtml(localizeOrderStatus(step))}</span></li>`;
+      }).join("")}
+      ${cancelled ? `<li class="is-cancelled-step" aria-current="step"><span>${escapeHtml(localizeOrderStatus("CANCELLED"))}</span></li>` : ""}
+    </ol>
+  `;
+}
+
+// 排队预计时间按秒倒数:以数据拉取时刻为起点,页面上每秒更新一次文字。
+function etaCountdownText(remainingSeconds) {
+  return remainingSeconds > 0 ? t("eta_countdown", { time: formatEtaSeconds(remainingSeconds) }) : t("eta_any_moment");
+}
+
+function renderEtaCountdown(order) {
+  const seconds = Number(order.queueEtaSeconds || 0);
+  if (seconds <= 0 || !state.detailFetchedAt) {
+    return "";
+  }
+  const deadline = state.detailFetchedAt + seconds * 1000;
+  return `<span class="eta-countdown" data-eta-deadline="${deadline}">${escapeHtml(etaCountdownText(Math.max(0, Math.round((deadline - Date.now()) / 1000))))}</span>`;
+}
+
+// 有倒数时用"排第 N 位 · 21m 00s 后发货"代替静态的"约 21 分钟"。
+function renderOrderQueue(order) {
+  const position = Number(order.queuePosition || 0);
+  if (position <= 0) {
+    return "";
+  }
+  const countdown = renderEtaCountdown(order);
+  return `<div class="muted-inline order-queue">${countdown
+    ? `${escapeHtml(t("order_queue_place", { position }))} · ${countdown}`
+    : escapeHtml(orderQueueText(order))}</div>`;
+}
+
+let etaTimer = 0;
+
+function syncEtaCountdowns() {
+  const nodes = document.querySelectorAll("[data-eta-deadline]");
+  if (!nodes.length) {
+    window.clearInterval(etaTimer);
+    etaTimer = 0;
+    return;
+  }
+  if (!etaTimer) {
+    etaTimer = window.setInterval(syncEtaCountdowns, 1000);
+  }
+  nodes.forEach((node) => {
+    const remaining = Math.max(0, Math.round((Number(node.getAttribute("data-eta-deadline")) - Date.now()) / 1000));
+    const text = etaCountdownText(remaining);
+    if (node.textContent !== text) {
+      node.textContent = text;
+    }
+  });
+}
+
 function renderMyOrdersPage(detail) {
   const orders = Array.isArray(detail?.myOrders) ? detail.myOrders : [];
   const canAct = !!state.session;
@@ -6029,15 +7847,18 @@ function renderMyOrdersPage(detail) {
 
   const cards = orders.map((order) => {
     const orderId = String(order.orderId || "");
-    const queueText = orderQueueText(order);
     const cancellable = CANCELLABLE_ORDER_STATUSES.has(String(order.status || "").toUpperCase());
     const shipping = order.shipping;
+    const item = orderCommodity(order, detail);
     return `
       <div class="surface-card my-order-card">
         <div class="panel-head">
-          <div>
-            <p class="section-kicker">${escapeHtml(t("listing_word"))}</p>
-            <h3>${escapeHtml(order.listingId || orderId || "-")}</h3>
+          <div class="order-card-title">
+            ${item.key ? renderCommodityIcon(item.key, item.name || item.key) : ""}
+            <div>
+              <p class="section-kicker">${escapeHtml(item.name ? `${t("order_word")} ${orderId || "-"}` : t("order_word"))}</p>
+              <h3>${escapeHtml(item.name ? t("order_item_title", { name: item.name, qty: number(order.quantity) }) : (orderId || "-"))}</h3>
+            </div>
           </div>
           <span class="pill">${escapeHtml(localizeOrderStatus(order.status))}</span>
         </div>
@@ -6045,8 +7866,14 @@ function renderMyOrdersPage(detail) {
           ${metricBox(t("quantity"), number(order.quantity))}
           ${metricBox(t("total_price_word"), number(order.totalPrice))}
         </div>
-        <div class="muted-inline"><strong>${escapeHtml(order.sourceDockName || "-")}</strong> -> <strong>${escapeHtml(order.targetDockName || "-")}</strong></div>
-        ${queueText ? `<div class="muted-inline order-queue">${escapeHtml(queueText)}</div>` : ""}
+        ${renderOrderTimeline(order)}
+        <div class="muted-inline"><strong>${escapeHtml(order.sourceDockName || "-")}</strong> → <strong>${escapeHtml(order.targetDockName || "-")}</strong></div>
+        ${renderOrderQueue(order)}
+        ${order.shippingOrderId ? `
+          <div class="actions">
+            <button type="button" class="secondary" data-track-shipment="${escapeHtml(order.shippingOrderId)}">${escapeHtml(t("order_track_on_map"))}</button>
+          </div>
+        ` : ""}
         ${shipping ? `
           <div class="muted-inline">
             ${escapeHtml(t("shipping_word"))}: ${escapeHtml(shipping.boatName || "-")} · ${escapeHtml(shipping.routeName || "-")} · ${escapeHtml(localizeOrderStatus(shipping.status))}
@@ -6121,7 +7948,12 @@ function renderCommodityDetailPage(commodity, detail, canManage, canAct, options
             <span class="goods-category-tag">${escapeHtml(categoryLabel(commodity.category))}</span>
             <span class="goods-rarity-tag ${rarityClassName(commodity.rarity)}">${escapeHtml(rarityLabel(commodity.rarity))}</span>
           </div>
-          <h2>${escapeHtml(commodity.displayName)}</h2>
+          <div class="goods-title-row">
+            <h2>${escapeHtml(commodity.displayName)}</h2>
+            <button type="button" class="watch-toggle ${isWatched(commodity.commodityKey) ? "is-on" : ""}" data-watch-toggle="${escapeHtml(commodity.commodityKey)}" aria-pressed="${isWatched(commodity.commodityKey) ? "true" : "false"}">
+              <span aria-hidden="true">${isWatched(commodity.commodityKey) ? "★" : "☆"}</span> ${escapeHtml(isWatched(commodity.commodityKey) ? t("watch_on") : t("watch_add"))}
+            </button>
+          </div>
           <div class="muted">${escapeHtml(commodity.commodityKey)}</div>
           <div class="goods-stats">
             ${metricBox(t("sell_listings"), number(commodity.totalListings))}
@@ -6137,11 +7969,11 @@ function renderCommodityDetailPage(commodity, detail, canManage, canAct, options
         <aside class="buy-box quote-panel">
           <div class="quote-box">
             <span class="quote-label">${escapeHtml(t("lowest_sell"))}</span>
-            <strong class="price-line">${commodity.bestSell == null ? "--" : number(commodity.bestSell)}</strong>
+            <strong class="price-line" data-live-price="${escapeHtml(livePriceKey("quote", commodity.commodityKey, aggregate ? "all" : ""))}" data-price-value="${commodity.bestSell == null ? "" : escapeHtml(String(commodity.bestSell))}">${commodity.bestSell == null ? "--" : number(commodity.bestSell)}</strong>
           </div>
           <div class="quote-box buy">
             <span class="quote-label">${escapeHtml(t("highest_buy"))}</span>
-            <strong>${commodity.bestBuy == null ? "--" : `${number(commodity.bestBuy)} <small>bp</small>`}</strong>
+            <strong class="${commodity.bestBuy == null ? "" : "coin-figure"}">${commodity.bestBuy == null ? "--" : `${number(bestBidPrice(commodity))} <small>${commodity.bestBuy > 0 ? "+" : ""}${number(commodity.bestBuy)} bp</small>`}</strong>
           </div>
           <div class="actions buy-box-actions">
             ${aggregate
@@ -6273,13 +8105,7 @@ window.matchMedia?.("(prefers-color-scheme: light)")?.addEventListener?.("change
   }
 });
 
-els.localeSelect?.addEventListener("change", (event) => {
-  state.locale = event.target.value || "zh-CN";
-  localStorage.setItem("marketWebLocale", state.locale);
-  updateStaticCopy();
-  renderMarkets();
-  renderDetail();
-});
+els.localeSelect?.addEventListener("change", (event) => switchLocale(event.target.value || "zh-CN"));
 els.marketSearch?.addEventListener("input", (event) => {
   state.marketQuery = event.target.value || "";
   renderMarkets();
@@ -6319,26 +8145,387 @@ window.addEventListener("popstate", async () => {
   }
 });
 
+// 后台自动刷新:config.json 的 autoRefreshSeconds > 0 时启用(最短 5 秒)。
+// 只在页面可见、没有打开对话框、没有在输入法组字时刷新当前视图;失败静默,下次再试。
+const autoRefresh = { timer: 0, running: false, lastRun: 0 };
+// 实时推送在线时,配置的轮询放慢到至少一分钟一次兜底:服务器可能只推送网页上的操作,不推送游戏内终端的变化。
+const LIVE_SAFETY_POLL_MS = 60000;
+
+function autoRefreshIntervalMs() {
+  const seconds = Number(state.settings.autoRefreshSeconds) || 0;
+  return seconds > 0 ? Math.max(5, seconds) * 1000 : 0;
+}
+
+async function refreshVisibleData({ force = false } = {}) {
+  if (autoRefresh.running || document.visibilityState !== "visible") {
+    return;
+  }
+  // 实时推送在线时由事件驱动刷新,定时轮询只做慢速兜底。
+  if (!force && live.status === "live" && Date.now() - autoRefresh.lastRun < LIVE_SAFETY_POLL_MS) {
+    return;
+  }
+  if (document.querySelector("dialog[open]") || renderGuard.composing) {
+    return;
+  }
+  autoRefresh.running = true;
+  try {
+    if (state.activeProductTab === "all") {
+      await loadAggregatedListings({ silent: true });
+      if (state.aggregatedSelectedCommodityKey) {
+        await loadAggregatedDetail(state.aggregatedSelectedCommodityKey, { force: true, silent: true });
+      }
+    } else if (state.selectedMarketId && state.activeProductTab !== "map") {
+      await loadMarketDetail(state.selectedMarketId, "replace", { silent: true });
+    }
+  } finally {
+    autoRefresh.running = false;
+    autoRefresh.lastRun = Date.now();
+  }
+}
+
+function startAutoRefresh() {
+  window.clearInterval(autoRefresh.timer);
+  const interval = autoRefreshIntervalMs();
+  if (!interval) {
+    return;
+  }
+  autoRefresh.lastRun = Date.now();
+  autoRefresh.timer = window.setInterval(refreshVisibleData, interval);
+}
+
+document.addEventListener("visibilitychange", () => {
+  const interval = autoRefreshIntervalMs();
+  if (interval && document.visibilityState === "visible" && Date.now() - autoRefresh.lastRun >= interval) {
+    refreshVisibleData();
+  }
+});
+
+// ---- 实时推送(SSE) ----
+// 服务器提供 /api/events 时用 fetch 读取事件流:可以带 Authorization 头,令牌不会出现在 URL 和日志里。
+// 断线后指数退避重连,并带 Last-Event-ID 补收错过的事件;服务器没有这个接口(404)时退回 autoRefreshSeconds 轮询。
+// 事件只是"某处变了"的通知,页面收到后静默拉取当前视图的数据,再由 morph 原地更新。
+const live = {
+  status: "idle",
+  controller: null,
+  lastEventId: "",
+  retryMs: 1000,
+  retryTimer: 0,
+  reconnecting: false,
+  rotating: false,
+  marketTimer: 0,
+  aggregatedTimer: 0,
+  trades: [],
+  tradeSerial: 0
+};
+
+const LIVE_STATUS_LABELS = {
+  connecting: "live_status_connecting",
+  live: "live_status_live",
+  offline: "live_status_offline",
+  unsupported: "live_status_polling"
+};
+
+function setLiveStatus(status) {
+  live.status = status;
+  renderLiveStatus();
+}
+
+function renderLiveStatus() {
+  const host = document.querySelector("#live-status");
+  if (!host || !window.litHtml) {
+    return;
+  }
+  // 服务器不支持实时推送、也没有开启定时刷新时,不显示状态标识。
+  const visible = live.status !== "idle" && !(live.status === "unsupported" && !autoRefreshIntervalMs());
+  host.hidden = !visible;
+  if (!visible) {
+    return;
+  }
+  const { html, render } = window.litHtml;
+  const label = t(LIVE_STATUS_LABELS[live.status] || "live_status_offline");
+  host.title = label;
+  // 顶栏空间有限:只显示状态圆点,文字给读屏软件和鼠标悬停提示。
+  render(html`<span class="live-dot" data-live=${live.status} aria-hidden="true"></span><span class="sr-only">${label}</span>`, host);
+}
+
+function startLiveFeed() {
+  if (live.status !== "idle") {
+    return;
+  }
+  connectLiveFeed();
+}
+
+// 登录、登出后事件的接收人变了(个人订单与钱包事件),重新建立连接。
+function restartLiveFeed() {
+  if (live.status === "idle" || live.status === "unsupported") {
+    return;
+  }
+  live.controller?.abort();
+  live.controller = null;
+  live.lastEventId = "";
+  connectLiveFeed();
+}
+
+async function connectLiveFeed({ quiet = false } = {}) {
+  window.clearTimeout(live.retryTimer);
+  const controller = new AbortController();
+  live.controller = controller;
+  live.rotating = false;
+  if (!quiet) {
+    setLiveStatus("connecting");
+  }
+  try {
+    const headers = new Headers({ Accept: "text/event-stream" });
+    if (state.sessionToken) {
+      headers.set("Authorization", `Bearer ${state.sessionToken}`);
+    }
+    if (live.lastEventId) {
+      headers.set("Last-Event-ID", live.lastEventId);
+    }
+    const response = await fetch("/api/events", { headers, signal: controller.signal, cache: "no-store" });
+    if (!response.ok || !response.body) {
+      // 读掉/取消响应体,否则连接会一直挂着。
+      response.body?.cancel().catch(() => {});
+      if (response.status === 404 || response.status === 405 || response.status === 501) {
+        live.controller = null;
+        setLiveStatus("unsupported");
+        return;
+      }
+      throw new Error(`HTTP ${response.status}`);
+    }
+    setLiveStatus("live");
+    live.retryMs = 1000;
+    if (live.reconnecting) {
+      // 断线期间可能错过个人事件:重连后静默刷新一次当前视图。
+      live.reconnecting = false;
+      refreshVisibleData({ force: true });
+    }
+    await readEventStream(response.body, controller.signal);
+    if (live.rotating && !controller.signal.aborted) {
+      // 服务器按计划轮换连接(JDK HttpServer 有响应时长上限):立即重连,Last-Event-ID 补收,状态保持"实时"。
+      connectLiveFeed({ quiet: true });
+      return;
+    }
+    throw new Error("stream closed");
+  } catch (error) {
+    if (controller.signal.aborted) {
+      return;
+    }
+    live.controller = null;
+    live.reconnecting = true;
+    setLiveStatus("offline");
+    live.retryTimer = window.setTimeout(connectLiveFeed, live.retryMs);
+    live.retryMs = Math.min(30000, live.retryMs * 2);
+  }
+}
+
+// text/event-stream 解析:按空行分隔事件,支持 event / data / id / retry 字段,冒号开头的是注释(心跳)。
+async function readEventStream(body, signal) {
+  const reader = body.getReader();
+  const decoder = new TextDecoder();
+  let buffer = "";
+  let event = { type: "message", data: [] };
+  while (!signal.aborted) {
+    const { value, done } = await reader.read();
+    if (done) {
+      return;
+    }
+    buffer += decoder.decode(value, { stream: true });
+    let newline = buffer.indexOf("\n");
+    while (newline >= 0) {
+      let line = buffer.slice(0, newline);
+      buffer = buffer.slice(newline + 1);
+      newline = buffer.indexOf("\n");
+      if (line.endsWith("\r")) {
+        line = line.slice(0, -1);
+      }
+      if (!line) {
+        if (event.data.length) {
+          dispatchLiveEvent(event.type, event.data.join("\n"));
+        }
+        event = { type: "message", data: [] };
+        continue;
+      }
+      if (line.startsWith(":")) {
+        continue;
+      }
+      const colon = line.indexOf(":");
+      const field = colon < 0 ? line : line.slice(0, colon);
+      let fieldValue = colon < 0 ? "" : line.slice(colon + 1);
+      if (fieldValue.startsWith(" ")) {
+        fieldValue = fieldValue.slice(1);
+      }
+      if (field === "event") {
+        event.type = fieldValue || "message";
+      } else if (field === "data") {
+        event.data.push(fieldValue);
+      } else if (field === "id") {
+        live.lastEventId = fieldValue;
+      } else if (field === "retry" && Number(fieldValue) > 0) {
+        live.retryMs = Number(fieldValue);
+      }
+    }
+  }
+}
+
+function dispatchLiveEvent(type, data) {
+  let payload;
+  try {
+    payload = JSON.parse(data);
+  } catch (_) {
+    return;
+  }
+  if (!payload || typeof payload !== "object") {
+    return;
+  }
+  if (type === "market") {
+    // marketId "*": the server only knows that market data changed (in game or on the web), so refresh what is open.
+    const marketId = String(payload.marketId || "");
+    if (state.activeProductTab === "all") {
+      scheduleLiveRefresh("aggregated");
+    } else if (marketId && (marketId === "*" || marketId === state.selectedMarketId)) {
+      scheduleLiveRefresh("market");
+    }
+  } else if (type === "trade") {
+    recordLiveTrade(payload);
+  } else if (type === "order") {
+    setStatus(t("live_order_update", { id: String(payload.orderId || ""), status: localizeOrderStatus(payload.status) }));
+    scheduleLiveRefresh("market");
+  } else if (type === "wallet") {
+    scheduleLiveRefresh("market");
+  } else if (type === "rotate") {
+    live.rotating = true;
+  }
+}
+
+// 同一波事件只刷新一次:350ms 内的多条通知合并。
+function scheduleLiveRefresh(kind) {
+  const timerKey = kind === "aggregated" ? "aggregatedTimer" : "marketTimer";
+  window.clearTimeout(live[timerKey]);
+  live[timerKey] = window.setTimeout(() => {
+    if (kind === "aggregated") {
+      loadAggregatedListings({ silent: true });
+      if (state.aggregatedSelectedCommodityKey) {
+        loadAggregatedDetail(state.aggregatedSelectedCommodityKey, { force: true, silent: true });
+      }
+    } else if (state.selectedMarketId) {
+      loadMarketDetail(state.selectedMarketId, "replace", { silent: true });
+    }
+  }, 350);
+}
+
+function recordLiveTrade(payload) {
+  const unitPrice = Number(payload.unitPrice);
+  const commodityKey = String(payload.commodityKey || "");
+  if (!commodityKey || !Number.isFinite(unitPrice)) {
+    return;
+  }
+  const previous = live.trades.find((trade) => trade.commodityKey === commodityKey);
+  let direction = "flat";
+  if (previous && unitPrice > previous.unitPrice) {
+    direction = "up";
+  } else if (previous && unitPrice < previous.unitPrice) {
+    direction = "down";
+  }
+  live.trades.unshift({
+    id: ++live.tradeSerial,
+    commodityKey,
+    itemName: String(payload.itemName || knownItemName(commodityKey) || commodityKey),
+    unitPrice,
+    quantity: Number(payload.quantity) || 0,
+    direction
+  });
+  live.trades.length = Math.min(live.trades.length, 16);
+  renderLiveTicker();
+}
+
+// 服务器的成交事件只带物品 key:从已加载的终端详情或全服挂单里找显示名称。
+function knownItemName(commodityKey) {
+  const rows = [...(state.detail?.listings || []), ...(state.aggregatedListings || [])];
+  const hit = rows.find((row) => row.commodityKey === commodityKey && (row.itemName || row.displayName));
+  return hit ? String(hit.itemName || hit.displayName) : "";
+}
+
+// 成交跑马灯用 lit-html 渲染:列表按成交编号增量更新,物品名等玩家数据自动转义。
+function renderLiveTicker() {
+  const host = document.querySelector("#live-ticker");
+  if (!host || !window.litHtml) {
+    return;
+  }
+  host.hidden = !live.trades.length;
+  if (!live.trades.length) {
+    return;
+  }
+  host.setAttribute("aria-label", t("live_ticker_label"));
+  const { html, render, repeat } = window.litHtml;
+  render(html`
+    <span class="live-ticker-label">${t("live_ticker_label")}</span>
+    <ol class="live-ticker-list">
+      ${repeat(live.trades, (trade) => trade.id, (trade) => html`
+        <li class=${`is-${trade.direction}`}>
+          <button type="button" class="ticker-item" data-ticker-commodity=${trade.commodityKey}>
+            <span>${trade.itemName}</span>
+            <strong class="coin-figure">${number(trade.unitPrice)}</strong>
+            <small>×${number(trade.quantity)}</small>
+          </button>
+        </li>
+      `)}
+    </ol>
+  `, host);
+}
+
+// 价格闪烁:每次渲染后比较 data-live-price 元素与上次显示的价格,上涨闪绿、下跌闪红。
+const shownPrices = new Map();
+
+function livePriceKey(kind, commodityKey, scope = "") {
+  const market = state.activeProductTab === "all" ? "all" : state.selectedMarketId;
+  return `${market}|${kind}|${scope}|${commodityKey}`;
+}
+
+function flashChangedPrices() {
+  document.querySelectorAll("[data-live-price]").forEach((node) => {
+    const key = node.getAttribute("data-live-price") || "";
+    const raw = node.getAttribute("data-price-value") || "";
+    const value = Number(raw);
+    if (!key || !raw || !Number.isFinite(value)) {
+      return;
+    }
+    const previous = shownPrices.get(key);
+    shownPrices.set(key, value);
+    if (previous === undefined || previous === value || prefersReducedMotion()) {
+      return;
+    }
+    node.classList.remove("price-up", "price-down");
+    void node.offsetWidth;
+    node.classList.add(value > previous ? "price-up" : "price-down");
+  });
+}
+
+registerDetailActions();
+installDelegatedHandlers();
+
 (async function init() {
   applyRouteFromLocation();
-  await loadSettings();
-  await loadServerVersion();
+  // 配置、版本与会话互不依赖,并行请求;会话失效时退回游客模式,市场照常加载。
+  let sessionError = null;
+  await Promise.all([
+    loadSettings(),
+    loadServerVersion(),
+    state.sessionToken ? hydrateSession().catch((error) => { sessionError = error; }) : null
+  ]);
   renderSession();
   renderMarkets();
   renderDetail();
-  if (!state.sessionToken) {
-    try {
-      await loadMarkets("replace");
-    } catch (error) {
-      setStatus(error.message, true);
-    }
-    return;
-  }
   try {
-    await hydrateSession();
     await loadMarkets("replace");
-    setStatus(t("signed_in_as", { name: state.session.playerName }));
   } catch (error) {
     setStatus(error.message, true);
   }
+  if (sessionError) {
+    setStatus(t("session_expired"), true);
+  } else if (state.session) {
+    setStatus(t("signed_in_as", { name: state.session.playerName }));
+  }
+  startAutoRefresh();
+  startLiveFeed();
 })();

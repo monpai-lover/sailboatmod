@@ -105,6 +105,7 @@ public final class ServerEvents {
             if (server.getTickCount() % 20 == 0) {
                 com.monpai.sailboatmod.market.MarketSavedData.get(server.overworld()).retryDeliveredEscrows();
             }
+            com.monpai.sailboatmod.market.MarketLiveSync.tick(server);
             if (++loanTickCounter >= 1200) {
                 loanTickCounter = 0;
                 BANK_LOANS.tick(server);
@@ -170,6 +171,7 @@ public final class ServerEvents {
         ClaimMapTaskService.onServerStopping();
         RoadPlanningTaskService.onServerStopping();
         SharedMapServerState.onServerStopped();
+        com.monpai.sailboatmod.market.MarketLiveSync.reset();
         com.monpai.sailboatmod.roadplanner.service.SharedMapTerrainService.stop();
         com.monpai.sailboatmod.map.route.MapRouteCatalogService.stop();
         com.monpai.sailboatmod.transport.TransportRegistry.clear(event.getServer());

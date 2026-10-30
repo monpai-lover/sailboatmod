@@ -1,5 +1,6 @@
 package com.monpai.sailboatmod.network.packet;
 
+import com.monpai.sailboatmod.market.MarketLiveSync;
 import com.monpai.sailboatmod.block.entity.MarketBlockEntity;
 import com.monpai.sailboatmod.network.ModNetwork;
 import net.minecraft.core.BlockPos;
@@ -46,10 +47,7 @@ public class CancelPurchaseOrderPacket {
                         new MarketStatusNoticePacket(packet.marketPos, Component.translatable(messageKey).getString(), result.success())
                 );
             }
-            ModNetwork.CHANNEL.send(
-                    player,
-                    new OpenMarketScreenPacket(market.buildOverview(player))
-            );
+            MarketLiveSync.sendOverview(player, market);
         });
         context.setPacketHandled(true);
     }

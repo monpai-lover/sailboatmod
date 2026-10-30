@@ -28,7 +28,7 @@
 - [x] Extend MarketBlockEntity auto-dispatch, previews, reachability, pickup and return paths for airports.
 - [x] Add player-facing airport registration/validation commands and controller flight settings with owner/management permissions.
 - [x] Extend trace NBT/JSON, three aircraft renderers, airport/runway map API/layer and mock fixtures. Verify old records and permission boundaries.
-- [ ] Run targeted JUnit/Node tests, full build/test where environment permits, inspect built resources, and capture current browser renders from the mock server.
+- [x] Run targeted JUnit/Node tests, full build/test where environment permits, inspect built resources, and capture current browser renders from the mock server. Combined live-market build: 2057 JUnit tests (1 skipped), 109 Node tests, both fix_14 JARs verified; see `docs/handoff/air-transport/verification.md`.
 - [x] Independent review of integration and lifecycle invariants; fix findings and document exact runtime dependencies, setup and remaining live-game verification.
 - [ ] Live game acceptance: three airframes, actual cargo, airport procedures and reload ordering. Automatic in-air restart continuation is not implemented.
 

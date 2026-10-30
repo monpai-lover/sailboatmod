@@ -51,6 +51,7 @@ public class MarketScreen extends Screen implements MenuAccess<MarketMenu>, Mark
         this.menu = menu;
         MarketOverviewData initial = MarketClientHooks.consumeFor(menu.getMarketPos());
         this.model = new MarketViewModel(initial != null ? initial : MarketViewModel.placeholder(menu.getMarketPos()));
+        this.model.setWatchlist(UiPreferences.get().marketWatchlist());
         this.controller = new MarketController(model, ModNetwork.CHANNEL::sendToServer, () -> ticks);
         MarketClientHooks.MarketNotice notice = MarketClientHooks.consumeNoticeFor(menu.getMarketPos());
         if (notice != null) {
@@ -81,6 +82,12 @@ public class MarketScreen extends Screen implements MenuAccess<MarketMenu>, Mark
                 @Override
                 public long tick() {
                     return ticks;
+                }
+
+                @Override
+                public java.util.Set<String> toggleWatch(String commodityKey) {
+                    UiPreferences.get().toggleMarketWatch(commodityKey);
+                    return UiPreferences.get().marketWatchlist();
                 }
             });
             modularUI = ThemedUi.create(view.root(), UiPreferences.get().theme());
@@ -121,6 +128,15 @@ public class MarketScreen extends Screen implements MenuAccess<MarketMenu>, Mark
             if (notice != null) {
                 view.showToast(Component.literal(notice.message()), notice.positive());
             }
+            view.refresh();
+        }
+    }
+
+    /** Another player's change reached this market; this player's own pending action keeps waiting for its answer. */
+    public void applyLiveUpdate(MarketOverviewData updated) {
+        List<MarketOverviewData.MyOrderEntry> changedOrders = controller.onLiveUpdate(updated);
+        if (view != null) {
+            view.announceOrderChanges(changedOrders);
             view.refresh();
         }
     }
@@ -166,6 +182,10 @@ public class MarketScreen extends Screen implements MenuAccess<MarketMenu>, Mark
 
     @Override
     public boolean keyPressed(int keyCode, int scanCode, int modifiers) {
+        if (keyCode == GLFW.GLFW_KEY_F && hasControlDown() && view != null) {
+            view.focusSearch();
+            return true;
+        }
         if (keyCode == GLFW.GLFW_KEY_ESCAPE && modularUI != null) {
             // Escape steps back: leave a text field, close a dropdown, close the dialog, go up one view, then close.
             UIElement focused = modularUI.getFocusedElement();

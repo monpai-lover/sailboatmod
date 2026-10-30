@@ -65,7 +65,9 @@ expectContains(appJs, "mapApi.mount", "MAP page must mount the selected live map
 expectContains(appJs, "marketWebAccessPanelOpenV2", "login panel should use the compact-layout access state key");
 expectContains(appJs, "/api/items/resolve", "buy order form should resolve arbitrary registered item ids");
 expectContains(appJs, "buy-order-preview", "buy order form should render an item preview panel");
-expectContains(appJs, "attachBuyOrderItemResolver", "buy order item id input should hydrate icon/name before submitting");
+expectContains(appJs, 'onDelegated("input", "#buy-order-key"', "buy order item id input must schedule resolution through delegated events");
+expectContains(appJs, 'onDelegated("change", "#buy-order-key"', "buy order item id changes must immediately resolve the preview");
+expectContains(appJs, "resolveBuyOrderItemInput(buyOrderResolveSequence)", "buy order input changes must hydrate the current item preview");
 expectContains(appJs, "commodityIconCache.set(item.commodityKey", "buy order resolver should cache the resolved item icon immediately");
 expectContains(appJs, "buy-order-unit-price", "buy order form should use an actual unit price field");
 expectContains(appJs, "buyOrderPriceToBp", "buy order form should derive bp from the actual unit price");
@@ -79,12 +81,13 @@ expectContains(appCss, ".market-map-canvas", "MAP canvas styles must remain pres
 expectContains(appCss, ".map-tooltip-flag-frame", "MAP flag tooltip frame must remain fixed-size");
 expectContains(appCss, ".buy-order-preview", "buy order item preview styles must remain present");
 expectContains(indexHtml, 'lang="zh-CN"', "marketweb should default to the Chinese locale");
-expectContains(indexHtml, "/map.js", "marketweb must load the live map script");
+expectContains(appJs, "ensureMapLibraries().then", "marketweb must await lazy map libraries before mounting the map");
+expectContains(appJs, 'loadAssetOnce("/map.js")', "marketweb must load the live map script on demand");
 expectContains(mapJs, "window.SailboatMarketMap", "map.js must expose SailboatMarketMap");
 expectContains(mapJs, "/api/map/square/tile/overworld/${tileZoom}/", "map.js must request cached squaremap tiles");
 expectContains(mapJs, "setLineDash", "map.js must draw dashed remaining shipment traces");
 expectContains(mapJs, "drawShipmentVehicleIcon", "map.js must draw a directional vehicle icon on active shipment traces");
-expectContains(indexHtml, "/logistics-render.js", "marketweb must load the shared logistics renderer");
+expectContains(appJs, 'loadAssetOnce("/logistics-render.js")', "the map loader must include the shared logistics renderer");
 expectContains(mapJs, "api.drawVehicle(ctx, kind, size, style", "map.js must delegate shipment icons to the shared logistics renderer");
 expectContains(logisticsJs, "function drawSailboat(", "the shared logistics renderer must include a sailboat-shaped shipment icon");
 expectContains(logisticsJs, "function drawCarriage(", "the shared logistics renderer must include a carriage-shaped shipment icon");
@@ -121,7 +124,8 @@ if (/font-size\s*:\s*clamp\([^;]*vw/.test(appCss)) {
   fail("font sizes should not scale directly with viewport width");
 }
 
-if (appCss.includes("radial-gradient")) {
+// The 3D globe has an intentional space backdrop; trading surfaces remain flat.
+if (appCss.replace(/\.globe-stage\s*\{[^}]*\}/g, "").includes("radial-gradient")) {
   fail("decorative radial gradients should not be used in the trading terminal UI");
 }
 

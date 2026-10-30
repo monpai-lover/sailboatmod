@@ -28,6 +28,33 @@ class OpenMarketScreenPacketTest {
     }
 
     @Test
+    void roundTripPreservesBuyBookReferencePrices() {
+        MarketOverviewData before = emptyOverview(List.of());
+        MarketOverviewData withBooks = new MarketOverviewData(before.marketPos(), before.marketName(), before.ownerName(),
+                before.ownerUuid(), before.viewerUuid(), before.pendingCredits(), before.walletAvailableBalance(),
+                before.walletReservedBalance(), before.walletTotalBalance(), before.treasuryBalance(), before.canTransferTreasury(),
+                before.linkedDock(), before.linkedDockName(), before.linkedDockPosText(), before.dockStorageAccessible(),
+                before.canManage(), before.townId(), before.townName(), before.stockpileCommodityTypes(),
+                before.stockpileTotalUnits(), before.openDemandCount(), before.openDemandUnits(), before.activeProcurementCount(),
+                before.totalIncome(), before.totalExpense(), before.netBalance(), before.employmentRate(),
+                List.of(), List.of(), List.of(), List.of(), List.of(), List.of(), List.of(), List.of(), List.of(),
+                before.dockStorageEntries(), List.of(), List.of(), List.of(), List.of(), List.of(), List.of(),
+                List.of(new MarketOverviewData.CommodityBuyBook("minecraft:diamond", "Diamond", 841, List.of(
+                        new MarketOverviewData.CommodityBuyEntry("B1", "Buyer", 4, -200, 590, 7L, "ACTIVE")))),
+                List.of(), List.of(), List.of(), List.of(), false, List.of());
+        FriendlyByteBuf buffer = new FriendlyByteBuf(Unpooled.buffer());
+        try {
+            OpenMarketScreenPacket.encode(new OpenMarketScreenPacket(withBooks), buffer);
+            MarketOverviewData after = OpenMarketScreenPacket.decode(buffer).dataForTest();
+            assertEquals(withBooks.commodityBuyBooks(), after.commodityBuyBooks());
+            assertEquals(841, after.buyBookFor("minecraft:diamond").referenceUnitPrice());
+            assertEquals(0, buffer.readableBytes());
+        } finally {
+            buffer.release();
+        }
+    }
+
+    @Test
     void roundTripPreservesAvailableDispatchOptions() {
         MarketOverviewData.DispatchOption carrier = new MarketOverviewData.DispatchOption(
                 "PORT",

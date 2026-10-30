@@ -9,6 +9,7 @@ import com.lowdragmc.lowdraglib2.gui.ui.elements.Selector;
 import com.lowdragmc.lowdraglib2.gui.ui.elements.TextField;
 import com.lowdragmc.lowdraglib2.gui.ui.event.UIEvents;
 import com.monpai.sailboatmod.client.ui.kit.ActionButton;
+import com.monpai.sailboatmod.client.ui.kit.MeterBar;
 import com.monpai.sailboatmod.client.ui.kit.PriceChart;
 import com.monpai.sailboatmod.client.ui.kit.Ui;
 import com.monpai.sailboatmod.client.ui.kit.Scrollbars;
@@ -55,6 +56,9 @@ public final class MarketView {
         UiTheme theme();
 
         long tick();
+
+        /** Stars or unstars a commodity in the player's saved watchlist; returns the updated list. */
+        java.util.Set<String> toggleWatch(String commodityKey);
     }
 
     private static final float PANE_WIDTH = 138;
@@ -93,6 +97,7 @@ public final class MarketView {
     private TextField catalogSearchField;
     private Selector<Integer> catalogRarityFilter;
     private Selector<MarketViewModel.PriceBand> catalogPriceFilter;
+    private Button watchOnlyToggle;
     private Label productName;
     private UIElement productSlotHolder;
     private final Map<MarketViewModel.ProductTab, Button> productTabs = new EnumMap<>(MarketViewModel.ProductTab.class);
@@ -117,6 +122,7 @@ public final class MarketView {
     private ActionButton buyAction;
     private ActionButton unlistAction;
     private Button sellersButton;
+    private Button watchButton;
 
     // sell
     private ScrollerView storageList;
@@ -380,7 +386,13 @@ public final class MarketView {
                 catalogPriceFilter = selector(List.of(MarketViewModel.PriceBand.values()), model.priceBand(), this::priceBandLabel, value -> {
                     model.setPriceBand(value);
                     refreshCatalog();
-                }, 56));
+                }, 56),
+                watchOnlyToggle = Ui.button(Component.literal("★"), Ui.Tone.SECONDARY, () -> {
+                    model.setWatchOnly(!model.watchOnly());
+                    refreshCatalog();
+                }));
+        watchOnlyToggle.layout(l -> l.width(20).flexShrink(0));
+        watchOnlyToggle.style(s -> s.tooltips(MarketText.ui("watch_only")));
         resultCount = Ui.alignRight(Ui.clippedText("", "sm-muted"));
         resultCount.layout(l -> l.flexShrink(0).widthPercent(100));
         catalogScroller = Ui.scroller();
@@ -406,9 +418,10 @@ public final class MarketView {
                 productSlotHolder, productName);
         UIElement productTabsRow = Ui.row();
         productTabsRow.layout(l -> l.gapAll(Ui.GAP_XS).flexShrink(0));
-        addProductTab(productTabsRow, MarketViewModel.ProductTab.SELLING, "goods_subtab.selling");
-        addProductTab(productTabsRow, MarketViewModel.ProductTab.BUYING, "goods_subtab.buying");
-        addProductTab(productTabsRow, MarketViewModel.ProductTab.PRICE_CHART, "goods_subtab.history");
+        addProductTab(productTabsRow, MarketViewModel.ProductTab.SELLING, MarketText.market("goods_subtab.selling"));
+        addProductTab(productTabsRow, MarketViewModel.ProductTab.BUYING, MarketText.market("goods_subtab.buying"));
+        addProductTab(productTabsRow, MarketViewModel.ProductTab.ORDER_BOOK, MarketText.ui("order_book"));
+        addProductTab(productTabsRow, MarketViewModel.ProductTab.PRICE_CHART, MarketText.market("goods_subtab.history"));
         productList = Ui.scroller();
         productChart = new PriceChart(true, 32);
         productChart.layout(l -> l.flexGrow(1).minHeight(40));
@@ -474,6 +487,14 @@ public final class MarketView {
             }
         });
         sellersButton.layout(l -> l.widthPercent(100));
+        watchButton = Ui.button(Component.empty(), Ui.Tone.SECONDARY, () -> {
+            MarketOverviewData.ListingEntry listing = model.selectedListing();
+            if (listing != null) {
+                model.setWatchlist(host.toggleWatch(listing.commodityKey()));
+                refresh();
+            }
+        });
+        watchButton.layout(l -> l.widthPercent(100));
         Button bid = Ui.button(MarketText.ui("place_buy_order"), Ui.Tone.SECONDARY, () -> {
             model.useSelectedListingForBuyOrder();
             model.openPage(MarketViewModel.Page.BUY_ORDERS);
@@ -487,14 +508,14 @@ public final class MarketView {
         detailBody.addChildren(head, Ui.divider(), Ui.text(MarketText.ui("lowest_ask"), "sm-muted"), priceRow,
                 keyValueRow(MarketText.market("buying_best_bid"), detailBid),
                 keyValueRow(MarketText.market("catalog.column.stock"), detailStock),
-                Ui.spacer(), detailQtyRow, buyAction.element(), unlistAction.element(), sellersButton, bid);
+                Ui.spacer(), detailQtyRow, buyAction.element(), unlistAction.element(), sellersButton, watchButton, bid);
         detailScroller = Ui.scroller();
         detailScroller.addScrollViewChild(detailBody);
         detailPane.addChildren(detailEmpty, detailScroller);
     }
 
-    private void addProductTab(UIElement row, MarketViewModel.ProductTab tab, String labelKey) {
-        Button button = Ui.button(MarketText.market(labelKey), Ui.Tone.SECONDARY, () -> {
+    private void addProductTab(UIElement row, MarketViewModel.ProductTab tab, Component label) {
+        Button button = Ui.button(label, Ui.Tone.SECONDARY, () -> {
             model.openProductTab(tab);
             refresh();
         });
@@ -504,6 +525,7 @@ public final class MarketView {
     }
 
     private void refreshCatalog() {
+        setClass(watchOnlyToggle, "active", model.watchOnly());
         List<MarketOverviewData.ListingEntry> catalog = model.catalog();
         resultCount.setValue(MarketText.ui("results", catalog.size()));
         catalogGrid.clearAllChildren();
@@ -542,15 +564,34 @@ public final class MarketView {
         card.addChild(name);
         UIElement price = Ui.row();
         price.layout(l -> l.widthPercent(100).gapAll(Ui.GAP_XS));
-        price.addChildren(Ui.icon(new ItemStack(Items.EMERALD), 8), Ui.text(MarketText.money(entry.unitPrice()), "sm-price"));
+        price.addChildren(Ui.icon(new ItemStack(Items.EMERALD), 8),
+                priceLabel(entry.unitPrice(), model.priceMove(entry.commodityKey(), host.tick())));
         card.addChild(price);
-        Label sellers = Ui.text(MarketText.ui("sellers", model.listingCountFor(entry.commodityKey())), "sm-muted");
+        if (model.isWatched(entry.commodityKey())) {
+            Label star = Ui.text("★", "sm-warn");
+            star.layout(l -> l.positionType(TaffyPosition.ABSOLUTE).top(2).right(3));
+            card.addChild(star);
+        }
+        // The 24h change shares the sellers line as coloured text: a second label in these narrow rows makes the two
+        // fight for width (overlapping text and repeated layout passes).
+        Component sellersLine = MarketText.ui("sellers", model.listingCountFor(entry.commodityKey()));
+        Float change = model.change24h(entry.commodityKey());
+        if (change != null) {
+            PriceChart.Palette palette = chartPalette();
+            int color = change > 0 ? palette.up() : change < 0 ? palette.down() : palette.empty();
+            sellersLine = Component.empty().append(sellersLine).append(" ")
+                    .append(Component.literal(MarketText.change(change)).withColor(color & 0xFFFFFF));
+        }
+        Label sellers = Ui.text(sellersLine, "sm-muted");
         sellers.textStyle(t -> t.adaptiveWidth(false));
         sellers.setOverflowVisible(false);
         sellers.layout(l -> l.widthPercent(100));
         card.addChild(sellers);
-        card.style(s -> s.tooltips(Component.literal(entry.itemName()),
-                MarketText.category(entry.category()), MarketText.rarity(entry.rarity())));
+        Component[] tips = change == null
+                ? new Component[]{Component.literal(entry.itemName()), MarketText.category(entry.category()), MarketText.rarity(entry.rarity())}
+                : new Component[]{Component.literal(entry.itemName()), MarketText.category(entry.category()), MarketText.rarity(entry.rarity()),
+                MarketText.ui("change_24h").copy().append(": " + MarketText.change(change))};
+        card.style(s -> s.tooltips(tips));
         // Narrow windows open details on every card click; wide windows keep the second-click seller shortcut.
         return Ui.clickable(card, () -> {
             MarketOverviewData.ListingEntry current = model.selectedListing();
@@ -590,14 +631,54 @@ public final class MarketView {
                     productList.addScrollViewChild(emptyState(MarketText.market("buying_empty"), null));
                 } else {
                     for (MarketOverviewData.CommodityBuyEntry entry : book.entries()) {
+                        int low = MarketViewModel.bidUnitPrice(book.referenceUnitPrice(), entry.minPriceBp());
+                        int high = MarketViewModel.bidUnitPrice(book.referenceUnitPrice(), entry.maxPriceBp());
+                        String band = MarketText.market("buy_order.price_range", entry.minPriceBp(), entry.maxPriceBp()).getString();
                         productList.addScrollViewChild(infoRow(entry.buyerName(),
-                                MarketText.market("buy_order.price_range", entry.minPriceBp(), entry.maxPriceBp()).getString(),
+                                high > 0 ? MarketText.ui("bid_band", MarketText.money(low), MarketText.money(high), band).getString() : band,
                                 "x" + entry.quantity()));
                     }
                 }
             }
+            case ORDER_BOOK -> refreshOrderBook(key);
             case PRICE_CHART -> productChart.setPoints(candlePoints(key)).setPalette(chartPalette());
         }
+    }
+
+    /** Asks and bids by price with depth bars: the running total from the best price outward. */
+    private void refreshOrderBook(String commodityKey) {
+        MarketViewModel.OrderBook book = model.orderBook(commodityKey);
+        if (book.isEmpty()) {
+            productList.addScrollViewChild(emptyState(MarketText.ui("order_book_empty"), null));
+            return;
+        }
+        PriceChart.Palette palette = chartPalette();
+        productList.addScrollViewChild(Ui.text(MarketText.ui("order_book_asks"), "sm-muted"));
+        if (book.asks().isEmpty()) {
+            productList.addScrollViewChild(Ui.text(MarketText.ui("order_book_no_asks"), "sm-muted"));
+        }
+        for (MarketViewModel.DepthLevel level : book.asks()) {
+            productList.addScrollViewChild(depthRow(level, book.depth(), palette.down(), "sm-down"));
+        }
+        productList.addScrollViewChild(Ui.text(MarketText.ui("order_book_bids"), "sm-muted"));
+        if (book.bids().isEmpty()) {
+            productList.addScrollViewChild(Ui.text(MarketText.ui("order_book_no_bids"), "sm-muted"));
+        }
+        for (MarketViewModel.DepthLevel level : book.bids()) {
+            productList.addScrollViewChild(depthRow(level, book.depth(), palette.up(), "sm-up"));
+        }
+    }
+
+    private UIElement depthRow(MarketViewModel.DepthLevel level, int depth, int barColor, String priceClass) {
+        UIElement row = Ui.row("sm-row");
+        row.layout(l -> l.widthPercent(100).height(14).paddingHorizontal(Ui.GAP_S).gapAll(Ui.GAP_S).marginBottom(1));
+        MeterBar bar = new MeterBar().set(depth <= 0 ? 0f : level.cumulative() / (float) depth, (barColor & 0x00FFFFFF) | 0x66000000);
+        bar.layout(l -> l.width(0).flexGrow(1).height(6));
+        row.addChildren(Ui.icon(new ItemStack(Items.EMERALD), 8),
+                trailingLabel(Component.literal(MarketText.money(level.unitPrice())), 52, priceClass),
+                trailingLabel(Component.literal(level.quantity() > 0 ? "x" + level.quantity() : "x∞"), 44, "sm-muted"),
+                bar);
+        return row;
     }
 
     private UIElement sellerRow(MarketOverviewData.ListingEntry entry, boolean selected) {
@@ -641,14 +722,17 @@ public final class MarketView {
         detailSeller.setValue(Component.literal(listing.sellerName()));
         detailPrice.setValue(Component.literal(MarketText.money(listing.unitPrice())));
 
-        MarketOverviewData.CommodityBuyBook book = model.data().buyBookFor(listing.commodityKey());
-        int bestBid = Integer.MIN_VALUE;
-        if (book != null) {
-            for (MarketOverviewData.CommodityBuyEntry entry : book.entries()) {
-                bestBid = Math.max(bestBid, entry.maxPriceBp());
-            }
-        }
-        detailBid.setValue(Component.literal(bestBid == Integer.MIN_VALUE ? "-" : bestBid + " bp"));
+        // Bids are bp bands around a reference price; show what the best one pays in emeralds. The value column is about
+        // 50 GUI pixels wide and clips from the left, so the basis points go to the tooltip.
+        MarketViewModel.Bid bestBid = model.bestBid(listing.commodityKey());
+        boolean bidInEmeralds = bestBid != null && bestBid.unitPrice() > 0;
+        detailBid.setValue(bestBid == null ? Component.literal("-")
+                : bidInEmeralds
+                ? MarketText.ui("bid_estimate_short", MarketText.money(bestBid.unitPrice()))
+                : Component.literal(signedBp(bestBid.maxPriceBp())));
+        detailBid.style(s -> s.tooltips(bidInEmeralds
+                ? new Component[]{MarketText.ui("bid_estimate", MarketText.money(bestBid.unitPrice()), signedBp(bestBid.maxPriceBp()))}
+                : new Component[0]));
         detailStock.setValue(Component.literal(MarketText.stock(listing.availableCount())));
 
         boolean own = model.isOwnListing(listing);
@@ -661,6 +745,7 @@ public final class MarketView {
         unlistAction.sync(true, controller.isPending(MarketController.KEY_UNLIST),
                 controller.isArmed("unlist:" + listing.listingId()));
         sellersButton.setText(MarketText.ui("view_sellers", model.listingCountFor(listing.commodityKey())));
+        watchButton.setText(model.isWatched(listing.commodityKey()) ? MarketText.ui("watch_remove") : MarketText.ui("watch_add"));
         sellersButton.setDisplay(model.goodsView() == MarketViewModel.GoodsView.BROWSE_MARKET);
     }
 
@@ -1217,6 +1302,7 @@ public final class MarketView {
     private void buildMyOrdersPage(List<MarketOverviewData.MyOrderEntry> orders) {
         myOrdersHint.setValue(MarketText.market("my_orders.hint", orders.size()));
         myOrderList.clearAllScrollViewChildren();
+        myOrderEtas.clear();
         if (orders.isEmpty()) {
             myOrderList.addScrollViewChild(emptyState(MarketText.market("my_orders.empty"), Ui.button(MarketText.market("page.goods"), Ui.Tone.SECONDARY, () -> {
                 model.openPage(MarketViewModel.Page.GOODS);
@@ -1233,10 +1319,16 @@ public final class MarketView {
             orderName.layout(l -> l.width(0).flexGrow(1));
             top.addChildren(orderName, trailingLabel(MarketText.orderStatus(order.status()), 60, "sm-muted"));
             card.addChild(top);
-            String eta = order.queuePosition() > 0
-                    ? "  " + MarketText.market("my_orders.eta", order.queuePosition(), MarketText.eta(order.queueEtaSeconds())).getString()
-                    : "";
-            card.addChild(Ui.clippedText(order.sourceDockName() + " → " + order.targetDockName() + eta, "sm-muted"));
+            UIElement timeline = orderTimeline(order.status());
+            if (timeline != null) {
+                card.addChild(timeline);
+            }
+            card.addChild(Ui.clippedText(order.sourceDockName() + " → " + order.targetDockName(), "sm-muted"));
+            if (order.queuePosition() > 0) {
+                Label eta = Ui.clippedText(etaText(order), "sm-warn");
+                myOrderEtas.add(new OrderEta(eta, order));
+                card.addChild(eta);
+            }
             UIElement bottom = Ui.row();
             bottom.layout(l -> l.gapAll(Ui.GAP_S));
             bottom.addChildren(Ui.icon(new ItemStack(Items.EMERALD), 8), Ui.text(MarketText.money(order.totalPrice()), "sm-price"));
@@ -1256,6 +1348,41 @@ public final class MarketView {
             card.addChild(bottom);
             myOrderList.addScrollViewChild(card);
         }
+    }
+
+    /** Paid › queued › under way › delivered (or the pickup flow), done steps green and the current one bold. */
+    private static UIElement orderTimeline(String status) {
+        List<String> flow = MarketViewModel.orderFlow(status);
+        int current = MarketViewModel.orderStep(status);
+        if (flow.isEmpty() || current < 0) {
+            return null;
+        }
+        // Steps keep their text width so the trail reads as one phrase; full-width columns spread it across the card.
+        // "»" is a crisp glyph of the default font, where "›" renders as a two-pixel smudge.
+        UIElement row = Ui.row();
+        row.layout(l -> l.widthPercent(100).minWidth(0).gapAll(Ui.GAP_S));
+        for (int i = 0; i < flow.size(); i++) {
+            if (i > 0) {
+                row.addChild(Ui.text("»", "sm-muted"));
+            }
+            row.addChild(Ui.text(MarketText.orderStatus(flow.get(i)),
+                    i < current ? "sm-up" : i == current ? "sm-title" : "sm-muted"));
+        }
+        row.style(s -> s.tooltips(MarketText.ui("order_progress")));
+        return row;
+    }
+
+    private record OrderEta(Label label, MarketOverviewData.MyOrderEntry order) {
+    }
+
+    private final List<OrderEta> myOrderEtas = new ArrayList<>();
+
+    /** "Queue #2 · ETA 21m 00s", counting down every second while the page is open. */
+    private Component etaText(MarketOverviewData.MyOrderEntry order) {
+        int remaining = model.remainingEtaSeconds(order, host.tick());
+        return remaining > 0
+                ? MarketText.market("my_orders.eta", order.queuePosition(), MarketText.eta(remaining))
+                : MarketText.ui("eta_any_moment");
     }
 
     // ================================================================= market index
@@ -1388,8 +1515,16 @@ public final class MarketView {
         refreshDetailOverlay();
     }
 
-    /** Called every client tick for time-based UI: toast expiry and confirm buttons returning to normal. */
+    /** Called every client tick for time-based UI: toast expiry, price flashes and confirm buttons returning to normal. */
     public void tick() {
+        if (model.expirePriceFlashes(host.tick())) {
+            refresh();
+        }
+        if (host.tick() % 20 == 0 && model.page() == MarketViewModel.Page.MY_ORDERS) {
+            for (OrderEta eta : myOrderEtas) {
+                eta.label().setValue(etaText(eta.order()));
+            }
+        }
         if (toast.isDisplayed() && host.tick() >= toastUntilTick) {
             toast.setDisplay(false);
         }
@@ -1408,6 +1543,16 @@ public final class MarketView {
             }
         }
         return false;
+    }
+
+    /** Tells the viewer which of their orders moved on while the screen was open (from a live update). */
+    public void announceOrderChanges(List<MarketOverviewData.MyOrderEntry> changed) {
+        if (changed.isEmpty()) {
+            return;
+        }
+        MarketOverviewData.MyOrderEntry order = changed.get(0);
+        String item = order.itemName().isBlank() ? order.orderId() : order.itemName() + " ×" + order.quantity();
+        showToast(MarketText.ui("order_status_changed", item, MarketText.orderStatus(order.status())), true);
     }
 
     // ================================================================= results
@@ -1440,6 +1585,28 @@ public final class MarketView {
     /** A controller-backed button; its result (validation message, confirm state) is reported back to the player. */
     private ActionButton action(Component label, Ui.Tone tone, java.util.function.Supplier<MarketController.Result> run) {
         return new ActionButton(label, tone, () -> report(run.get()));
+    }
+
+    private static String signedBp(int bp) {
+        return (bp > 0 ? "+" : "") + bp + " bp";
+    }
+
+    /** Ctrl+F: back to the goods catalog and put the cursor in its search field. */
+    public void focusSearch() {
+        model.openPage(MarketViewModel.Page.GOODS);
+        model.backToCatalog();
+        detailOpen = false;
+        refresh();
+        catalogSearchField.focus();
+    }
+
+    /** Price text; a price that just moved in a live update shows an arrow in the up/down colour for a few seconds. */
+    private static Label priceLabel(int unitPrice, MarketViewModel.PriceMove move) {
+        if (move == null) {
+            return Ui.text(MarketText.money(unitPrice), "sm-price");
+        }
+        boolean up = move == MarketViewModel.PriceMove.UP;
+        return Ui.text(MarketText.money(unitPrice) + (up ? " ▲" : " ▼"), "sm-price", up ? "sm-up" : "sm-down");
     }
 
     private UIElement keyValueRow(Component key, Label value) {

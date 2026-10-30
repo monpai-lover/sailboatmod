@@ -13,8 +13,8 @@ class WebFrontendContractTest {
     @Test
     void hasPurchaseModalAndProbe() throws Exception {
         String src = appJs();
-        assertTrue(src.contains("openPurchaseModal"),
-                "app.js should define openPurchaseModal");
+        assertTrue(src.contains("function openPurchaseDialog(") && src.contains("showMarketDialog("),
+                "app.js should open purchases in its (native <dialog>) purchase modal");
         assertTrue(src.contains("/probe-modes"),
                 "app.js should POST /probe-modes for mode reachability");
         assertTrue(src.contains("fulfillment") && src.contains("targetWarehouse"),

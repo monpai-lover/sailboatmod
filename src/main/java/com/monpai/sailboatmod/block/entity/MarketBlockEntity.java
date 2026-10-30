@@ -426,7 +426,9 @@ public class MarketBlockEntity extends BlockEntity implements MenuProvider {
                                 order.status()
                         ));
                     }
-                    commodityBuyBooks.add(new MarketOverviewData.CommodityBuyBook(entry.getKey(), entry.getValue(), buyEntries));
+                    int referenceUnitPrice = buyEntries.isEmpty() ? 0 : buyOrderReferencePrice(entry.getKey());
+                    commodityBuyBooks.add(new MarketOverviewData.CommodityBuyBook(entry.getKey(), entry.getValue(),
+                            referenceUnitPrice, buyEntries));
                 } catch (SQLException exception) {
                     MARKET_LOGGER.debug("Failed to load buy book for {}", entry.getKey(), exception);
                 }
@@ -3006,6 +3008,18 @@ public class MarketBlockEntity extends BlockEntity implements MenuProvider {
             MARKET_LOGGER.debug("Failed to resolve commodity rarity for {}", stack.getHoverName().getString(), exception);
             return 0;
         }
+    }
+
+    /** The unit price buy-order bands apply to, as reserved by CreateBuyOrderPacket; 0 when it cannot be priced. */
+    private int buyOrderReferencePrice(String commodityKey) {
+        net.minecraft.resources.ResourceLocation id = net.minecraft.resources.ResourceLocation.tryParse(commodityKey);
+        net.minecraft.world.item.Item item = id == null ? null
+                : net.minecraft.core.registries.BuiltInRegistries.ITEM.getOptional(id).orElse(null);
+        if (item == null || item == net.minecraft.world.item.Items.AIR || level == null || level.isClientSide) {
+            return 0;
+        }
+        ItemStack stack = new ItemStack(item);
+        return COMMODITY_MARKET.referencePrice(stack, MarketSavedData.get(level).lowestActiveAsk(CommodityKeyResolver.resolve(stack)));
     }
 
     private ListingPriceWindow listingPriceWindow(ItemStack stack, int quantity, int requestedUnitPrice) {

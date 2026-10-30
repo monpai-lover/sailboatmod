@@ -50,6 +50,14 @@ public final class MarketWebServer {
     private final MarketWebService service = new MarketWebService();
     private final MarketWebIconService icons;
     private final AtomicLong resourceVersion = new AtomicLong(initialResourceVersion());
+    /** Stateless apart from a bounded gzip cache, so one serves every server instance. */
+    private static final MarketWebStaticResponder STATIC_RESPONDER = new MarketWebStaticResponder();
+    private final MarketWebIdempotency idempotency = new MarketWebIdempotency();
+    private final MarketWebEventHub events = new MarketWebEventHub();
+    /** Market revision and trade already announced on /api/events; -1 until the first tick. */
+    private long publishedRevision = -1L;
+    private long publishedTick;
+    private long publishedTradeSequence;
     private HttpServer httpServer;
     private ExecutorService executor;
 
@@ -261,6 +269,8 @@ public final class MarketWebServer {
         createContext("/api/items/resolve", this::handleItemResolve);
         createContext("/api/icons/batch", this::handleIconBatch);
         createContext("/api/icons", this::handleIcon);
+        // Not createContext(): its wrapper closes the exchange when the handler returns, which would end the stream.
+        httpServer.createContext("/api/events", this::handleEvents).getFilters().clear();
         createContext("/", this::handleStatic);
         httpServer.start();
         LOGGER.info("Market web server started on {}:{} (resource version {}, icon cache {})",
@@ -272,6 +282,7 @@ public final class MarketWebServer {
 
     private void stopInternal() {
         auth.clear();
+        events.close();
         if (httpServer != null) {
             httpServer.stop(0);
             httpServer = null;
@@ -279,6 +290,51 @@ public final class MarketWebServer {
         if (executor != null) {
             executor.shutdownNow();
             executor = null;
+        }
+    }
+
+    /** GET /api/events: Server-Sent Events for open pages (see MarketWebEventHub). Guests get public events only. */
+    private void handleEvents(HttpExchange exchange) throws IOException {
+        try {
+            if (!"GET".equalsIgnoreCase(exchange.getRequestMethod())) {
+                writeJson(exchange, 405, error("method_not_allowed", "Method not allowed"));
+                exchange.close();
+                return;
+            }
+            applySecurityHeaders(exchange.getResponseHeaders());
+            events.open(exchange, resolveIdentityOrGuest(exchange).playerUuid());
+        } catch (Exception exception) {
+            LOGGER.warn("Market web event stream failed: {}", exception.toString());
+            exchange.close();
+        }
+    }
+
+    /**
+     * Server thread, every tick. Market writes (MarketChangeNotifier) become at most one {@code market} event a
+     * second; recorded trades become {@code trade} events for the page's ticker. In-game and web actions alike.
+     */
+    void publishMarketChanges(long tick) {
+        long revision = com.monpai.sailboatmod.market.MarketChangeNotifier.revision();
+        if (publishedRevision < 0L) {
+            publishedRevision = revision;
+            publishedTick = tick;
+            publishedTradeSequence = com.monpai.sailboatmod.market.MarketChangeNotifier.lastTradeSequence();
+            return;
+        }
+        for (com.monpai.sailboatmod.market.MarketChangeNotifier.Trade trade
+                : com.monpai.sailboatmod.market.MarketChangeNotifier.tradesAfter(publishedTradeSequence)) {
+            JsonObject json = new JsonObject();
+            json.addProperty("commodityKey", trade.commodityKey());
+            json.addProperty("unitPrice", trade.unitPrice());
+            json.addProperty("quantity", trade.quantity());
+            json.addProperty("at", trade.at());
+            events.publish("trade", json.toString());
+            publishedTradeSequence = trade.sequence();
+        }
+        if (revision != publishedRevision && tick - publishedTick >= 20L) {
+            publishedRevision = revision;
+            publishedTick = tick;
+            events.publish("market", "{\"marketId\":\"*\"}");
         }
     }
 
@@ -455,96 +511,99 @@ public final class MarketWebServer {
                 writeJson(exchange, 200, probe == null ? error("probe_failed", "Probe failed") : probe);
                 return;
             }
-            boolean ok;
-            MarketWebService.ActionResult actionResult = null;
-            if (path.size() == 4 && "purchase".equals(path.get(3))) {
-                ok = callOnServerThread(() -> service.purchaseListing(
-                        minecraftServer,
-                        identity,
-                        marketId,
-                        intValue(body, "listingIndex", -1),
-                        intValue(body, "quantity", 1),
-                        stringValue(body, "fulfillment", "SELLER_SHIP"),
-                        parseWarehousePos(stringValue(body, "targetWarehouse", ""))
-                ));
-            } else if (path.size() == 4 && "listings".equals(path.get(3))) {
-                actionResult = callOnServerThread(() -> service.createListing(
-                        minecraftServer,
-                        identity,
-                        marketId,
-                        intValue(body, "storageIndex", -1),
-                        intValue(body, "quantity", 1),
-                        intValue(body, "unitPrice", 0),
-                        stringValue(body, "sellerNote")
-                ));
-                ok = actionResult != null && actionResult.ok();
-            } else if (path.size() == 4 && "minecolonies-listing".equals(path.get(3))) {
-                actionResult = callOnServerThread(() -> service.createMineColoniesListing(
-                        minecraftServer,
-                        identity,
-                        marketId,
-                        intValue(body, "colonyId", 0),
-                        stringValue(body, "itemId", ""),
-                        intValue(body, "quantity", 1),
-                        intValue(body, "unitPrice", 0),
-                        stringValue(body, "sellerNote")
-                ));
-                ok = actionResult != null && actionResult.ok();
-            } else if (path.size() == 6 && "listings".equals(path.get(3)) && "cancel".equals(path.get(5))) {
-                ok = callOnServerThread(() -> service.cancelListing(minecraftServer, identity, marketId, path.get(4)));
-            } else if (path.size() == 5 && "credits".equals(path.get(3)) && "claim".equals(path.get(4))) {
-                ok = callOnServerThread(() -> service.claimCredits(minecraftServer, identity, marketId));
-            } else if (path.size() == 5 && "wallet".equals(path.get(3)) && "transfer".equals(path.get(4))) {
-                actionResult = callOnServerThread(() -> service.transferWallet(
-                        minecraftServer,
-                        identity,
-                        marketId,
-                        stringValue(body, "action"),
-                        longValue(body, "amount", 0L)
-                ));
-                ok = actionResult != null && actionResult.ok();
-            } else if (path.size() == 4 && "buy-orders".equals(path.get(3))) {
-                ok = callOnServerThread(() -> service.createBuyOrder(
-                        minecraftServer,
-                        identity,
-                        marketId,
-                        stringValue(body, "commodityKey"),
-                        intValue(body, "quantity", 1),
-                        intValue(body, "minPriceBp", -1000),
-                        intValue(body, "maxPriceBp", 1000)
-                ));
-            } else if (path.size() == 6 && "buy-orders".equals(path.get(3)) && "cancel".equals(path.get(5))) {
-                ok = callOnServerThread(() -> service.cancelBuyOrder(minecraftServer, identity, marketId, path.get(4)));
-            } else if (path.size() == 6 && "purchase-orders".equals(path.get(3)) && "cancel".equals(path.get(5))) {
-                ok = callOnServerThread(() -> service.cancelPurchaseOrder(minecraftServer, identity, marketId, path.get(4)));
-            } else if (path.size() == 5 && "dispatch".equals(path.get(3)) && "retry".equals(path.get(4))) {
-                ok = callOnServerThread(() -> service.retryDispatch(
-                        minecraftServer,
-                        identity,
-                        marketId,
-                        intValue(body, "orderIndex", 0),
-                        stringValue(body, "terminalType")
-                ));
-            } else {
-                writeJson(exchange, 404, error("not_found", "Endpoint not found"));
-                return;
-            }
-            if (!ok) {
-                if (actionResult != null) {
-                    writeJson(exchange, 400, error(
-                            actionResult.errorCode() == null || actionResult.errorCode().isBlank() ? "action_failed" : actionResult.errorCode(),
-                            actionResult.message() == null || actionResult.message().isBlank() ? "Action failed" : actionResult.message()
-                    ));
-                    return;
-                }
-                writeJson(exchange, 400, error("action_failed", "Action failed"));
-                return;
-            }
-            JsonObject detail = callOnServerThread(() -> service.marketDetail(minecraftServer, identity, marketId));
-            writeJson(exchange, 200, detail == null ? success() : detail);
+            writeStored(exchange, once(exchange, identity, () -> runMarketAction(identity, marketId, path, body)));
             return;
         }
         writeJson(exchange, 404, error("not_found", "Endpoint not found"));
+    }
+
+    /** POST /api/markets/{id}/... after authentication; returns the answer rather than writing it, so once() can replay it. */
+    private MarketWebIdempotency.StoredResponse runMarketAction(MarketPlayerIdentity identity, String marketId,
+                                                                List<String> path, JsonObject body) {
+        boolean ok;
+        MarketWebService.ActionResult actionResult = null;
+        if (path.size() == 4 && "purchase".equals(path.get(3))) {
+            ok = callOnServerThread(() -> service.purchaseListing(
+                    minecraftServer,
+                    identity,
+                    marketId,
+                    intValue(body, "listingIndex", -1),
+                    intValue(body, "quantity", 1),
+                    stringValue(body, "fulfillment", "SELLER_SHIP"),
+                    parseWarehousePos(stringValue(body, "targetWarehouse", ""))
+            ));
+        } else if (path.size() == 4 && "listings".equals(path.get(3))) {
+            actionResult = callOnServerThread(() -> service.createListing(
+                    minecraftServer,
+                    identity,
+                    marketId,
+                    intValue(body, "storageIndex", -1),
+                    intValue(body, "quantity", 1),
+                    intValue(body, "unitPrice", 0),
+                    stringValue(body, "sellerNote")
+            ));
+            ok = actionResult != null && actionResult.ok();
+        } else if (path.size() == 4 && "minecolonies-listing".equals(path.get(3))) {
+            actionResult = callOnServerThread(() -> service.createMineColoniesListing(
+                    minecraftServer,
+                    identity,
+                    marketId,
+                    intValue(body, "colonyId", 0),
+                    stringValue(body, "itemId", ""),
+                    intValue(body, "quantity", 1),
+                    intValue(body, "unitPrice", 0),
+                    stringValue(body, "sellerNote")
+            ));
+            ok = actionResult != null && actionResult.ok();
+        } else if (path.size() == 6 && "listings".equals(path.get(3)) && "cancel".equals(path.get(5))) {
+            ok = callOnServerThread(() -> service.cancelListing(minecraftServer, identity, marketId, path.get(4)));
+        } else if (path.size() == 5 && "credits".equals(path.get(3)) && "claim".equals(path.get(4))) {
+            ok = callOnServerThread(() -> service.claimCredits(minecraftServer, identity, marketId));
+        } else if (path.size() == 5 && "wallet".equals(path.get(3)) && "transfer".equals(path.get(4))) {
+            actionResult = callOnServerThread(() -> service.transferWallet(
+                    minecraftServer,
+                    identity,
+                    marketId,
+                    stringValue(body, "action"),
+                    longValue(body, "amount", 0L)
+            ));
+            ok = actionResult != null && actionResult.ok();
+        } else if (path.size() == 4 && "buy-orders".equals(path.get(3))) {
+            ok = callOnServerThread(() -> service.createBuyOrder(
+                    minecraftServer,
+                    identity,
+                    marketId,
+                    stringValue(body, "commodityKey"),
+                    intValue(body, "quantity", 1),
+                    intValue(body, "minPriceBp", -1000),
+                    intValue(body, "maxPriceBp", 1000)
+            ));
+        } else if (path.size() == 6 && "buy-orders".equals(path.get(3)) && "cancel".equals(path.get(5))) {
+            ok = callOnServerThread(() -> service.cancelBuyOrder(minecraftServer, identity, marketId, path.get(4)));
+        } else if (path.size() == 6 && "purchase-orders".equals(path.get(3)) && "cancel".equals(path.get(5))) {
+            ok = callOnServerThread(() -> service.cancelPurchaseOrder(minecraftServer, identity, marketId, path.get(4)));
+        } else if (path.size() == 5 && "dispatch".equals(path.get(3)) && "retry".equals(path.get(4))) {
+            ok = callOnServerThread(() -> service.retryDispatch(
+                    minecraftServer,
+                    identity,
+                    marketId,
+                    intValue(body, "orderIndex", 0),
+                    stringValue(body, "terminalType")
+            ));
+        } else {
+            return json(404, error("not_found", "Endpoint not found"));
+        }
+        if (!ok) {
+            if (actionResult != null) {
+                return json(400, error(
+                        actionResult.errorCode() == null || actionResult.errorCode().isBlank() ? "action_failed" : actionResult.errorCode(),
+                        actionResult.message() == null || actionResult.message().isBlank() ? "Action failed" : actionResult.message()
+                ));
+            }
+            return json(400, error("action_failed", "Action failed"));
+        }
+        JsonObject detail = callOnServerThread(() -> service.marketDetail(minecraftServer, identity, marketId));
+        return json(200, detail == null ? success() : detail);
     }
 
     /**
@@ -597,20 +656,18 @@ public final class MarketWebServer {
                 writeJson(exchange, 413, error("payload_too_large", "Request body too large"));
                 return;
             }
-            boolean ok = callOnServerThread(() -> service.purchaseAggregated(
-                    minecraftServer,
-                    identity,
-                    stringValue(body, "executorMarketId", ""),
-                    listingId,
-                    intValue(body, "quantity", 1),
-                    stringValue(body, "fulfillment", "SELLER_SHIP"),
-                    parseWarehousePos(stringValue(body, "targetWarehouse", ""))
-            ));
-            if (!ok) {
-                writeJson(exchange, 400, error("action_failed", "Action failed"));
-                return;
-            }
-            writeJson(exchange, 200, success());
+            writeStored(exchange, once(exchange, identity, () -> {
+                boolean ok = callOnServerThread(() -> service.purchaseAggregated(
+                        minecraftServer,
+                        identity,
+                        stringValue(body, "executorMarketId", ""),
+                        listingId,
+                        intValue(body, "quantity", 1),
+                        stringValue(body, "fulfillment", "SELLER_SHIP"),
+                        parseWarehousePos(stringValue(body, "targetWarehouse", ""))
+                ));
+                return ok ? json(200, success()) : json(400, error("action_failed", "Action failed"));
+            }));
             return;
         }
         writeJson(exchange, 404, error("not_found", "Endpoint not found"));
@@ -1073,13 +1130,8 @@ public final class MarketWebServer {
                 byte[] bytes = Files.readAllBytes(devFile);
                 Headers headers = exchange.getResponseHeaders();
                 applySecurityHeaders(headers);
-                headers.set("Content-Type", contentType);
                 headers.set("X-Web-Resource-Version", Long.toString(resourceVersion.get()));
-                applyNoCache(headers);
-                exchange.sendResponseHeaders(200, bytes.length);
-                try (OutputStream output = exchange.getResponseBody()) {
-                    output.write(bytes);
-                }
+                STATIC_RESPONDER.write(exchange, contentType, bytes, true);
                 return;
             }
         }
@@ -1092,16 +1144,11 @@ public final class MarketWebServer {
             byte[] bytes = stream.readAllBytes();
             Headers headers = exchange.getResponseHeaders();
             applySecurityHeaders(headers);
-            headers.set("Content-Type", contentType);
             headers.set("X-Web-Resource-Version", Long.toString(resourceVersion.get()));
-            // 生产环境也禁用缓存:之前仅 devMode 才发 no-cache,生产下 /app.css /app.js /index.html 不带任何缓存头 →
-            // 浏览器(尤其 Safari)按启发式强缓存旧文件 → 改了前端却"毫无变化"(实测 Safari 卡顿修复不生效根因)。
-            // 这些核心静态资源很小且只在市场页加载,每次重新取/重新校验不影响性能,但保证更新立即可见。
-            applyNoCache(headers);
-            exchange.sendResponseHeaders(200, bytes.length);
-            try (OutputStream output = exchange.getResponseBody()) {
-                output.write(bytes);
-            }
+            // 生产环境不能让浏览器(尤其 Safari)按启发式强缓存旧文件,否则改了前端却"毫无变化"。
+            // 现在用 ETag + Cache-Control: no-cache:每次都向服务器重新验证,文件没变只回 304(无本文),变了立即取新文件;
+            // 文本资源 gzip 压缩(maplibre-gl.js 1 MB → 约 270 KB)。
+            STATIC_RESPONDER.write(exchange, contentType, bytes, false);
         }
     }
 
@@ -1217,12 +1264,6 @@ public final class MarketWebServer {
         }
     }
 
-    private static void applyNoCache(Headers headers) {
-        headers.set("Cache-Control", "no-store, no-cache, must-revalidate, max-age=0");
-        headers.set("Pragma", "no-cache");
-        headers.set("Expires", "0");
-    }
-
     private MarketPlayerIdentity requireIdentity(HttpExchange exchange) throws IOException {
         String authHeader = exchange.getRequestHeaders().getFirst("Authorization");
         String sessionToken = "";
@@ -1267,13 +1308,32 @@ public final class MarketWebServer {
 
     private static void writeJson(HttpExchange exchange, int status, JsonObject body) throws IOException {
         byte[] bytes = GSON.toJson(body).getBytes(StandardCharsets.UTF_8);
-        Headers headers = exchange.getResponseHeaders();
-        applySecurityHeaders(headers);
-        headers.set("Content-Type", "application/json; charset=utf-8");
-        exchange.sendResponseHeaders(status, bytes.length);
-        try (OutputStream output = exchange.getResponseBody()) {
-            output.write(bytes);
+        applySecurityHeaders(exchange.getResponseHeaders());
+        // gzip when the client accepts it and the body is over 1 KB (a market detail shrinks to about a tenth).
+        MarketWebStaticResponder.writeDynamic(exchange, status, "application/json; charset=utf-8", bytes);
+    }
+
+    private static MarketWebIdempotency.StoredResponse json(int status, JsonObject body) {
+        return new MarketWebIdempotency.StoredResponse(status, "application/json; charset=utf-8",
+                GSON.toJson(body).getBytes(StandardCharsets.UTF_8));
+    }
+
+    private static void writeStored(HttpExchange exchange, MarketWebIdempotency.StoredResponse response) throws IOException {
+        applySecurityHeaders(exchange.getResponseHeaders());
+        MarketWebStaticResponder.writeDynamic(exchange, response.status(), response.contentType(), response.body());
+    }
+
+    /**
+     * Runs a write at most once per Idempotency-Key (scoped to the player and path): a resend after a lost reply gets
+     * the stored answer instead of buying again. Requests without the header run as before.
+     */
+    private MarketWebIdempotency.StoredResponse once(HttpExchange exchange, MarketPlayerIdentity identity,
+                                                     java.util.function.Supplier<MarketWebIdempotency.StoredResponse> action) {
+        String key = exchange.getRequestHeaders().getFirst("Idempotency-Key");
+        if (key == null || key.isBlank()) {
+            return action.get();
         }
+        return idempotency.execute(identity.playerUuidString() + " " + exchange.getRequestURI().getPath(), key, action);
     }
 
     private static void writeBytes(HttpExchange exchange, int status, String contentType, byte[] bytes) throws IOException {

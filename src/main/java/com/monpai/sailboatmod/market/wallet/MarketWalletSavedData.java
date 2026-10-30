@@ -15,6 +15,13 @@ public final class MarketWalletSavedData extends SavedData {
 
     private final Map<String, MarketWalletAccount> accounts = new LinkedHashMap<>();
 
+    /** Wallet balances are shown on every market screen; open screens follow the market revision. */
+    @Override
+    public void setDirty() {
+        super.setDirty();
+        com.monpai.sailboatmod.market.MarketChangeNotifier.changed();
+    }
+
     public static MarketWalletSavedData get(Level level) {
         if (!(level instanceof ServerLevel serverLevel) || serverLevel.getServer() == null) {
             return new MarketWalletSavedData();
