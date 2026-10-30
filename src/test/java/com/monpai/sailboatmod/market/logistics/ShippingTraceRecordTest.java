@@ -24,4 +24,24 @@ class ShippingTraceRecordTest {
         assertEquals(1, loaded.completedPointCount());
         assertEquals(0.5D, loaded.progressRatio(), 0.0001D);
     }
+    @Test
+    void legacyTracesHaveNoInventedFlightHeightAndAllUpdatesRetainNewTelemetry() {
+        var record = new ShippingTraceRecord("air", "owner", "minecraft:overworld", "HELICOPTER", "IN_TRANSIT",
+                "", "", "A", "B", List.of(new Vec3(1, 80, 2), new Vec3(10, 100, 20)),
+                0, 0, 100, 100, 1, 2, 0, List.of(), false);
+        org.junit.jupiter.api.Assertions.assertNull(ShippingTraceRecord.load(record.save()).flight());
+        var withFlight = record.withFlightTelemetry(0.0, "landing", "physical", 120)
+                .withStatus("ARRIVED", 121).withProgress(1, 1, 122).withLivePosition(10, 20, 123)
+                .withSpeed(0, 124).withCargo(List.of(), 125);
+        var loaded = ShippingTraceRecord.load(withFlight.save());
+        assertEquals(0.0, loaded.flight().worldY());
+        assertEquals("LANDING", loaded.flight().flightState());
+        assertEquals("PHYSICAL", loaded.flight().executionMode());
+        var data = new ShippingTraceSavedData();
+        data.putTrace(loaded);
+        data.removeTrace("air");
+        var history = ShippingTraceSavedData.load(data.save(new net.minecraft.nbt.CompoundTag())).getHistory();
+        assertEquals(loaded.flight(), history.get(0).trace().flight());
+    }
+
 }

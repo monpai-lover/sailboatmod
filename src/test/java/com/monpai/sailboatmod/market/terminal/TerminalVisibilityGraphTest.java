@@ -121,4 +121,27 @@ class TerminalVisibilityGraphTest {
         TerminalNetworkSavedData net = net();
         assertFalse(TerminalVisibility.isVisible(net, "town-a", "town-b"));
     }
+    @Test
+    void airRoutesParticipateInMixedTownConnectivity() {
+        var graph = net(
+                new TerminalEntry(DIM, nextPos++, Kind.AIRPORT, "Alpha Air", "a", "", List.of("Beta Air"), Set.of()),
+                new TerminalEntry(DIM, nextPos++, Kind.AIRPORT, "Beta Air", "b", "", List.of(), Set.of()),
+                station("b", Set.of("c")));
+        assertTrue(TerminalVisibility.isVisible(graph, "a", "c"));
+        assertTrue(TerminalVisibility.isVisible(graph, "c", "a"));
+    }
+
+    @Test
+    void matchingRouteNamesCannotConnectDifferentTerminalKindsOrDimensions() {
+        var graph = net(
+                port("source", "Source", List.of("Shared")),
+                new TerminalEntry(DIM, nextPos++, Kind.AIRPORT, "Shared", "air-only", "", List.of(), Set.of()),
+                new TerminalEntry("minecraft:the_nether", nextPos++, Kind.PORT, "Shared", "other-dimension", "", List.of(), Set.of()));
+        assertFalse(TerminalVisibility.isVisible(graph, "source", "air-only"));
+        assertFalse(TerminalVisibility.isVisible(graph, "source", "other-dimension"));
+        graph.putEntry(port("correct-port", "Shared", List.of()));
+        assertTrue(TerminalVisibility.isVisible(graph, "source", "correct-port"));
+        assertFalse(TerminalVisibility.isVisible(graph, "correct-port", "air-only"));
+    }
+
 }

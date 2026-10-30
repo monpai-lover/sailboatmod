@@ -28,15 +28,27 @@ final class SableReflectionAccess {
 
     private final Object helper;
     private final Class<?> bodyType;
-    private final Class<?> throttleType;
-    private final Class<?> steeringType;
     private final Method containing, id, level, removed, pose, bounds, massTracker;
     private final Method transformPosition, transformNormal, toMojangBounds, getMass;
-    private final Method setThrottle, getThrottleState, setSteering;
-    private final Field velocity, steeringHeld;
+    private final Field velocity;
+    private final NativeActuators actuators;
     private final Map<Object, ThrottleLease> throttleLeases = new WeakHashMap<>();
 
     private record ThrottleLease(int command, int observedState) { }
+    private record NativeActuators(Class<?> throttleType, Class<?> steeringType, Method setThrottle,
+                                   Method getThrottleState, Method setSteering, Field steeringHeld) {
+        static NativeActuators bindIfAvailable(ClassLookup lookup) {
+            try {
+                Class<?> throttle = lookup.find("dev.simulated_team.simulated.content.blocks.throttle_lever.ThrottleLeverBlockEntity");
+                Class<?> steering = lookup.find("dev.simulated_team.simulated.content.blocks.steering_wheel.SteeringWheelBlockEntity");
+                return new NativeActuators(throttle, steering, throttle.getMethod("setSignal", int.class),
+                        throttle.getMethod("getState"), steering.getMethod("updateTargetAngle", float.class), steering.getField("held"));
+            } catch (ReflectiveOperationException | LinkageError unavailable) {
+                // Flight Control aircraft need Sable membership and pose, not Simulated levers.
+                return null;
+            }
+        }
+    }
 
     static SableReflectionAccess bind(ClassLookup lookup) throws ReflectiveOperationException {
         return new SableReflectionAccess(lookup);
@@ -48,8 +60,6 @@ final class SableReflectionAccess {
         Class<?> poseType = lookup.find("dev.ryanhcode.sable.companion.math.Pose3dc");
         Class<?> boundsType = lookup.find("dev.ryanhcode.sable.companion.math.BoundingBox3dc");
         Class<?> massType = lookup.find("dev.ryanhcode.sable.api.physics.mass.MassData");
-        throttleType = lookup.find("dev.simulated_team.simulated.content.blocks.throttle_lever.ThrottleLeverBlockEntity");
-        steeringType = lookup.find("dev.simulated_team.simulated.content.blocks.steering_wheel.SteeringWheelBlockEntity");
         helper = sable.getField("HELPER").get(null);
         if (helper == null) throw new ReflectiveOperationException("Sable.HELPER is unavailable");
         containing = helper.getClass().getMethod("getContaining", BlockEntity.class);
@@ -64,10 +74,7 @@ final class SableReflectionAccess {
         transformNormal = poseType.getMethod("transformNormal", Vec3.class);
         toMojangBounds = boundsType.getMethod("toMojang");
         getMass = massType.getMethod("getMass");
-        setThrottle = throttleType.getMethod("setSignal", int.class);
-        getThrottleState = throttleType.getMethod("getState");
-        setSteering = steeringType.getMethod("updateTargetAngle", float.class);
-        steeringHeld = steeringType.getField("held");
+        actuators = NativeActuators.bindIfAvailable(lookup);
     }
 
     Object containing(BlockEntity entity) throws ReflectiveOperationException {
@@ -106,19 +113,20 @@ final class SableReflectionAccess {
 
     NativeControlResult throttle(Object controllerBody, Object targetBody, Object target, int signal) {
         if (signal < 0 || signal > 15) return NativeControlResult.failure("invalid_signal");
+        if (actuators == null) return NativeControlResult.failure("optional_mod_unavailable");
         try {
-            String invalid = bindingFailure(controllerBody, targetBody, target, throttleType);
+            String invalid = bindingFailure(controllerBody, targetBody, target, actuators.throttleType());
             if (invalid != null) return NativeControlResult.failure(invalid);
-            int observed = ((Number) getThrottleState.invoke(target)).intValue();
+            int observed = ((Number) actuators.getThrottleState().invoke(target)).intValue();
             ThrottleLease previous = throttleLeases.get(target);
             if (previous != null && observed != previous.observedState()) {
                 throttleLeases.remove(target);
                 return NativeControlResult.failure("manual_control");
             }
             if (previous == null || previous.command() != signal) {
-                setThrottle.invoke(target, signal);
+                actuators.setThrottle().invoke(target, signal);
                 throttleLeases.put(target, new ThrottleLease(signal,
-                        ((Number) getThrottleState.invoke(target)).intValue()));
+                        ((Number) actuators.getThrottleState().invoke(target)).intValue()));
             }
             return NativeControlResult.applied();
         } catch (ReflectiveOperationException | RuntimeException failure) {
@@ -128,11 +136,12 @@ final class SableReflectionAccess {
 
     NativeControlResult steering(Object controllerBody, Object targetBody, Object target, float angleDegrees) {
         if (!Float.isFinite(angleDegrees)) return NativeControlResult.failure("invalid_angle");
+        if (actuators == null) return NativeControlResult.failure("optional_mod_unavailable");
         try {
-            String invalid = bindingFailure(controllerBody, targetBody, target, steeringType);
+            String invalid = bindingFailure(controllerBody, targetBody, target, actuators.steeringType());
             if (invalid != null) return NativeControlResult.failure(invalid);
-            if (steeringHeld.getBoolean(target)) return NativeControlResult.failure("manual_control");
-            setSteering.invoke(target, angleDegrees);
+            if (actuators.steeringHeld().getBoolean(target)) return NativeControlResult.failure("manual_control");
+            actuators.setSteering().invoke(target, angleDegrees);
             return NativeControlResult.applied();
         } catch (ReflectiveOperationException | RuntimeException failure) {
             return controlFailure(failure);

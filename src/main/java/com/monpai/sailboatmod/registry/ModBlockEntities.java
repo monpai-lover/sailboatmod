@@ -84,7 +84,11 @@ public final class ModBlockEntities {
 
     public static final DeferredHolder<BlockEntityType<?>, BlockEntityType<com.monpai.sailboatmod.block.entity.RegisteredVehicleControllerBlockEntity>> REGISTERED_VEHICLE_CONTROLLER_BLOCK_ENTITY = BLOCK_ENTITIES.register(
             "registered_vehicle_controller", () -> BlockEntityType.Builder.of(com.monpai.sailboatmod.block.entity.RegisteredVehicleControllerBlockEntity::new,
-                    ModBlocks.VESSEL_REGISTRATION_CONTROLLER.get(), ModBlocks.LAND_VEHICLE_REGISTRATION_CONTROLLER.get()).build(null));
+                    ModBlocks.VESSEL_REGISTRATION_CONTROLLER.get(), ModBlocks.LAND_VEHICLE_REGISTRATION_CONTROLLER.get(),
+                    ModBlocks.AIR_VEHICLE_REGISTRATION_CONTROLLER.get()).build(null));
+
+    public static final DeferredHolder<BlockEntityType<?>, BlockEntityType<com.monpai.sailboatmod.block.entity.AirportBlockEntity>> AIRPORT_BLOCK_ENTITY = BLOCK_ENTITIES.register(
+            "airport", () -> BlockEntityType.Builder.of(com.monpai.sailboatmod.block.entity.AirportBlockEntity::new, ModBlocks.AIRPORT.get()).build(null));
 
     private ModBlockEntities() {
     }

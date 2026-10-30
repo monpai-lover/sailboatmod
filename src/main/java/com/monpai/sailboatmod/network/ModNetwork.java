@@ -109,7 +109,7 @@ import net.neoforged.bus.api.IEventBus;
 import java.util.Optional;
 
 public final class ModNetwork {
-    private static final String PROTOCOL_VERSION = "15"; // Standalone transport atlas item and screen.
+    private static final String PROTOCOL_VERSION = "16"; // Aircraft controller actions and airport terminal kind.
     public static final PayloadChannel CHANNEL = new PayloadChannel(PROTOCOL_VERSION);
 
     private static int packetId = 0;

@@ -71,10 +71,30 @@ public final class MarketWebMapDtos {
                                 int completedPointCount,
                                 double progressRatio,
                                 Point current,
-                                boolean manual) {
+                                boolean manual,
+                                FlightTelemetry flight) {
+        /** Older transports and saved traces have no flight telemetry. */
+        public ShipmentTrace(String shippingOrderId, String label, String transportMode, String status,
+                             String sourceName, String targetName, String sourceTownName, String targetTownName,
+                             String vehicleName, String ownerName, int etaSeconds, double currentSpeed,
+                             List<CargoItem> cargo, List<Point> points, int completedPointCount,
+                             double progressRatio, Point current, boolean manual) {
+            this(shippingOrderId, label, transportMode, status, sourceName, targetName, sourceTownName, targetTownName,
+                    vehicleName, ownerName, etaSeconds, currentSpeed, cargo, points, completedPointCount,
+                    progressRatio, current, manual, null);
+        }
         public ShipmentTrace {
             points = points == null ? List.of() : List.copyOf(points);
             cargo = cargo == null ? List.of() : List.copyOf(cargo);
+        }
+    }
+
+    /** World Y, not height above terrain. Unknown/non-finite readings remain absent. */
+    public record FlightTelemetry(Double worldY, String flightState, String executionMode) {
+        public FlightTelemetry {
+            worldY = worldY != null && Double.isFinite(worldY) ? worldY : null;
+            flightState = flightState == null ? "" : flightState.trim().toUpperCase(java.util.Locale.ROOT);
+            executionMode = executionMode == null ? "" : executionMode.trim().toUpperCase(java.util.Locale.ROOT);
         }
     }
 

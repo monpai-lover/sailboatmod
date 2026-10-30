@@ -372,6 +372,21 @@ function serveStatic(exchange, pathname) {
 
 // ---- world map preview data: three moving routes (sea, road, rail) and one stuck carriage ----
 const mapRoutes = [
+  { id: "demo-airship", mode: "AIRSHIP", status: "IN_TRANSIT", from: "Tema Mooring", to: "Lomé Mooring", fromTown: "Tema", toTown: "Lomé",
+    vehicle: "Cloud Trader", owner: "PreviewPlayer", period: 130, speed: 0.5,
+    flight: { worldY: 148, flightState: "CLIMBING", executionMode: "PHYSICAL" },
+    cargo: [{ name: "Wool", quantity: 160, recipient: "Lomé Market" }],
+    points: [[-210, -220], [-120, -200], [10, -190], [170, -170]] },
+  { id: "demo-helicopter", mode: "HELICOPTER", status: "IN_TRANSIT", from: "Tema Helipad", to: "Kumasi Helipad", fromTown: "Tema", toTown: "Kumasi",
+    vehicle: "Rescue Rotor", owner: "Kofi", period: 65, speed: 0.85,
+    flight: { worldY: 116.5, flightState: "APPROACHING", executionMode: "PHYSICAL" },
+    cargo: [{ name: "Medicine", quantity: 32, recipient: "Kumasi Clinic" }],
+    points: [[-210, -220], [-200, -30], [-200, 160], [-140, 220]] },
+  { id: "demo-airplane", mode: "AIRPLANE", status: "IN_TRANSIT", from: "Tema Runway", to: "Lomé Runway", fromTown: "Tema", toTown: "Lomé",
+    vehicle: "Cargo Wing 1", owner: "Ada", period: 55, speed: 1.8,
+    flight: { worldY: 256, flightState: "CRUISING", executionMode: "VIRTUAL" },
+    cargo: [{ name: "Redstone", quantity: 192, recipient: "Lomé Workshop" }],
+    points: [[-210, -220], [-100, -60], [80, 120], [180, 220]] },
   { id: "demo-sea", mode: "PORT", status: "SAILING", from: "Tema Harbour", to: "Lomé Docks", fromTown: "Tema", toTown: "Lomé",
     vehicle: "Aurora", owner: "PreviewPlayer", period: 90, speed: 0.42,
     cargo: [{ name: "Wheat", quantity: 64, recipient: "Lomé Market" }, { name: "Salt", quantity: 32, recipient: "" }],
@@ -419,13 +434,14 @@ function mapShipments() {
   return mapRoutes.map((route) => {
     const ratio = route.period ? (now % route.period) / route.period : route.fixed;
     const pos = routePosition(route.points, ratio);
-    const vehicleKind = route.mode === "RAIL" ? "train" : route.mode === "PORT" ? "sailboat" : "carriage";
+    const vehicleKind = ({ AIRSHIP: "airship", HELICOPTER: "helicopter", AIRPLANE: "airplane", RAIL: "train", PORT: "sailboat" })[route.mode] || "carriage";
     return {
       shippingOrderId: route.id,
       label: route.vehicle,
       transportMode: route.mode,
       vehicleKind,
       status: route.status,
+      ...(route.flight ? { flight: route.flight } : {}),
       sourceName: route.from,
       targetName: route.to,
       sourceTownName: route.fromTown,
@@ -487,7 +503,22 @@ function mapShipmentHistory() {
   });
 }
 
+const mapAirports = [
+  { airportId: "tema-airport", name: "Tema Airport", dimensionId: "minecraft:overworld", x: -210, y: 70, z: -220,
+    facilities: [
+      { id: "runway-09", type: "RUNWAY", start: {x:-210,y:70,z:-220}, end:{x:-90,y:70,z:-220}, width:12, clearanceHeight:24, availability:"not_checked" },
+      { id: "pad-1", type: "HELIPAD", start: {x:-210,y:70,z:-190}, end:{x:-210,y:70,z:-190}, width:14, clearanceHeight:32, availability:"not_checked" },
+      { id: "mast-1", type: "MOORING", start: {x:-240,y:70,z:-220}, end:{x:-240,y:70,z:-220}, width:20, clearanceHeight:48, availability:"not_checked" }
+    ] },
+  { airportId: "lome-airport", name: "Lomé Airport", dimensionId: "minecraft:overworld", x: 180, y: 72, z: 220,
+    facilities: [{ id: "runway-27", type: "RUNWAY", start: {x:180,y:72,z:220}, end:{x:60,y:72,z:220}, width:12, clearanceHeight:24, availability:"not_checked" }] }
+];
+
 function handleMap(pathname, response) {
+  if (pathname === "/api/map/airports") {
+    json(response, 200, { ok: true, airports: mapAirports });
+    return true;
+  }
   if (pathname === "/api/map/snapshot") {
     json(response, 200, { dimensionId: "minecraft:overworld", unknownColor: "#000000", tileSize: 512, lod: 1, renderVersion: 1,
       tileEpoch: 0, defaultFocus: { x: 0, z: 0 }, territoryRevision: 0, marketRevision: 0 });

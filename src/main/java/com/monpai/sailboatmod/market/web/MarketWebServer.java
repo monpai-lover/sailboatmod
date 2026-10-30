@@ -249,6 +249,7 @@ public final class MarketWebServer {
         createContext("/api/listings", this::handleAggregatedListings);
         createContext("/api/map/snapshot", this::handleMapSnapshot);
         createContext("/api/map/markets", this::handleMapMarkets);
+        createContext("/api/map/airports", this::handleMapAirports);
         createContext("/api/map/territories", this::handleMapTerritories);
         createContext("/api/map/shipments", this::handleMapShipments);
         createContext("/api/map/render/status", this::handleMapRenderStatus);
@@ -635,6 +636,20 @@ public final class MarketWebServer {
         JsonObject out = callOnServerThread(() -> {
             JsonObject json = success();
             json.add("markets", service.mapMarkets(minecraftServer, identity));
+            return json;
+        });
+        writeJson(exchange, 200, out);
+    }
+
+    private void handleMapAirports(HttpExchange exchange) throws IOException {
+        if (!"GET".equalsIgnoreCase(exchange.getRequestMethod())) {
+            writeJson(exchange, 405, error("method_not_allowed", "Method not allowed"));
+            return;
+        }
+        MarketPlayerIdentity identity = resolveIdentityOrGuest(exchange);
+        JsonObject out = callOnServerThread(() -> {
+            JsonObject json = success();
+            json.add("airports", service.mapAirports(minecraftServer, identity));
             return json;
         });
         writeJson(exchange, 200, out);

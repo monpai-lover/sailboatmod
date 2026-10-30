@@ -490,3 +490,18 @@ test("a sampler-only revision refreshes prediction tiles without actual terrain 
   await map.pollMapRefresh();
   assert.equal(map.predictionRequests.length, 1, "actual terrain updates leave the prediction cache stable");
 });
+
+
+test("airportRunwayUsesTheSameProjectionAndCanBeSelectedAlongItsLength", () => {
+  const map = mapHarness({ dpr: 2 });
+  map.state.layers.markets = false;
+  map.state.airports = [{ airportId: "a", name: "Airfield", x: MARKET.x, y: 70, z: MARKET.z,
+    facilities: [{ type: "RUNWAY", start: {x: MARKET.x, z: MARKET.z}, end: {x: MARKET.x + 120, z: MARKET.z}, width: 12 }] }];
+  const mid = map.worldToScreen({ x: MARKET.x + 60, z: MARKET.z });
+  const rect = map.state.canvas.getBoundingClientRect();
+  const hit = map.hitTest(rect.left + mid.x * rect.width / map.state.canvas.width, rect.top + mid.y * rect.height / map.state.canvas.height);
+  assert.equal(hit?.type, "airport");
+  assert.equal(hit.data.airportId, "a");
+  map.state.layers.airports = false;
+  assert.notEqual(map.hitTest(rect.left + mid.x * rect.width / map.state.canvas.width, rect.top + mid.y * rect.height / map.state.canvas.height)?.type, "airport");
+});

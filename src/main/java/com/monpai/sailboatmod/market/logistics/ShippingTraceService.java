@@ -220,7 +220,8 @@ public final class ShippingTraceService {
                 trace.completedPointCount(),
                 trace.progressRatio(),
                 new MarketWebMapDtos.Point(trace.currentX(), trace.currentZ()),
-                trace.manual()
+                trace.manual(),
+                trace.flight()
         );
     }
 
@@ -487,7 +488,8 @@ public final class ShippingTraceService {
         List<String> toRemove = new ArrayList<>();
         for (ShippingTraceRecord trace : traceData.getTraces()) {
             String id = trace.shippingOrderId();
-            if (id.isBlank() || isManagedExternally(id)) {
+            if (id.isBlank() || isManagedExternally(id)
+                    || com.monpai.sailboatmod.transport.air.FlightMissionSavedData.get(overworld).hasActiveMissionForTrace(id)) {
                 continue; // external traces have no entity here; their integration removes them
             }
             // 解析轨迹对应的载具 uuid：订单轨迹用订单的 boatUuid；手动轨迹 id 形如 "manual-<uuid>"。
@@ -644,6 +646,20 @@ public final class ShippingTraceService {
                 existing == null ? gameTime : existing.startedGameTime(), gameTime,
                 s.currentX(), s.currentZ(), s.currentSpeed(),
                 s.cargo() == null ? List.of() : s.cargo(), true);
+    }
+
+    /** Stable adapter for air controllers. Flight state is independent of the order's IN_TRANSIT status. */
+    public static void recordFlightTelemetry(ServerLevel level, java.util.UUID controllerId, String shippingOrderId,
+                                             double worldY, String flightState, String executionMode) {
+        if (level == null || !Double.isFinite(worldY)) return;
+        String traceId = shippingOrderId == null ? "" : shippingOrderId.trim();
+        if (traceId.isBlank()) {
+            if (controllerId == null) return;
+            traceId = manualTraceId(controllerId);
+        }
+        ShippingTraceSavedData data = ShippingTraceSavedData.get(level);
+        ShippingTraceRecord trace = data.getTrace(traceId);
+        if (trace != null) data.putTrace(trace.withFlightTelemetry(worldY, flightState, executionMode, level.getGameTime()));
     }
 
     /** 写入载具实时坐标（调度车/手动车通用）。 */

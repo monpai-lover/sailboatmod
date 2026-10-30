@@ -370,6 +370,7 @@ test("initialLoadFromAnOldSessionCannotReplaceCurrentPrivateData", async () => {
   map.respond(2, { territories: [] });
   map.respond(3, { shipments: [{ shippingOrderId: "private-live-A" }] });
   map.respond(4, { tellus: false });
+  map.respond(5, { airports: [] });
 
   await pending;
 
@@ -410,6 +411,7 @@ test("initialLoadForTheCurrentSessionStillLoads", async () => {
   map.respond(2, { territories: [] });
   map.respond(3, { shipments: [{ shippingOrderId: "private-live-A" }] });
   map.respond(4, { tellus: false });
+  map.respond(5, { airports: [] });
 
   await pending;
 
@@ -425,6 +427,7 @@ test("initialLoadFailureFromAnOldSessionCannotSurfaceInTheNewSession", async () 
   map.respond(2, { territories: [] });
   map.respond(3, { shipments: [] });
   map.respond(4, { tellus: false });
+  map.respond(5, { airports: [] });
 
   await assert.doesNotReject(pending);
 });
@@ -437,6 +440,7 @@ test("initialLoadFailureForTheCurrentSessionIsStillReported", async () => {
   map.respond(2, { territories: [] });
   map.respond(3, { shipments: [] });
   map.respond(4, { tellus: false });
+  map.respond(5, { airports: [] });
 
   await assert.rejects(pending, /Current request failed/);
 });

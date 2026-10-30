@@ -73,6 +73,8 @@ public final class AeronauticsVehicleBridge {
                                                      int signal, float angle, boolean throttle) {
         if (!serverThread(controller) || !serverThread(target)) return NativeControlResult.failure("not_server_or_removed");
         if (controller.getLevel() != target.getLevel()) return NativeControlResult.failure("target_not_in_same_structure");
+        ModList mods = ModList.get();
+        if (mods == null || !mods.isLoaded("simulated")) return NativeControlResult.failure("optional_mod_unavailable");
         SableReflectionAccess api = api();
         if (api == null) return NativeControlResult.failure("optional_mod_unavailable");
         try {
@@ -100,7 +102,7 @@ public final class AeronauticsVehicleBridge {
     private static SableReflectionAccess api() {
         if (attempted) return access;
         ModList mods = ModList.get();
-        if (mods == null || !mods.isLoaded("sable") || !mods.isLoaded("aeronautics") || !mods.isLoaded("simulated")) return null;
+        if (mods == null || !mods.isLoaded("sable") || !mods.isLoaded("aeronautics")) return null;
         synchronized (AeronauticsVehicleBridge.class) {
             if (attempted) return access;
             try {

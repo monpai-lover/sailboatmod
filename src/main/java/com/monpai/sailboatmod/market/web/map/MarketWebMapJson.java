@@ -130,6 +130,13 @@ public final class MarketWebMapJson {
         json.addProperty("completedPointCount", shipment.completedPointCount());
         json.addProperty("progressRatio", shipment.progressRatio());
         json.addProperty("manual", shipment.manual());
+        if (shipment.flight() != null) {
+            JsonObject flight = new JsonObject();
+            if (shipment.flight().worldY() != null) flight.addProperty("worldY", shipment.flight().worldY());
+            flight.addProperty("flightState", shipment.flight().flightState());
+            flight.addProperty("executionMode", shipment.flight().executionMode());
+            json.add("flight", flight);
+        }
         if (shipment.current() != null) {
             JsonObject current = new JsonObject();
             current.addProperty("x", shipment.current().x());
@@ -160,6 +167,44 @@ public final class MarketWebMapJson {
             out.add(shipment(shipment));
         }
         return out;
+    }
+
+    /** Registered geometry only: never infer that unloaded terrain is currently safe to land on. */
+    public static JsonArray airports(java.util.List<com.monpai.sailboatmod.transport.air.airport.AirportSavedData.AirportSnapshot> airports) {
+        JsonArray out = new JsonArray();
+        for (var airport : airports) {
+            JsonObject json = new JsonObject();
+            json.addProperty("airportId", airport.dimension() + ":" + airport.pos().asLong());
+            json.addProperty("name", airport.name());
+            json.addProperty("dimensionId", airport.dimension());
+            json.addProperty("x", airport.pos().getX());
+            json.addProperty("y", airport.pos().getY());
+            json.addProperty("z", airport.pos().getZ());
+            json.addProperty("townId", airport.townId());
+            JsonArray facilities = new JsonArray();
+            for (var facility : airport.facilities()) {
+                JsonObject entry = new JsonObject();
+                entry.addProperty("id", facility.id());
+                entry.addProperty("type", facility.type().name());
+                entry.add("start", blockPosition(facility.start()));
+                entry.add("end", blockPosition(facility.end()));
+                entry.addProperty("width", facility.width());
+                entry.addProperty("clearanceHeight", facility.clearanceHeight());
+                entry.addProperty("availability", "not_checked");
+                facilities.add(entry);
+            }
+            json.add("facilities", facilities);
+            out.add(json);
+        }
+        return out;
+    }
+
+    private static JsonObject blockPosition(net.minecraft.core.BlockPos pos) {
+        JsonObject json = new JsonObject();
+        json.addProperty("x", pos.getX());
+        json.addProperty("y", pos.getY());
+        json.addProperty("z", pos.getZ());
+        return json;
     }
 
     private MarketWebMapJson() {

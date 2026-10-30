@@ -41,6 +41,7 @@ public final class ServerEvents {
     public static void onRegisterCommands(RegisterCommandsEvent event) {
         com.monpai.sailboatmod.route.water.SailboatRouteCommands.register(event.getDispatcher());
         com.monpai.sailboatmod.command.MarketAdminCommands.register(event.getDispatcher());
+        com.monpai.sailboatmod.command.AirportCommands.register(event.getDispatcher());
     }
 
     @SubscribeEvent
@@ -172,6 +173,7 @@ public final class ServerEvents {
         com.monpai.sailboatmod.roadplanner.service.SharedMapTerrainService.stop();
         com.monpai.sailboatmod.map.route.MapRouteCatalogService.stop();
         com.monpai.sailboatmod.transport.TransportRegistry.clear(event.getServer());
+        com.monpai.sailboatmod.transport.air.airport.AirportRegistry.clear(event.getServer());
         RoadPlannerMapPreloadService.onServerStopped();
         RoadEditTaskService.global().clear();
         com.monpai.sailboatmod.roadplanner.service.RoadPlannerPreviewJobService.global().clear();

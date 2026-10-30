@@ -16,7 +16,16 @@ import static org.junit.jupiter.api.Assertions.*;
 class SableReflectionAccessTest {
     private static final Object TEST_LEVEL = new Object();
     private SableReflectionAccess access() throws ReflectiveOperationException {
-        return SableReflectionAccess.bind(name -> switch (name) {
+        return access(true);
+    }
+    private SableReflectionAccess access(boolean simulated) throws ReflectiveOperationException {
+        return SableReflectionAccess.bind(name -> {
+            if (!simulated && name.startsWith("dev.simulated_team.")) throw new ClassNotFoundException(name);
+            return lookup(name);
+        });
+    }
+    private Class<?> lookup(String name) throws ClassNotFoundException {
+        return switch (name) {
             case "dev.ryanhcode.sable.Sable" -> FakeSable.class;
             case "dev.ryanhcode.sable.sublevel.ServerSubLevel" -> FakeBody.class;
             case "dev.ryanhcode.sable.companion.math.Pose3dc" -> FakePose.class;
@@ -25,7 +34,27 @@ class SableReflectionAccessTest {
             case "dev.simulated_team.simulated.content.blocks.throttle_lever.ThrottleLeverBlockEntity" -> FakeThrottle.class;
             case "dev.simulated_team.simulated.content.blocks.steering_wheel.SteeringWheelBlockEntity" -> FakeSteering.class;
             default -> throw new ClassNotFoundException(name);
-        });
+        };
+    }
+
+    @Test
+    void airOnlyStackCanReadPoseAndCargoMembershipWithoutSimulatedControls() throws Exception {
+        SableReflectionAccess access = access(false);
+        FakeBody body = new FakeBody();
+        assertTrue(access.snapshot(body, BlockPos.ZERO, Direction.NORTH, "minecraft:overworld").available());
+        assertTrue(access.sameLiveStructure(body, body));
+        assertFalse(access.sameLiveStructure(body, new FakeBody()));
+        assertEquals("optional_mod_unavailable", access.throttle(body, body, new FakeThrottle(), 10).reason());
+        assertEquals("optional_mod_unavailable", access.steering(body, body, new FakeSteering(), 10).reason());
+    }
+
+    @Test
+    void changedNativeActuatorApiDoesNotDisablePhysicalIdentityAndSnapshot() throws Exception {
+        SableReflectionAccess access = SableReflectionAccess.bind(name -> name.contains("SteeringWheelBlockEntity") ? Object.class : lookup(name));
+        FakeBody body = new FakeBody();
+        assertTrue(access.snapshot(body, BlockPos.ZERO, Direction.NORTH, "minecraft:overworld").available());
+        assertTrue(access.sameLiveStructure(body, body));
+        assertEquals("optional_mod_unavailable", access.steering(body, body, new FakeSteering(), 10).reason());
     }
 
     @Test

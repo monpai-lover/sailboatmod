@@ -96,6 +96,34 @@ class PhysicalMarketDispatchTest {
         assertTrue(((java.util.Map<?, ?>) assignments.get(f.dock)).isEmpty());
     }
 
+    @Test
+    void airDispatchKeepsSubtypeAndUsesTransitStatusWithoutAConstructedLandRoute() throws Exception {
+        for (String mode : List.of("AIRSHIP", "HELICOPTER", "AIRPLANE")) {
+            Fixture f = fixture(true);
+            f.carrier.kind = LogisticsCarrier.Kind.AIR;
+            f.carrier.mode = mode;
+            assertTrue(dispatch(f));
+            ShippingOrder order = f.market.getShippingOrders().getFirst();
+            assertEquals(mode, order.transportMode());
+            assertEquals("IN_TRANSIT", order.status());
+            assertEquals(1, f.carrier.committed);
+            assertEquals(0, f.carrier.rolledBack);
+        }
+    }
+
+    @Test
+    void failedAirStartKeepsCargoAndPurchaseEscrowUncommitted() throws Exception {
+        Fixture f = fixture(false);
+        f.carrier.kind = LogisticsCarrier.Kind.AIR;
+        f.carrier.mode = "AIRPLANE";
+        assertFalse(dispatch(f));
+        assertEquals(1, f.carrier.rolledBack);
+        assertEquals(0, f.carrier.committed);
+        assertTrue(f.market.getShippingOrders().isEmpty());
+        assertEquals("WAITING_SHIPMENT", f.market.getPurchaseOrder("order").status());
+        assertEquals(4, f.market.getListing("listing").reservedCount());
+    }
+
     private static boolean dispatch(Fixture f) throws Exception {
         Method method =
                 MarketBlockEntity.class.getDeclaredMethod(
@@ -119,7 +147,7 @@ class PhysicalMarketDispatchTest {
                         f.dock,
                         f.market,
                         f.plan,
-                        TransportTerminalKind.PORT);
+                        f.carrier.kind == LogisticsCarrier.Kind.AIR ? TransportTerminalKind.AIRPORT : TransportTerminalKind.PORT);
     }
 
     private static Fixture fixture(boolean starts) throws Exception {
@@ -239,12 +267,16 @@ class PhysicalMarketDispatchTest {
                                 new Class<?>[] {LogisticsCarrier.class},
                                 this);
         final int personalCargo = 7;
+        LogisticsCarrier.Kind kind = LogisticsCarrier.Kind.WATER;
+        String mode = "PORT";
         List<ShipmentManifestEntry> manifest = new ArrayList<>();
         int committed, rolledBack, loaded;
 
         @Override
         public Object invoke(Object proxy, Method method, Object[] args) throws Throwable {
             return switch (method.getName()) {
+                case "transportKind" -> kind;
+                case "transportMode" -> mode;
                 case "getTransportUuid" -> uuid;
                 case "getTransportId" -> -70;
                 case "getTransportName" -> Component.literal("Actual physical vessel");

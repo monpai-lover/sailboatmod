@@ -28,7 +28,19 @@ public record ShippingTraceRecord(String shippingOrderId,
                                   double currentZ,
                                   double currentSpeed,
                                   List<MarketWebMapDtos.CargoItem> cargo,
-                                  boolean manual) {
+                                  boolean manual,
+                                  MarketWebMapDtos.FlightTelemetry flight) {
+    /** Source compatibility for every existing sea, land and rail producer. */
+    public ShippingTraceRecord(String shippingOrderId, String shipperUuid, String dimensionId, String transportMode,
+                               String status, String nationId, String townId, String sourceName, String targetName,
+                               List<Vec3> waypoints, int completedPointCount, double progressRatio,
+                               long startedGameTime, long updatedGameTime, double currentX, double currentZ,
+                               double currentSpeed, List<MarketWebMapDtos.CargoItem> cargo, boolean manual) {
+        this(shippingOrderId, shipperUuid, dimensionId, transportMode, status, nationId, townId, sourceName, targetName,
+                waypoints, completedPointCount, progressRatio, startedGameTime, updatedGameTime,
+                currentX, currentZ, currentSpeed, cargo, manual, null);
+    }
+
     private static final int MAX_WAYPOINTS = 2048;
     private static final int MAX_CARGO_ITEMS = 64;
 
@@ -58,31 +70,38 @@ public record ShippingTraceRecord(String shippingOrderId,
     public ShippingTraceRecord withStatus(String nextStatus, long gameTime) {
         return new ShippingTraceRecord(shippingOrderId, shipperUuid, dimensionId, transportMode, nextStatus,
                 nationId, townId, sourceName, targetName, waypoints, completedPointCount, progressRatio,
-                startedGameTime, gameTime, currentX, currentZ, currentSpeed, cargo, manual);
+                startedGameTime, gameTime, currentX, currentZ, currentSpeed, cargo, manual, flight);
     }
 
     public ShippingTraceRecord withProgress(int nextCompletedPointCount, double nextProgressRatio, long gameTime) {
         return new ShippingTraceRecord(shippingOrderId, shipperUuid, dimensionId, transportMode, status,
                 nationId, townId, sourceName, targetName, waypoints, nextCompletedPointCount, nextProgressRatio,
-                startedGameTime, gameTime, currentX, currentZ, currentSpeed, cargo, manual);
+                startedGameTime, gameTime, currentX, currentZ, currentSpeed, cargo, manual, flight);
     }
 
     public ShippingTraceRecord withLivePosition(double nextX, double nextZ, long gameTime) {
         return new ShippingTraceRecord(shippingOrderId, shipperUuid, dimensionId, transportMode, status,
                 nationId, townId, sourceName, targetName, waypoints, completedPointCount, progressRatio,
-                startedGameTime, gameTime, nextX, nextZ, currentSpeed, cargo, manual);
+                startedGameTime, gameTime, nextX, nextZ, currentSpeed, cargo, manual, flight);
     }
 
     public ShippingTraceRecord withSpeed(double nextSpeed, long gameTime) {
         return new ShippingTraceRecord(shippingOrderId, shipperUuid, dimensionId, transportMode, status,
                 nationId, townId, sourceName, targetName, waypoints, completedPointCount, progressRatio,
-                startedGameTime, gameTime, currentX, currentZ, nextSpeed, cargo, manual);
+                startedGameTime, gameTime, currentX, currentZ, nextSpeed, cargo, manual, flight);
     }
 
     public ShippingTraceRecord withCargo(List<MarketWebMapDtos.CargoItem> nextCargo, long gameTime) {
         return new ShippingTraceRecord(shippingOrderId, shipperUuid, dimensionId, transportMode, status,
                 nationId, townId, sourceName, targetName, waypoints, completedPointCount, progressRatio,
-                startedGameTime, gameTime, currentX, currentZ, currentSpeed, nextCargo, manual);
+                startedGameTime, gameTime, currentX, currentZ, currentSpeed, nextCargo, manual, flight);
+    }
+
+    public ShippingTraceRecord withFlightTelemetry(double worldY, String flightState, String executionMode, long gameTime) {
+        return new ShippingTraceRecord(shippingOrderId, shipperUuid, dimensionId, transportMode, status,
+                nationId, townId, sourceName, targetName, waypoints, completedPointCount, progressRatio,
+                startedGameTime, gameTime, currentX, currentZ, currentSpeed, cargo, manual,
+                new MarketWebMapDtos.FlightTelemetry(worldY, flightState, executionMode));
     }
 
     public CompoundTag save() {
@@ -122,6 +141,13 @@ public record ShippingTraceRecord(String shippingOrderId,
         }
         tag.put("Cargo", cargoTag);
         tag.putBoolean("Manual", manual);
+        if (flight != null) {
+            CompoundTag flightTag = new CompoundTag();
+            if (flight.worldY() != null) flightTag.putDouble("WorldY", flight.worldY());
+            flightTag.putString("FlightState", flight.flightState());
+            flightTag.putString("ExecutionMode", flight.executionMode());
+            tag.put("Flight", flightTag);
+        }
         return tag;
     }
 
@@ -162,7 +188,10 @@ public record ShippingTraceRecord(String shippingOrderId,
                 tag.contains("CurrentZ") ? tag.getDouble("CurrentZ") : 0.0D,
                 tag.contains("CurrentSpeed") ? tag.getDouble("CurrentSpeed") : 0.0D,
                 cargoItems,
-                tag.contains("Manual") && tag.getBoolean("Manual")
+                tag.contains("Manual") && tag.getBoolean("Manual"),
+                tag.contains("Flight", Tag.TAG_COMPOUND) ? new MarketWebMapDtos.FlightTelemetry(
+                        tag.getCompound("Flight").contains("WorldY", Tag.TAG_ANY_NUMERIC) ? tag.getCompound("Flight").getDouble("WorldY") : null,
+                        tag.getCompound("Flight").getString("FlightState"), tag.getCompound("Flight").getString("ExecutionMode")) : null
         );
     }
 

@@ -28,6 +28,8 @@ public final class ModCreativeTabs {
                         output.accept(ModItems.DOCK_ITEM.get());
                         output.accept(ModItems.VESSEL_REGISTRATION_CONTROLLER.get());
                         output.accept(ModItems.LAND_VEHICLE_REGISTRATION_CONTROLLER.get());
+                        output.accept(ModItems.AIR_VEHICLE_REGISTRATION_CONTROLLER.get());
+                        output.accept(ModItems.AIRPORT.get());
                         output.accept(ModItems.POST_STATION_ITEM.get());
                         output.accept(ModItems.TOWN_WAREHOUSE_ITEM.get());
                         output.accept(ModItems.MARKET_ITEM.get());

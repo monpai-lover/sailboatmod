@@ -5,7 +5,8 @@ import java.util.Locale;
 public enum TransportTerminalKind {
     AUTO,
     PORT,
-    POST_STATION;
+    POST_STATION,
+    AIRPORT;
 
     public static TransportTerminalKind fromName(String value) {
         if (value == null || value.isBlank()) {

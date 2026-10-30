@@ -68,15 +68,15 @@ public final class TerminalVisibility {
         }
         List<TerminalEntry> all = net.all();
 
-        // dockName(归一化小写)-> 拥有该 dock 的 townId 集合。跨所有 entry 反查港路对端(防御同名 dock,语义本应唯一)。
-        Map<String, Set<String>> dockNameToTowns = new HashMap<>();
+        // 只在同维度、同类设施中匹配登记航线的目的名称，避免机场与港口同名误连。
+        Map<RouteEndpoint, Set<String>> dockNameToTowns = new HashMap<>();
         for (TerminalEntry e : all) {
             String town = e.townId();
             String dock = normalizeDock(e.dockName());
             if (isBlank(town) || dock.isEmpty()) {
                 continue;
             }
-            dockNameToTowns.computeIfAbsent(dock, k -> new HashSet<>()).add(town);
+            dockNameToTowns.computeIfAbsent(new RouteEndpoint(e.dimId(), e.kind(), dock), k -> new HashSet<>()).add(town);
         }
 
         for (TerminalEntry e : all) {
@@ -85,13 +85,13 @@ public final class TerminalVisibility {
                 continue;
             }
             // 水路边:本港口每条出航路线终点名 -> 反查对端 townId 连边。
-            if (e.kind() == Kind.PORT) {
+            if (e.kind() == Kind.PORT || e.kind() == Kind.AIRPORT) {
                 for (String endName : e.routeEndDockNames()) {
                     String key = normalizeDock(endName);
                     if (key.isEmpty()) {
                         continue;
                     }
-                    Set<String> targets = dockNameToTowns.get(key);
+                    Set<String> targets = dockNameToTowns.get(new RouteEndpoint(e.dimId(), e.kind(), key));
                     if (targets == null) {
                         continue;
                     }
@@ -109,6 +109,8 @@ public final class TerminalVisibility {
         }
         return adj;
     }
+
+    private record RouteEndpoint(String dimension, Kind kind, String name) {}
 
     /** 无向加边,排自连与空白(同 town 多港口/自指 dock 不污染图)。 */
     private static void addEdge(Map<String, Set<String>> adj, String a, String b) {

@@ -205,6 +205,31 @@ public final class RegisteredVehicleControllerScreen extends ThemedScreen {
                 content.addScrollViewChild(Ui.paragraph(t("route_hint"), "sm-muted"));
             }
             case "power" -> {
+                if ("AIR".equals(values.getString("Kind"))) {
+                    content.addScrollViewChild(Ui.paragraph(t("flight_hint"), "sm-muted"));
+                    row(t("aircraft_class"), values.getString("AircraftClass"));
+                    row(t("flight_phase"), values.getString("FlightPhase"));
+                    row(t("flight_terminal"), values.getString("FlightTerminal"));
+                    row(t("flight_computer"), values.getString("FlightComputerMode"));
+                    row(t("flight_fresh"), values.getBoolean("FlightStateFresh") ? "✓" : "—");
+                    content.addScrollViewChild(Ui.paragraph(t("hybrid_unavailable"), "sm-muted"));
+                    UIElement types = Ui.wrapRow(Ui.GAP_S);
+                    for (String type : new String[] {"AIRSHIP", "ROTORCRAFT", "FIXED_WING"})
+                        types.addChildren(Ui.button(t("aircraft." + type.toLowerCase(java.util.Locale.ROOT)),
+                                Ui.Tone.SECONDARY, () -> send(ControllerAction.SET_AIRCRAFT_CLASS, type, 0)));
+                    content.addScrollViewChild(types);
+                    var terminal = Ui.field(offsetDraft, t("offset"), value -> offsetDraft = value);
+                    terminal.layout(l -> l.widthPercent(100));
+                    content.addScrollViewChild(terminal);
+                    content.addScrollViewChild(Ui.button(t("bind_flight_terminal"), Ui.Tone.PRIMARY,
+                            () -> send(ControllerAction.SET_FLIGHT_TERMINAL, offsetDraft, 0)));
+                    var speed = Ui.field(speedDraft, t("planning_speed"), value -> speedDraft = value);
+                    content.addScrollViewChild(speed);
+                    content.addScrollViewChild(Ui.paragraph(t("planning_speed_hint"), "sm-muted"));
+                    content.addScrollViewChild(Ui.button(t("save_planning_speed"), Ui.Tone.SECONDARY,
+                            () -> send(ControllerAction.SET_SPEED, speedDraft, 0)));
+                    break;
+                }
                 content.addScrollViewChild(Ui.paragraph(t("power_hint"), "sm-muted"));
                 CompoundTag ports = values.getCompound("Ports");
                 for (ControlChannel channel : ControlChannel.values()) {

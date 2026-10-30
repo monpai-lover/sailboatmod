@@ -4586,3 +4586,7 @@ td input {
     background: var(--mode, var(--accent));
     color: #0f1420;
 }
+
+:root[data-theme="light"] [data-kind="airship"] { --mode-ink: #236c58; }
+:root[data-theme="light"] [data-kind="helicopter"] { --mode-ink: #805415; }
+:root[data-theme="light"] [data-kind="airplane"] { --mode-ink: #2b5c9e; }

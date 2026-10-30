@@ -23,6 +23,35 @@
 
   const LABELS = {
     "en-US": {
+      "airports": "Airports",
+      "flightPreflight": "Preflight checks",
+      "flightQuiescing": "Preparing offline cruise",
+      "flightRecovery": "Restoring physical flight",
+      "flightUnknown": "Unknown",
+      "worldY": "World Y",
+      "flightState": "Flight state",
+      "executionMode": "Flight operation",
+      "flightParked": "Parked",
+      "flightLoading": "Loading",
+      "flightTaxiing": "Taxiing",
+      "flightTakeoff": "Taking off",
+      "flightClimbing": "Climbing",
+      "flightCruising": "Cruising",
+      "flightApproach": "Approaching",
+      "flightLanding": "Landing",
+      "flightLanded": "Landed",
+      "flightHolding": "Holding",
+      "flightBlocked": "Blocked",
+      "executionPhysical": "Physical flight",
+      "executionVirtual": "Offline cruise",
+      "runway": "Runway",
+      "helipad": "Helipad",
+      "mooring": "Airship mooring",
+      "facilityUnchecked": "Registered geometry; current clearance is checked at dispatch.",
+      "length": "Length",
+      "width": "Width",
+      "clearance": "Clearance",
+
       terrain: "Terrain",
       territories: "Territories",
       markets: "Markets",
@@ -88,6 +117,35 @@
       coords: "Coords"
     },
     "zh-CN": {
+      "airports": "机场",
+      "flightPreflight": "起飞检查",
+      "flightQuiescing": "准备离线巡航",
+      "flightRecovery": "恢复实体飞行中",
+      "flightUnknown": "未知",
+      "worldY": "世界高度 Y",
+      "flightState": "飞行状态",
+      "executionMode": "航程方式",
+      "flightParked": "停机",
+      "flightLoading": "装载中",
+      "flightTaxiing": "滑行中",
+      "flightTakeoff": "起飞中",
+      "flightClimbing": "爬升中",
+      "flightCruising": "巡航中",
+      "flightApproach": "进近中",
+      "flightLanding": "降落中",
+      "flightLanded": "已着陆",
+      "flightHolding": "等待进场",
+      "flightBlocked": "航程受阻",
+      "executionPhysical": "实体飞行",
+      "executionVirtual": "离线巡航",
+      "runway": "跑道",
+      "helipad": "直升机坪",
+      "mooring": "飞艇泊位",
+      "facilityUnchecked": "已登记设施；当前净空会在调度时检查。",
+      "length": "长度",
+      "width": "宽度",
+      "clearance": "净空高度",
+
       terrain: "地形",
       territories: "领地",
       markets: "市场",
@@ -176,12 +234,16 @@
     focusedMarketId: "",
     snapshot: null,
     markets: [],
+    airports: [],
+    airportRevision: 0,
+    airportSignature: "",
     territories: [],
     shipments: [],
     layers: {
       terrain: true,
       territories: true,
       markets: true,
+      airports: true,
       shipments: true
     },
     center: { x: 0, z: 0 },
@@ -899,6 +961,8 @@
       snapshot.tileEpoch || 0,
       snapshot.territoryRevision || 0,
       snapshot.marketRevision || 0,
+      state.airportRevision || 0,
+      state.selected?.type === "airport" ? state.selected.data?.airportId : "",
       state.localTileRevision || 0
     ].join("-");
   }
@@ -1067,6 +1131,7 @@
       ["terrain", label("terrain")],
       ["territories", label("territories")],
       ["markets", label("markets")],
+      ["airports", label("airports")],
       ["shipments", label("shipments")]
     ];
     state.layerPanel.innerHTML = rows.map(([key, text]) => `
@@ -1299,6 +1364,10 @@
     const item = state.selected || state.hover;
     if (!item) {
       state.detailPanel.innerHTML = `<div class="map-empty-note">${escapeHtml(label("emptySelection"))}</div>`;
+      return;
+    }
+    if (item.type === "airport") {
+      state.detailPanel.innerHTML = logisticsPanel()?.airportHtml(item.data, { label }) || "";
       return;
     }
     if (item.type === "market") {
@@ -1805,6 +1874,46 @@
     ctx.restore();
   }
 
+  function drawAirports(ctx, padding = 0) {
+    if (!state.layers.airports) return;
+    for (const airport of state.airports || []) {
+      const selected = state.selected?.type === "airport" && state.selected.data?.airportId === airport.airportId;
+      ctx.save();
+      for (const facility of airport.facilities || []) {
+        const start = worldToScreen(normalizePoint(facility.start));
+        const end = worldToScreen(normalizePoint(facility.end));
+        if (Math.max(start.x, end.x) < -padding - 32 || Math.min(start.x, end.x) > state.canvas.width + padding + 32
+          || Math.max(start.y, end.y) < -padding - 32 || Math.min(start.y, end.y) > state.canvas.height + padding + 32) continue;
+        ctx.strokeStyle = selected ? "#d99a00" : "#7eaeb5";
+        ctx.lineWidth = clamp((Number(facility.width) || 4) * state.zoom * Math.min(state.canvasScaleX, state.canvasScaleY), 4, 32);
+        ctx.beginPath(); ctx.moveTo(start.x, start.y); ctx.lineTo(end.x, end.y); ctx.stroke();
+        ctx.lineWidth = 1.5;
+        ctx.strokeStyle = "rgba(255,255,255,.85)";
+        if (facility.type === "RUNWAY") {
+          ctx.setLineDash([7, 6]);
+          ctx.beginPath(); ctx.moveTo(start.x, start.y); ctx.lineTo(end.x, end.y); ctx.stroke();
+          ctx.setLineDash([]);
+        } else {
+          ctx.strokeRect(start.x - 8, start.y - 8, 16, 16);
+          ctx.fillStyle = "#ffffff";
+          ctx.font = "11px sans-serif";
+          ctx.fillText(facility.type === "HELIPAD" ? "H" : "M", start.x - 4, start.y + 4);
+        }
+      }
+      const screen = worldToScreen({ x: airport.x, z: airport.z });
+      if (screen.x >= -padding - 32 && screen.x <= state.canvas.width + padding + 32
+        && screen.y >= -padding - 32 && screen.y <= state.canvas.height + padding + 32) {
+        ctx.fillStyle = selected ? "#d99a00" : "#7eaeb5";
+        ctx.fillRect(screen.x - 5, screen.y - 5, 10, 10);
+        ctx.fillStyle = "rgba(17,24,39,.86)";
+        ctx.fillRect(screen.x + 10, screen.y - 13, Math.min(180, 28 + String(airport.name || "").length * 7), 24);
+        ctx.fillStyle = "#ffffff"; ctx.font = "12px Inter, Segoe UI, sans-serif";
+        ctx.fillText(String(airport.name || airport.airportId || "-").slice(0, 20), screen.x + 18, screen.y + 3);
+      }
+      ctx.restore();
+    }
+  }
+
   function drawMarkets(ctx, padding = 0) {
     if (!state.layers.markets) {
       return;
@@ -1864,11 +1973,14 @@
       state.canvasScaleX, state.canvasScaleY,
       snapshot.territoryRevision || 0,
       snapshot.marketRevision || 0,
+      state.airportRevision || 0,
+      state.selected?.type === "airport" ? state.selected.data?.airportId : "",
       state.localTileRevision || 0,
       state.leafletMap ? 1 : 0,
       state.layers.terrain ? 1 : 0,
       state.layers.territories ? 1 : 0,
-      state.layers.markets ? 1 : 0
+      state.layers.markets ? 1 : 0,
+      state.layers.airports ? 1 : 0
     ].join("|");
   }
 
@@ -1913,6 +2025,7 @@
       drawTerrain(octx);
     }
     drawTerritories(octx, STATIC_LAYER_PAD);
+    drawAirports(octx, STATIC_LAYER_PAD);
     drawMarkets(octx, STATIC_LAYER_PAD);
     state.staticKey = key;
     return off;
@@ -2089,6 +2202,17 @@
         return { type: "shipment", data: shipment, screen: { x, y } };
       }
     }
+    if (state.layers.airports) {
+      for (const airport of state.airports || []) {
+        const screen = worldToScreen({ x: airport.x, z: airport.z });
+        const nearFacility = (airport.facilities || []).some(facility => {
+          const a = worldToScreen(normalizePoint(facility.start));
+          const b = worldToScreen(normalizePoint(facility.end));
+          return distanceToSegment({x, z:y}, {x:a.x, z:a.y}, {x:b.x, z:b.y}) <= Math.max(9, Math.min(16, (Number(facility.width) || 4) * state.zoom / 2));
+        });
+        if (Math.hypot(screen.x - x, screen.y - y) <= 14 || nearFacility) return {type:"airport", data:airport, screen:{x,y}};
+      }
+    }
     if (state.layers.territories) {
       const chunkX = Math.floor(world.x / CHUNK_SIZE);
       const chunkZ = Math.floor(world.z / CHUNK_SIZE);
@@ -2146,6 +2270,8 @@
         <span>${escapeHtml(label("town"))}: ${escapeHtml(marker.townName || "-")}</span>
         <span>X/Z ${Math.round(Number(marker.x) || 0)}, ${Math.round(Number(marker.z) || 0)}</span>
       `;
+    } else if (item.type === "airport") {
+      html = `<strong>${escapeHtml(item.data.name || item.data.airportId || "-")}</strong><span>${escapeHtml(label("airports"))} · Y ${Math.round(Number(item.data.y) || 0)}</span>`;
     } else if (item.type === "territory") {
       const territory = item.data;
       html = `
@@ -2277,6 +2403,21 @@
     }, { passive: false });
   }
 
+  function applyAirports(airports) {
+    const list = Array.isArray(airports) ? airports : [];
+    const signature = JSON.stringify(list);
+    if (signature !== state.airportSignature) {
+      state.airports = list;
+      state.airportSignature = signature;
+      state.airportRevision++;
+      if (state.selected?.type === "airport") {
+        const fresh = list.find(a => a.airportId === state.selected.data?.airportId);
+        state.selected = fresh ? { type: "airport", data: fresh } : null;
+        renderSelection();
+      }
+    }
+  }
+
   async function loadAll(token) {
     const context = captureRequestContext();
     setPanelMessage(label("loading"));
@@ -2286,7 +2427,8 @@
       fetchJson("/api/map/markets"),
       fetchJson("/api/map/territories"),
       fetchOptionalJson("/api/map/shipments", { shipments: [] }),
-      fetchOptionalJson("/api/map/world", { tellus: false })
+      fetchOptionalJson("/api/map/world", { tellus: false }),
+      fetchOptionalJson("/api/map/airports", { airports: [] })
     ]).catch((error) => {
       if (token !== state.mountedToken || !requestContextCurrent(context)) {
         return null;
@@ -2296,7 +2438,8 @@
     if (!responses || token !== state.mountedToken || !requestContextCurrent(context)) {
       return;
     }
-    const [snapshot, markets, territories, shipments, world] = responses;
+    const [snapshot, markets, territories, shipments, world, airports] = responses;
+    applyAirports(airports.airports);
     state.snapshot = snapshot;
     applyWorldInfo(world);
     state.markets = markets.markets || [];
@@ -2362,6 +2505,10 @@
     if (!next || !requestContextCurrent(context)) {
       return;
     }
+    const airports = await fetchOptionalJson("/api/map/airports", { airports: state.airports });
+    if (!requestContextCurrent(context)) return;
+    applyAirports(airports.airports);
+    scheduleRender();
     const prev = state.snapshot || {};
     const predictionChanged = (next.tellusRenderVersion || 0) !== (prev.tellusRenderVersion || 0);
     const changed = (next.tileEpoch || 0) !== (prev.tileEpoch || 0)

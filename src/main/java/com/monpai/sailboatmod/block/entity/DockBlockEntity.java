@@ -104,7 +104,7 @@ public class DockBlockEntity extends BlockEntity implements MenuProvider {
             DockTownResolver.resolve(level, worldPosition);
             registerFacility(level, worldPosition);
             // 港口码头坐标进持久清单(惰性覆盖老存档),供创建自动航线时枚举远处候选;驿站不入此清单。
-            if (!(this instanceof PostStationBlockEntity)) {
+            if (!(this instanceof PostStationBlockEntity) && !(this instanceof AirportBlockEntity)) {
                 com.monpai.sailboatmod.dock.DockLocationSavedData.get(level)
                         .register(level.dimension().location().toString(), worldPosition.asLong());
             }
@@ -149,7 +149,9 @@ public class DockBlockEntity extends BlockEntity implements MenuProvider {
         com.monpai.sailboatmod.market.terminal.TerminalNetworkSavedData net =
                 com.monpai.sailboatmod.market.terminal.TerminalNetworkSavedData.get(level);
         com.monpai.sailboatmod.market.terminal.TerminalNetworkSavedData.Kind kind =
-                this instanceof PostStationBlockEntity
+                this instanceof AirportBlockEntity
+                        ? com.monpai.sailboatmod.market.terminal.TerminalNetworkSavedData.Kind.AIRPORT
+                        : this instanceof PostStationBlockEntity
                         ? com.monpai.sailboatmod.market.terminal.TerminalNetworkSavedData.Kind.POST_STATION
                         : com.monpai.sailboatmod.market.terminal.TerminalNetworkSavedData.Kind.PORT;
         java.util.List<String> endDockNames = new java.util.ArrayList<>();
@@ -2126,11 +2128,13 @@ public class DockBlockEntity extends BlockEntity implements MenuProvider {
         return new DockMenu(containerId, playerInventory, worldPosition);
     }
 
+    protected AABB carrierSearchBounds() { return new AABB(worldPosition).inflate(ASSIGN_RADIUS); }
+
     private List<LogisticsCarrier> getNearbySailboats(Player player) {
         if (level == null) {
             return List.of();
         }
-        AABB search = new AABB(worldPosition).inflate(ASSIGN_RADIUS);
+        AABB search = carrierSearchBounds();
         Comparator<LogisticsCarrier> comparator = Comparator
                 .comparing((LogisticsCarrier boat) -> isBoatOwnedBy(boat, player) ? 0 : 1);
         if (player != null) {

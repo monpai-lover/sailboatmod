@@ -250,3 +250,45 @@ test("statusKeysAreReadableStates", () => {
   assert.equal(render.statusKey("LOADING"), null, "unknown codes are shown as they are");
   assert.equal(render.statusKey(""), "moving");
 });
+
+
+test("aircraftKindsAreDistinctAndRemainFilterable", () => {
+  for (const [mode, kind] of [["AIRSHIP", "airship"], ["HELICOPTER", "helicopter"], ["AIRPLANE", "airplane"]]) {
+    const flight = { ...boat, transportMode: mode, vehicleKind: kind };
+    assert.equal(render.vehicleKindOf(flight), kind);
+    assert.equal(render.vehicleKindOf({ transportMode: mode }), kind);
+    assert.ok(render.KINDS.includes(kind));
+    assert.match(render.LIST_ICONS[kind], /<svg/);
+    assert.equal(render.filterShipments([boat, flight], { kind }).length, 1);
+    assert.match(panel.cardHtml(flight, ctx({})), new RegExp('data-kind="' + kind + '"'));
+  }
+});
+
+test("flightDetailsShowSignedWorldHeightAndPhysicalOrVirtualState", () => {
+  const flight = { ...boat, transportMode: "AIRPLANE", flight: { worldY: -12.5, flightState: "CRUISING", executionMode: "VIRTUAL" } };
+  const html = panel.detailHtml(flight, ctx({}));
+  assert.match(html, /-12.5/);
+  assert.match(html, /flightCruising/);
+  assert.match(html, /executionVirtual/);
+  assert.doesNotMatch(panel.detailHtml(boat, ctx({})), /worldY/);
+  assert.doesNotMatch(panel.detailHtml({ ...flight, flight: { ...flight.flight, worldY: null } }, ctx({})), />0(?:\.0)? m</);
+  assert.match(panel.detailHtml({ ...flight, flight: { ...flight.flight, executionMode: "PHYSICAL" } }, ctx({})), /executionPhysical/);
+});
+
+test("airportDetailsEscapeNamesAndDistinguishRegistrationFromUsability", () => {
+  const html = panel.airportHtml({ name: '<img src=x>', x: 1, y: 70, z: 2, facilities: [{ id: 'rw', type: 'RUNWAY', start: {x:1,y:70,z:2}, end:{x:121,y:70,z:2}, width:12, clearanceHeight:24, availability:'not_checked' }] }, ctx({}));
+  assert.match(html, /&lt;img/);
+  assert.doesNotMatch(html, /<img/);
+  assert.match(html, /120/);
+  assert.match(html, /12/);
+  assert.match(html, /facilityUnchecked/);
+});
+
+
+test("aircraftLegacyModeAliasesMatchTheServer", () => {
+  for (const mode of ["AIR", "AIRPORT", "AIRCRAFT", "FIXEDWING", "FIXED_WING", "PLANE"])
+    assert.equal(render.vehicleKindOf({transportMode:mode}), "airplane");
+  assert.equal(render.vehicleKindOf({transportMode:"ZEPPELIN"}), "airship");
+  assert.equal(render.vehicleKindOf({transportMode:"ROTORCRAFT"}), "helicopter");
+  assert.equal(render.vehicleKindOf({transportMode:"AIRPORTER"}), "carriage");
+});

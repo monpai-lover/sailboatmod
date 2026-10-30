@@ -23,11 +23,21 @@ import java.util.UUID;
 public interface LogisticsCarrier {
     enum Kind {
         WATER,
-        LAND
+        LAND,
+        AIR
     }
 
     default Kind transportKind() {
         return Kind.WATER;
+    }
+
+    /** Stable shipment mode, with airframes overriding this to keep their subtype on the map. */
+    default String transportMode() {
+        return switch (transportKind()) {
+            case WATER -> "PORT";
+            case LAND -> "LAND";
+            case AIR -> "AIRPLANE";
+        };
     }
 
     default String providerId() {
@@ -115,6 +125,9 @@ public interface LogisticsCarrier {
 
     void setRouteCatalog(
             List<RouteDefinition> routes, int preferredIndex, @Nullable BlockPos dockPos);
+
+    /** Dispatch supplies its already-selected terminal before order commit and route start. */
+    default void setDispatchDestination(@Nullable BlockPos terminal) { }
 
     default void setLandTransportTask(
             LandTransportNetworkService.LandRoutePlan plan,

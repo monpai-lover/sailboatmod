@@ -1,6 +1,10 @@
 package com.monpai.sailboatmod.block.entity;
 
 import com.monpai.sailboatmod.block.LandVehicleRegistrationControllerBlock;
+import com.monpai.sailboatmod.block.AirVehicleRegistrationControllerBlock;
+import com.monpai.sailboatmod.compat.flightcontrol.FlightControlBridge;
+import com.monpai.sailboatmod.transport.air.*;
+import com.monpai.sailboatmod.transport.air.airport.*;
 import com.monpai.sailboatmod.block.RegisteredVehicleControllerBlock;
 import com.monpai.sailboatmod.compat.aeronautics.AeronauticsVehicleBridge;
 import com.monpai.sailboatmod.dock.DockRegistry;
@@ -41,7 +45,7 @@ import java.util.*;
 
 /** A logistics controller, never a second vehicle, engine or copy of its cargo. */
 public final class RegisteredVehicleControllerBlockEntity extends BlockEntity
-        implements LogisticsCarrier {
+        implements LogisticsCarrier, AirportApproachState {
     private static final Logger LOGGER =
             LoggerFactory.getLogger(RegisteredVehicleControllerBlockEntity.class);
     private ControllerRegistration registration;
@@ -72,13 +76,22 @@ public final class RegisteredVehicleControllerBlockEntity extends BlockEntity
     private SweptTerrainProbe.Result terrainResult = SweptTerrainProbe.Result.WAITING;
     private boolean cargoFaultReported;
     private Vec3 lastProgressPosition;
+    private AircraftClass aircraftClass = AircraftClass.AIRSHIP;
+    private BlockPos flightTerminalOffset;
+    private String flightPhase = "IDLE", flightFingerprint = "", arrivalFacility = "";
+    private boolean flightPending;
+    private int flightPendingTicks;
+    private UUID flightTask;
+    private boolean returnFlightPending, departureFlightPending, flightRecovering, recoveryRequired;
+    private BlockPos returnOrigin, dispatchDestination;
+    private UUID airportPreflightAttempt;
+
 
     public RegisteredVehicleControllerBlockEntity(BlockPos pos, BlockState state) {
         super(ModBlockEntities.REGISTERED_VEHICLE_CONTROLLER_BLOCK_ENTITY.get(), pos, state);
         Kind kind =
-                state.getBlock() instanceof LandVehicleRegistrationControllerBlock
-                        ? Kind.LAND
-                        : Kind.WATER;
+                state.getBlock() instanceof AirVehicleRegistrationControllerBlock ? Kind.AIR
+                        : state.getBlock() instanceof LandVehicleRegistrationControllerBlock ? Kind.LAND : Kind.WATER;
         registration = new ControllerRegistration(UUID.randomUUID(), "", kind);
         Direction[] sides = {
             Direction.NORTH,
@@ -90,7 +103,7 @@ public final class RegisteredVehicleControllerBlockEntity extends BlockEntity
         };
         for (ControlChannel channel : ControlChannel.values())
             ports.put(channel, sides[channel.ordinal()]);
-        maxSpeed = kind == Kind.LAND ? 6.0D : 4.0D;
+        maxSpeed = kind == Kind.AIR ? 10.0D : kind == Kind.LAND ? 6.0D : 4.0D;
     }
 
     public void initializeOwner(Player player) {
@@ -110,8 +123,12 @@ public final class RegisteredVehicleControllerBlockEntity extends BlockEntity
             BlockPos pos,
             BlockState state,
             RegisteredVehicleControllerBlockEntity core) {
-        if (level instanceof ServerLevel server && server.getGameTime() % 5 == 0)
-            core.tickServer(server);
+        if (level instanceof ServerLevel server) {
+            // FC may automatically start its persisted enabled card on its first tick. Guard every
+            // tick during initialization, independently of the slower navigation/telemetry cadence.
+            if (core.flightRecovering) core.blockReloadReplay(server);
+            if (server.getGameTime() % 5 == 0) core.tickServer(server);
+        }
     }
 
     private void tickServer(ServerLevel server) {
@@ -120,6 +137,13 @@ public final class RegisteredVehicleControllerBlockEntity extends BlockEntity
         if (view == null || !view.available()) {
             TransportRegistry.unregister(server, getTransportUuid());
             ownSignalsOff();
+            if (transportKind() == Kind.AIR && active) {
+                // Startup may resolve Sable after either block entity. Keep the persisted live
+                // registration/tickets until it does; lack of telemetry is not a lost aircraft.
+                status = ControllerStatus.WAITING_TERRAIN;
+                reason = flightRecovering ? "flight_recovery_initializing" : "physical_unavailable";
+                return;
+            }
             loading.close();
             status =
                     registration.registered()
@@ -147,12 +171,47 @@ public final class RegisteredVehicleControllerBlockEntity extends BlockEntity
         bindingValid = true;
         TransportRegistry.register(server, this);
         remember(server);
-        if (!ControllerRegistration.validControlPorts(ports)) {
+        if (transportKind() == Kind.AIR && active && (flightRecovering || recoveryRequired)) {
+            loading.update(server,getTransportUuid(),view.physicalId(),view.worldBounds(),view.worldPosition());
+            // Let bounded landing scans progress while the pilot brings the craft to either airport.
+            DockBlockEntity destination = resolveDestination(server);
+            if (destination instanceof AirportBlockEntity airport) airport.isCarrierInsideDockZone(this);
+            BlockPos origin = returnTrip ? returnOrigin : sourceTerminal;
+            if (origin != null && server.hasChunkAt(origin) && server.getBlockEntity(origin) instanceof AirportBlockEntity airport)
+                airport.isCarrierInsideDockZone(this);
+            updateTrace(server);
+            recordFlightTelemetry(server);
+            return;
+        }
+        if (transportKind() != Kind.AIR && !ControllerRegistration.validControlPorts(ports)) {
             portsConfirmed = false;
             fault("configure_power", false);
             return;
         }
+        if (transportKind() == Kind.AIR && active && airportPreflightPending() && !paused) {
+            BlockPos origin = returnFlightPending ? returnOrigin : sourceTerminal;
+            if (origin != null && server.hasChunkAt(origin)
+                    && server.getBlockEntity(origin) instanceof AirportBlockEntity departure
+                    && prepareAircraftFlight(server, departure)) {
+                returnFlightPending = departureFlightPending = false;
+                setChanged();
+            } else {
+                if (!FlightResumePolicy.waitsForAirport(reason)) clearAirportPreflight(server);
+                flightPhase = "PREFLIGHT";
+                status = ControllerStatus.WAITING_TERRAIN;
+                loading.update(server,getTransportUuid(),view.physicalId(),view.worldBounds(),view.worldPosition());
+                updateTrace(server);
+                recordFlightTelemetry(server);
+                return;
+            }
+        }
         if (!active || paused) {
+            if (transportKind() == Kind.AIR && active && paused) {
+                // Continue following an airborne craft after relinquishing control; never unload it under a pilot.
+                loading.update(server,getTransportUuid(),view.physicalId(),view.worldBounds(),view.worldPosition());
+                updateTrace(server);
+                recordFlightTelemetry(server);
+            }
             if (!paused) status = ControllerStatus.IDLE;
             if (!active
                     && sourceTerminal != null
@@ -179,6 +238,10 @@ public final class RegisteredVehicleControllerBlockEntity extends BlockEntity
         }
         if (targetIndex < 0 || targetIndex >= activeRoute.size()) {
             fault("missing_route", false);
+            return;
+        }
+        if (transportKind() == Kind.AIR) {
+            tickAircraft(server);
             return;
         }
         Vec3 target = activeRoute.get(targetIndex);
@@ -242,6 +305,200 @@ public final class RegisteredVehicleControllerBlockEntity extends BlockEntity
             if (stalledTicks > 400) fault("no_progress", false);
         }
         if (active) updateTrace(server);
+    }
+
+    @Override public AircraftClass aircraftClass() { return aircraftClass; }
+
+    @Override public Vec3 velocityMetersPerSecond() {
+        return view == null ? new Vec3(Double.NaN, Double.NaN, Double.NaN) : view.linearVelocity();
+    }
+
+    @Override public boolean physicalArrivalReady() {
+        if (transportKind() != Kind.AIR || view == null || !view.available() || !bindingValid) return false;
+        if (level instanceof ServerLevel server) {
+            FlightMission mission = FlightMissionSavedData.get(server).get(getTransportUuid());
+            return mission == null || mission.representation() == FlightMission.Representation.PHYSICAL;
+        }
+        return false;
+    }
+
+    @Override public String transportMode() {
+        if (transportKind() != Kind.AIR) return transportKind() == Kind.LAND ? "LAND" : "PORT";
+        return switch (aircraftClass) { case AIRSHIP -> "AIRSHIP"; case ROTORCRAFT -> "HELICOPTER"; case FIXED_WING -> "AIRPLANE"; };
+    }
+
+    private FlightControlBridge.TerminalSnapshot flightTerminalState(ServerLevel server) {
+        return FlightControlBridge.inspect(server, flightTerminalOffset == null ? worldPosition : worldPosition.offset(flightTerminalOffset));
+    }
+
+    private boolean airportPreflightPending() { return returnFlightPending || departureFlightPending; }
+
+    private void clearAirportPreflight(ServerLevel server) {
+        if (airportPreflightAttempt == null) return;
+        for (BlockPos terminal : new BlockPos[] { sourceTerminal, returnOrigin, destinationTerminal })
+            if (terminal != null && server.hasChunkAt(terminal)
+                    && server.getBlockEntity(terminal) instanceof AirportBlockEntity airport)
+                airport.clearPreflight(airportPreflightAttempt);
+        airportPreflightAttempt = null;
+        setChanged();
+    }
+
+    /** Disable only our real installed card; a missing FCC snapshot must not cause a premature fault. */
+    private void blockReloadReplay(ServerLevel server) {
+        if (!flightRecovering || transportKind() != Kind.AIR) return;
+        flightPhase = "RECOVERY_REQUIRED";
+        paused = true;
+        status = ControllerStatus.WAITING_TERRAIN;
+        reason = "flight_recovery_initializing";
+        if (flightTerminalOffset == null) { reason = "flight_terminal_required"; return; }
+        BlockPos terminal = worldPosition.offset(flightTerminalOffset);
+        var installed = FlightControlBridge.inspectInstalledProfile(server, terminal);
+        var guard = FlightRecoveryPolicy.guard(FlightControlBridge.sameStructure(server, worldPosition, terminal),
+                installed.available(), flightFingerprint, installed.fingerprint());
+        if (guard == FlightRecoveryPolicy.Guard.WAIT) return;
+        if (guard == FlightRecoveryPolicy.Guard.CONFLICT) {
+            status = ControllerStatus.MANUAL;
+            reason = "flight_recovery_identity_conflict";
+            return;
+        }
+        var state = FlightControlBridge.inspect(server, terminal);
+        if (!state.available()) return;
+        var cancelled = FlightControlBridge.requestAction(server, terminal, FlightControlBridge.Action.CANCEL, state.expected());
+        if (!cancelled.accepted()) {
+            status = ControllerStatus.MANUAL;
+            reason = cancelled.reason();
+            return;
+        }
+        // FC does not persist route progress. Never adopt its fresh task or restart the old card.
+        flightRecovering = false;
+        recoveryRequired = true;
+        flightPending = false;
+        flightTask = null;
+        status = ControllerStatus.FAULT;
+        reason = "flight_recovery_land_at_airport";
+        FlightMission mission = FlightMissionSavedData.get(server).get(getTransportUuid());
+        if (mission != null) { mission.requireRecovery(reason); FlightMissionSavedData.get(server).setDirty(); }
+        setChanged();
+    }
+
+    private boolean prepareAircraftFlight(ServerLevel server, DockBlockEntity departure) {
+        if (!(departure instanceof AirportBlockEntity source) || !controlsReady()) { reason = "flight_terminal_required"; return false; }
+        DockBlockEntity destination = resolveDestination(server);
+        if (!(destination instanceof AirportBlockEntity airport) || source == airport) { reason = "destination_airport_required"; return false; }
+        var state = flightTerminalState(server);
+        if (!state.available() || !state.linked()
+                || ((state.active() || state.enabled()) && (flightTask == null || !Objects.equals(flightTask, state.taskId())))) {
+            reason = "flight_control_conflict"; return false;
+        }
+        if (airportPreflightAttempt == null) { airportPreflightAttempt = UUID.randomUUID(); setChanged(); }
+        var origin = source.preparedDeparture(airportPreflightAttempt, this, aircraftClass, view.linearVelocity().length());
+        var landing = airport.preparedLanding(airportPreflightAttempt, getTransportUuid(), aircraftClass);
+        if (origin.isEmpty() || landing.isEmpty()) { reason = "airport_unavailable"; return false; }
+        var vehicle = FlightControlBridge.inspectVehicle(server, worldPosition.offset(flightTerminalOffset));
+        if (!vehicle.available() || !vehicle.fresh()) { reason = "flight_state_stale"; return false; }
+        try {
+            double refHeight = vehicle.y() - view.worldBounds().minY;
+            List<Vec3> authored = FlightRoutePlanner.cruiseForLeg(selected().waypoints(), returnTrip);
+            List<Vec3> flightRoute = FlightRoutePlanner.plan(aircraftClass, origin.get(), landing.get(), authored,
+                    refHeight, FlightRoutePlanner.requiredHorizontalDiameter(view.worldBounds(),
+                            new Vec3(vehicle.x(), vehicle.y(), vehicle.z())), maxSpeed);
+            if (flightRoute.stream().anyMatch(p -> p.y >= server.getMaxBuildHeight() || p.y < server.getMinBuildHeight())) {
+                reason = "flight_outside_height"; return false;
+            }
+            if (!airport.reservePreparedFacility(airportPreflightAttempt, landing.get().id(), getTransportUuid(), 6000)) { reason = "airport_reserved"; return false; }
+            var disabled = FlightControlBridge.requestAction(server, worldPosition.offset(flightTerminalOffset),
+                    FlightControlBridge.Action.CANCEL, state.expected());
+            if (!disabled.accepted()) { airport.releaseReservation(getTransportUuid()); reason = disabled.reason(); return false; }
+            var result = FlightControlBridge.submitRoute(server, worldPosition.offset(flightTerminalOffset),
+                    new FlightControlBridge.RoutePlan("Sailboat cargo " + getTransportUuid().toString().substring(0, 8),
+                            flightRoute.stream().map(p -> new FlightControlBridge.Waypoint(p.x,p.y,p.z)).toList(),
+                            FlightControlBridge.Airframe.valueOf(aircraftClass.name()),
+                            aircraftClass == AircraftClass.FIXED_WING ? FlightControlBridge.EndBehavior.APPROACH_LANDING
+                                    : FlightControlBridge.EndBehavior.HOVER, 10, 10), disabled.snapshot().expected());
+            if (!result.accepted()) { airport.releaseReservation(getTransportUuid()); reason = result.reason(); return false; }
+            activeRoute.clear(); activeRoute.addAll(flightRoute); targetIndex = 0;
+            arrivalFacility = landing.get().id(); flightRecovering = recoveryRequired = false; flightPending = true; flightPendingTicks = 0;
+            flightFingerprint = result.submittedProfileFingerprint(); flightTask = null; flightPhase = "PREFLIGHT";
+            FlightMissionSavedData.get(server).put(FlightMission.start(getTransportUuid(), dimensionId(), worldPosition,
+                    aircraftClass, manifest.stream().map(ShipmentManifestEntry::shippingOrderId).filter(id -> !id.isBlank()).toList(),
+                    activeRoute, maxSpeed));
+            clearAirportPreflight(server);
+            return true;
+        } catch (IllegalArgumentException invalid) {
+            airport.releaseReservation(getTransportUuid()); reason = invalid.getMessage(); return false;
+        }
+    }
+
+    private void tickAircraft(ServerLevel server) {
+        var state = flightTerminalState(server);
+        if (!state.available() || !state.linked() || !view.physicalId().equals(state.structureId())) { fault("flight_binding_lost", false); return; }
+        if ((!flightPending || state.profileValid()) && !flightFingerprint.equals(state.expected().profileFingerprint())) { fault("flight_profile_changed", true); return; }
+        if (flightPending) {
+            flightPendingTicks += 5;
+            if (!state.profileValid()) {
+                reason = "flight_profile_pending";
+                if (flightPendingTicks >= 100) fault("flight_profile_invalid", false);
+                return;
+            }
+            boolean ready = loading.update(server, getTransportUuid(), view.physicalId(), view.worldBounds(), activeRoute.getFirst());
+            if (!ready) { reason = loading.reason(); status = ControllerStatus.WAITING_TERRAIN; return; }
+            var result = FlightControlBridge.requestAction(server, worldPosition.offset(flightTerminalOffset),
+                    FlightControlBridge.Action.START, state.expected());
+            if (!result.accepted()) { fault(result.reason(), false); return; }
+            flightPending = false; flightTask = result.snapshot().taskId(); flightPhase = "TAKING_OFF"; setChanged();
+            state = result.snapshot();
+        }
+        if (flightTask == null && state.taskId() != null && state.active()) flightTask = state.taskId();
+        if (flightTask != null && state.taskId() != null && !flightTask.equals(state.taskId())) { fault("flight_control_conflict", true); return; }
+        if (state.currentPath() != null) targetIndex = Math.max(0, Math.min(activeRoute.size()-1, state.currentPath()-1));
+        if (state.completed() || "HOLDING".equals(state.phase())) flightPhase = "LANDING";
+        else if (targetIndex == 0) flightPhase = "TAKING_OFF";
+        else if (targetIndex >= activeRoute.size()-2) flightPhase = "APPROACHING";
+        else flightPhase = "CRUISING";
+        boolean chunksReady = loading.update(server, getTransportUuid(), view.physicalId(), view.worldBounds(), activeRoute.get(targetIndex));
+        // Diagnostics never cut an airborne fixed wing's thrust because a terrain query is pending.
+        boolean terrainReady = chunksReady && clearFlightTerrain(server);
+        status = terrainReady ? ControllerStatus.RUNNING : ControllerStatus.WAITING_TERRAIN;
+        reason = !chunksReady ? loading.reason() : terrainReady ? "" : terrainResult == SweptTerrainProbe.Result.BLOCKED ? "flight_obstacle_warning" : "waiting_terrain";
+        if ("BLOCKED".equals(state.phase()) || "PREEMPTED".equals(state.phase()) || "FAILED".equals(state.phase())) {
+            status = ControllerStatus.FAULT; reason = state.blockReason(); flightPhase = state.phase();
+        }
+        DockBlockEntity destination = resolveDestination(server);
+        if (destination instanceof AirportBlockEntity airport) {
+            if (server.getGameTime()%20==0 && !airport.reserveFacility(arrivalFacility,getTransportUuid(),6000)) reason="airport_reserved";
+            if (targetIndex >= activeRoute.size()-2 && airport.isCarrierInsideDockZone(this)) {
+                arrivalTicks += 5;
+                if (arrivalTicks >= 20) { arrive(server, airport); return; }
+            } else arrivalTicks=0;
+        }
+        FlightMission mission = FlightMissionSavedData.get(server).get(getTransportUuid());
+        if (mission != null) { mission.physicalObservation(view.worldPosition(),targetIndex,flightPhase,reason); FlightMissionSavedData.get(server).setDirty(); }
+        updateTrace(server);
+        recordFlightTelemetry(server);
+    }
+
+    private void recordFlightTelemetry(ServerLevel server) {
+        if (view == null) return;
+        if (manifest.isEmpty()) ShippingTraceService.recordFlightTelemetry(server,getTransportUuid(),"",view.worldPosition().y,flightPhase,"PHYSICAL");
+        else for (ShipmentManifestEntry entry:manifest) ShippingTraceService.recordFlightTelemetry(server,getTransportUuid(),entry.shippingOrderId(),view.worldPosition().y,flightPhase,"PHYSICAL");
+    }
+
+    private boolean clearFlightTerrain(ServerLevel server) {
+        Vec3 sweep = view.linearVelocity().scale(2);
+        if (sweep.length()>64) sweep=sweep.normalize().scale(64);
+        // The lower skin may touch a runway. Diagnose forward/upper volume without counting its deck.
+        AABB hull=view.worldBounds();
+        AABB area=new AABB(hull.minX,hull.minY+.2,hull.minZ,hull.maxX,hull.maxY,hull.maxZ).expandTowards(sweep);
+        terrainResult=terrainProbe.scan(area,2048,server::hasChunkAt,
+                at->server.getBlockState(at).getCollisionShape(server,at).toAabbs().stream()
+                        .anyMatch(box->box.move(at.getX(),at.getY(),at.getZ()).intersects(area)));
+        return terrainResult==SweptTerrainProbe.Result.CLEAR;
+    }
+
+    private void releaseAirportReservation(ServerLevel server) {
+        if(destinationTerminal!=null && server.hasChunkAt(destinationTerminal)
+                && server.getBlockEntity(destinationTerminal) instanceof AirportBlockEntity airport)
+            airport.releaseReservation(getTransportUuid());
     }
 
     private boolean clearSweptTerrain(ServerLevel server, Vec3 waypoint) {
@@ -327,6 +584,7 @@ public final class RegisteredVehicleControllerBlockEntity extends BlockEntity
     private void holdNative(boolean manual) {
         manual |= manualTakeover;
         ownSignalsOff();
+        if (transportKind() == Kind.AIR) return; // Explicit flight transactions verify their acknowledgement.
         if (!manual) {
             NativeControlResult stopped =
                     throttleOffset == null
@@ -356,12 +614,16 @@ public final class RegisteredVehicleControllerBlockEntity extends BlockEntity
 
     private void fault(String why, boolean manual) {
         manual |= manualTakeover;
+        if (transportKind() == Kind.AIR && level instanceof ServerLevel server && !manual) {
+            if (!requestAircraftPause(server)) manual = true;
+        }
         manualTakeover |= manual;
         paused = true;
+        flightPhase = manual ? "MANUAL" : "PAUSED";
         status = manual ? ControllerStatus.MANUAL : ControllerStatus.FAULT;
         reason = why;
         holdNative(manual);
-        loading.close();
+        if (transportKind() != Kind.AIR) loading.close();
         if (level instanceof ServerLevel server) remember(server);
         setChanged();
     }
@@ -494,6 +756,13 @@ public final class RegisteredVehicleControllerBlockEntity extends BlockEntity
     }
 
     private boolean controlsReady() {
+        if (transportKind() == Kind.AIR) {
+            if (!(level instanceof ServerLevel server) || flightTerminalOffset == null || view == null) return false;
+            BlockEntity terminal = target(flightTerminalOffset);
+            if (terminal == null || !AeronauticsVehicleBridge.sameStructure(this, terminal)) return false;
+            var state = flightTerminalState(server);
+            return state.available() && state.linked() && view.physicalId().equals(state.structureId());
+        }
         return portsConfirmed && ControllerRegistration.validControlPorts(ports);
     }
 
@@ -504,12 +773,19 @@ public final class RegisteredVehicleControllerBlockEntity extends BlockEntity
                             .getShippingOrder(manifest.getFirst().shippingOrderId());
             if (order != null) destinationTerminal = order.targetDockPos();
         }
+        if (transportKind() == Kind.AIR && destinationTerminal == null) {
+            String destinationName = returnTrip ? selected().startDockName() : selected().endDockName();
+            List<AirportSavedData.AirportSnapshot> matches = AirportSavedData.get(server).airports(dimensionId()).stream()
+                    .filter(airport -> airport.name().equalsIgnoreCase(destinationName)).toList();
+            if (matches.size() == 1) destinationTerminal = matches.getFirst().pos();
+            // Air facilities can be hundreds of blocks from the registry; never guess a neighbour.
+            if (destinationTerminal == null) return null;
+        }
         if (destinationTerminal == null && !activeRoute.isEmpty()) {
             Vec3 end = activeRoute.getLast();
             Collection<BlockPos> terminals =
-                    transportKind() == Kind.LAND
-                            ? PostStationRegistry.get(server)
-                            : DockRegistry.get(server);
+                    transportKind() == Kind.AIR ? AirportRegistry.get(server)
+                            : transportKind() == Kind.LAND ? PostStationRegistry.get(server) : DockRegistry.get(server);
             destinationTerminal =
                     terminals.stream()
                             .filter(server::hasChunkAt)
@@ -529,6 +805,10 @@ public final class RegisteredVehicleControllerBlockEntity extends BlockEntity
     }
 
     private void arrive(ServerLevel server, DockBlockEntity dock) {
+        if (transportKind() == Kind.AIR) {
+            if (!(dock instanceof AirportBlockEntity airport) || !airport.isCarrierInsideDockZone(this)) return;
+            if (!requestAircraftCancel(server)) { status=ControllerStatus.FAULT; flightPhase="PARKED_CONTROL_CONFLICT"; return; }
+        }
         holdNative(false);
         boolean shouldReturn = autoReturn || !manifest.isEmpty();
         List<ShipmentManifestEntry> arriving = List.copyOf(manifest);
@@ -561,6 +841,14 @@ public final class RegisteredVehicleControllerBlockEntity extends BlockEntity
                 if (!manifest.contains(entry) && !entry.shippingOrderId().isBlank())
                     ShippingTraceService.removeTrace(server, entry.shippingOrderId());
         }
+        if (transportKind() == Kind.AIR) {
+            FlightMission mission = FlightMissionSavedData.get(server).get(getTransportUuid());
+            if (mission != null) { mission.finishAtAirport(true); FlightMissionSavedData.get(server).setDirty(); }
+            releaseAirportReservation(server); flightTask=null; flightPhase="PARKED";
+            clearAirportPreflight(server);
+            flightPending = returnFlightPending = departureFlightPending = false;
+            flightRecovering = recoveryRequired = false;
+        }
         active = false;
         paused = false;
         arrivalTicks = 0;
@@ -570,7 +858,10 @@ public final class RegisteredVehicleControllerBlockEntity extends BlockEntity
             return;
         }
         if (dock != null && shouldReturn && !returnTrip && sourceTerminal != null) {
-            Collections.reverse(activeRoute);
+            if (transportKind() == Kind.AIR) {
+                activeRoute.clear(); activeRoute.addAll(FlightRoutePlanner.cruiseForLeg(selected().waypoints(), true));
+                returnOrigin = dock.getBlockPos(); returnFlightPending = true; flightPending = false;
+            } else Collections.reverse(activeRoute);
             destinationTerminal = sourceTerminal;
             returnTrip = true;
             targetIndex = 0;
@@ -580,6 +871,9 @@ public final class RegisteredVehicleControllerBlockEntity extends BlockEntity
             return;
         }
         status = ControllerStatus.IDLE;
+        // A completed deadhead now belongs to the airport it actually reached. The idle tick
+        // retries pickup after bounded airport validation, including after a server restart.
+        if (transportKind() == Kind.AIR && dock != null) sourceTerminal = dock.getBlockPos();
         ShippingTraceService.removeTrace(
                 server, ShippingTraceService.manualTraceId(getTransportUuid()));
         remember(server);
@@ -600,8 +894,8 @@ public final class RegisteredVehicleControllerBlockEntity extends BlockEntity
                         activeRoute,
                         getOwnerUuid(),
                         "",
-                        transportKind() == Kind.LAND ? "LAND" : "PORT",
-                        "SAILING",
+                        transportMode(),
+                        transportKind() == Kind.AIR ? "IN_TRANSIT" : "SAILING",
                         selected().startDockName(),
                         selected().endDockName(),
                         view.worldPosition().x,
@@ -620,7 +914,8 @@ public final class RegisteredVehicleControllerBlockEntity extends BlockEntity
                 ShippingTraceService.updateStatus(
                         server,
                         entry.shippingOrderId(),
-                        status == ControllerStatus.WAITING_TERRAIN ? "STUCK" : "SAILING");
+                        status == ControllerStatus.WAITING_TERRAIN || status == ControllerStatus.FAULT || paused ? "STUCK"
+                                : transportKind() == Kind.AIR ? "IN_TRANSIT" : "SAILING");
                 ShippingTraceService.updateLivePositionProgressAndSpeed(
                         server,
                         entry.shippingOrderId(),
@@ -649,7 +944,7 @@ public final class RegisteredVehicleControllerBlockEntity extends BlockEntity
                                 view == null ? registration.physicalId() : view.physicalId(),
                                 getOwnerUuid(),
                                 active
-                                        && !paused
+                                        && (!paused || transportKind() == Kind.AIR)
                                         && bindingValid
                                         && view != null
                                         && view.available()));
@@ -684,7 +979,8 @@ public final class RegisteredVehicleControllerBlockEntity extends BlockEntity
     public Component getTransportName() {
         return Component.literal(
                 vehicleName.isBlank()
-                        ? (transportKind() == Kind.LAND
+                        ? (transportKind() == Kind.AIR ? "Aircraft"
+                                : transportKind() == Kind.LAND
                                 ? "Registered vehicle"
                                 : "Registered vessel")
                         : vehicleName);
@@ -860,6 +1156,8 @@ public final class RegisteredVehicleControllerBlockEntity extends BlockEntity
         }
     }
 
+    @Override public void setDispatchDestination(BlockPos terminal) { dispatchDestination = terminal == null ? null : terminal.immutable(); }
+
     @Override
     public void setRouteCatalog(List<RouteDefinition> routes, int preferred, BlockPos dockPos) {
         routeCatalog.clear();
@@ -905,15 +1203,32 @@ public final class RegisteredVehicleControllerBlockEntity extends BlockEntity
                 || paused) return false;
         if (sourceTerminal == null
                 || !server.hasChunkAt(sourceTerminal)
-                || !(server.getBlockEntity(sourceTerminal) instanceof DockBlockEntity dock)
-                || !dock.isCarrierInsideDockZone(this)) return false;
+                || !(server.getBlockEntity(sourceTerminal) instanceof DockBlockEntity dock)) return false;
+        if (transportKind() == Kind.AIR) {
+            // Geometry can prove that this request starts at a parked aircraft while the bounded
+            // world scan is still pending. That scan must finish before submitting any FC profile.
+            if (!(dock instanceof AirportBlockEntity airport) || airport.facilities().stream().noneMatch(facility ->
+                    facility.supports(aircraftClass) && facility.isParked(view.worldBounds(), view.linearVelocity().length()))) return false;
+        } else if (!dock.isCarrierInsideDockZone(this)) return false;
+        if (transportKind() == Kind.AIR) clearAirportPreflight(server);
         activeRoute.clear();
         activeRoute.addAll(selected().waypoints());
         targetIndex = 0;
+        destinationTerminal = dispatchDestination;
+        dispatchDestination = null;
+        returnTrip = false;
+        returnFlightPending = departureFlightPending = false;
+        if (transportKind() == Kind.AIR && !prepareAircraftFlight(server, dock)) {
+            if (!FlightResumePolicy.waitsForAirport(reason)) { clearAirportPreflight(server); return false; }
+            // Returning true commits the accepted dispatch, including its manifest. A caller that
+            // rolls cargo back after false can never leave an asynchronous empty flight behind.
+            departureFlightPending = true;
+            flightPending = false;
+            flightPhase = "PREFLIGHT";
+        }
         manualTakeover = false;
         paused = false;
         active = true;
-        returnTrip = false;
         departureMillis = System.currentTimeMillis();
         missionDistance = selected().routeLengthMeters();
         loading.update(
@@ -922,8 +1237,8 @@ public final class RegisteredVehicleControllerBlockEntity extends BlockEntity
                 view.physicalId(),
                 view.worldBounds(),
                 activeRoute.getFirst());
-        status = ControllerStatus.RUNNING;
-        reason = "";
+        status = departureFlightPending ? ControllerStatus.WAITING_TERRAIN : ControllerStatus.RUNNING;
+        if (!departureFlightPending) reason = "";
         arrivalTicks = stalledTicks = 0;
         lastProgressPosition = null;
         remember(server);
@@ -943,19 +1258,60 @@ public final class RegisteredVehicleControllerBlockEntity extends BlockEntity
         }
     }
 
+    private boolean requestAircraftPause(ServerLevel server) {
+        if (!ownsInstalledFlightProfile(server)) { reason = "flight_control_conflict"; return false; }
+        var state = flightTerminalState(server);
+        if (!state.available() || (!flightPending && !flightRecovering && flightTask != null && !Objects.equals(flightTask,state.taskId()))) {
+            reason = "flight_control_conflict"; return false;
+        }
+        var action = state.active() || "PAUSED".equals(state.phase()) ? FlightControlBridge.Action.PAUSE : FlightControlBridge.Action.CANCEL;
+        var result = FlightControlBridge.requestAction(server, worldPosition.offset(flightTerminalOffset),action,state.expected());
+        if (!result.accepted()) { reason = result.reason(); return false; }
+        return true;
+    }
+
     private void pause(boolean manual) {
+        if (transportKind() == Kind.AIR && (flightRecovering || recoveryRequired)) {
+            // Recovery already relinquished (or is still proving) the terminal. A pause button
+            // must not bypass that proof and cancel a stranger's unvalidated replacement card.
+            setChanged(); return;
+        }
         manual |= manualTakeover || status == ControllerStatus.MANUAL;
+        if (transportKind() == Kind.AIR && !manual && !airportPreflightPending()
+                && level instanceof ServerLevel server && !requestAircraftPause(server)) {
+            setChanged(); return;
+        }
         manualTakeover |= manual;
         paused = true;
         status = manual ? ControllerStatus.MANUAL : ControllerStatus.PAUSED;
+        if (transportKind() == Kind.AIR) flightPhase = manual ? "MANUAL" : "PAUSED";
         holdNative(manual);
-        loading.close();
+        if (transportKind() != Kind.AIR) loading.close();
         if (level instanceof ServerLevel server) remember(server);
         setChanged();
     }
 
     private void resume() {
+        if (transportKind() == Kind.AIR && level instanceof ServerLevel server && (flightRecovering || recoveryRequired)) {
+            resumeRecoveredFlight(server);
+            return;
+        }
         if (!activeRoute.isEmpty() && isTransportAlive() && controlsReady()) {
+            if (transportKind() == Kind.AIR && !airportPreflightPending() && level instanceof ServerLevel server) {
+                var state = flightTerminalState(server);
+                if (state.profileValid() && !flightFingerprint.equals(state.expected().profileFingerprint())) {
+                    reason="flight_profile_changed"; setChanged(); return;
+                }
+                if (!state.profileValid() || "READY".equals(state.phase())) {
+                    flightPending=true; flightPendingTicks=0;
+                } else {
+                    FlightControlBridge.Action action = FlightResumePolicy.action(state.phase());
+                    if (action == null) { reason="flight_control_conflict"; setChanged(); return; }
+                    var result = FlightControlBridge.requestAction(server, worldPosition.offset(flightTerminalOffset),action,state.expected());
+                    if (!result.accepted()) { reason=result.reason(); setChanged(); return; }
+                    flightTask=result.snapshot().taskId(); flightPending=false; flightRecovering=false;
+                }
+            }
             manualTakeover = false;
             active = true;
             paused = false;
@@ -967,8 +1323,76 @@ public final class RegisteredVehicleControllerBlockEntity extends BlockEntity
         }
     }
 
+    private void resumeRecoveredFlight(ServerLevel server) {
+        if (flightRecovering) blockReloadReplay(server);
+        if (flightRecovering || !isTransportAlive()) return;
+        FlightMission mission = FlightMissionSavedData.get(server).get(getTransportUuid());
+        if (mission == null || !mission.active() || mission.representation() != FlightMission.Representation.PHYSICAL
+                || !mission.controller().equals(worldPosition)) {
+            reason = "flight_recovery_identity_conflict"; setChanged(); return;
+        }
+        DockBlockEntity targetAirport = resolveDestination(server);
+        BlockPos origin = returnTrip ? returnOrigin : sourceTerminal;
+        AirportBlockEntity departure = origin != null && server.hasChunkAt(origin)
+                && server.getBlockEntity(origin) instanceof AirportBlockEntity airport ? airport : null;
+        boolean atDestination = targetAirport instanceof AirportBlockEntity airport && airport.isCarrierInsideDockZone(this);
+        boolean atDeparture = departure != null && departure.isCarrierInsideDockZone(this);
+        switch (FlightRecoveryPolicy.resume(atDeparture, atDestination)) {
+            case REQUIRE_LANDING -> { reason = "flight_recovery_land_at_airport"; setChanged(); }
+            case ARRIVE -> {
+                // Keep the recovery flag until arrival/cargo delivery has actually succeeded.
+                arrive(server, targetAirport);
+            }
+            case PREFLIGHT -> {
+                recoveryRequired = false;
+                manualTakeover = false;
+                paused = false;
+                if (returnTrip) returnFlightPending = true;
+                else departureFlightPending = true;
+                flightPending = false;
+                flightPhase = "PREFLIGHT";
+                reason = "airport_unavailable";
+                status = ControllerStatus.WAITING_TERRAIN;
+                setChanged();
+            }
+        }
+    }
+
+    private boolean requestAircraftCancel(ServerLevel server) {
+        if (!ownsInstalledFlightProfile(server)) { reason="flight_control_conflict"; return false; }
+        var state=flightTerminalState(server);
+        if (!state.available() || (!flightPending && state.profileValid() && !flightFingerprint.equals(state.expected().profileFingerprint()))
+                || (flightTask!=null && state.taskId()!=null && !Objects.equals(flightTask,state.taskId()) && !flightRecovering)) {
+            reason="flight_control_conflict"; return false;
+        }
+        var result=FlightControlBridge.requestAction(server,worldPosition.offset(flightTerminalOffset),FlightControlBridge.Action.CANCEL,state.expected());
+        if (!result.accepted()) { reason=result.reason(); return false; }
+        return true;
+    }
+
+    private boolean ownsInstalledFlightProfile(ServerLevel server) {
+        if (flightTerminalOffset == null) return false;
+        BlockPos terminal = worldPosition.offset(flightTerminalOffset);
+        var installed = FlightControlBridge.inspectInstalledProfile(server, terminal);
+        return FlightRecoveryPolicy.guard(FlightControlBridge.sameStructure(server, worldPosition, terminal),
+                installed.available(), flightFingerprint, installed.fingerprint()) == FlightRecoveryPolicy.Guard.CANCEL_REPLAY;
+    }
+
     private void stop() {
         boolean manual = status == ControllerStatus.MANUAL;
+        if (transportKind() == Kind.AIR && level instanceof ServerLevel server) {
+            if (flightRecovering) {
+                blockReloadReplay(server);
+                if (flightRecovering) { setChanged(); return; }
+                manual = false;
+            }
+            if (!manual && !airportPreflightPending() && (active || flightPending) && !requestAircraftCancel(server)) { setChanged(); return; }
+            FlightMission mission = FlightMissionSavedData.get(server).get(getTransportUuid());
+            if (mission != null) { mission.cancelPhysical(); FlightMissionSavedData.get(server).setDirty(); }
+            clearAirportPreflight(server);
+            releaseAirportReservation(server); flightPending = returnFlightPending = departureFlightPending = false;
+            flightRecovering = recoveryRequired = false; flightTask = null; flightPhase = "IDLE";
+        }
         active = false;
         paused = false;
         status = ControllerStatus.IDLE;
@@ -998,8 +1422,10 @@ public final class RegisteredVehicleControllerBlockEntity extends BlockEntity
     @Override
     public void onLoad() {
         super.onLoad();
-        if (level instanceof ServerLevel server && registration.registered())
+        if (level instanceof ServerLevel server && registration.registered()) {
             TransportRegistry.remember(server, getTransportUuid());
+            if (flightRecovering) blockReloadReplay(server);
+        }
     }
 
     @Override
@@ -1009,7 +1435,7 @@ public final class RegisteredVehicleControllerBlockEntity extends BlockEntity
             if (!ControllerRegistration.preserveLoadingOnRemoval(
                     RegisteredTransportSavedData.isServerStopping(server.getServer()),
                     active,
-                    paused)) loading.close();
+                    paused && transportKind() != Kind.AIR)) loading.close();
         }
         super.setRemoved();
     }
@@ -1018,6 +1444,18 @@ public final class RegisteredVehicleControllerBlockEntity extends BlockEntity
     public void onPermanentRemoval() {
         if (!(level instanceof ServerLevel server)) return;
         boolean manual = status == ControllerStatus.MANUAL;
+        if (transportKind() == Kind.AIR) {
+            clearAirportPreflight(server);
+            boolean released = !active || (!manual && requestAircraftCancel(server));
+            FlightMission mission = FlightMissionSavedData.get(server).get(getTransportUuid());
+            if (mission != null) {
+                if (released) mission.cancelPhysical();
+                else mission.requireRecovery("controller_removed:" + reason);
+                FlightMissionSavedData.get(server).setDirty();
+            }
+            if (!released) LOGGER.warn("Aircraft {} controller removed while external flight control remains: {}",getTransportUuid(),reason);
+            releaseAirportReservation(server);
+        }
         active = false;
         paused = false;
         bindingValid = false;
@@ -1050,6 +1488,18 @@ public final class RegisteredVehicleControllerBlockEntity extends BlockEntity
         try {
             switch (action) {
                 case REFRESH -> {}
+                case SET_AIRCRAFT_CLASS -> {
+                    if (transportKind() != Kind.AIR || active || !manifest.isEmpty()) return false;
+                    aircraftClass = AircraftClass.valueOf(value);
+                }
+                case SET_FLIGHT_TERMINAL -> {
+                    if (transportKind() != Kind.AIR || active) return false;
+                    BlockPos offset = parseOffset(value);
+                    if (target(offset) == null || !AeronauticsVehicleBridge.sameStructure(this, target(offset))) return false;
+                    var terminalState = FlightControlBridge.inspect(server, worldPosition.offset(offset));
+                    if (!terminalState.available() || !terminalState.linked()) { reason = terminalState.reason(); return false; }
+                    flightTerminalOffset = offset;
+                }
                 case REGISTER -> {
                     view = AeronauticsVehicleBridge.resolve(this, facing()).orElse(null);
                     LogisticsCarrier duplicate =
@@ -1145,9 +1595,8 @@ public final class RegisteredVehicleControllerBlockEntity extends BlockEntity
                 case BIND_NEAREST_TERMINAL -> {
                     if (active) return false;
                     Collection<BlockPos> terminals =
-                            transportKind() == Kind.LAND
-                                    ? PostStationRegistry.get(server)
-                                    : DockRegistry.get(server);
+                            transportKind() == Kind.AIR ? AirportRegistry.get(server)
+                                    : transportKind() == Kind.LAND ? PostStationRegistry.get(server) : DockRegistry.get(server);
                     sourceTerminal =
                             terminals.stream()
                                     .filter(server::hasChunkAt)
@@ -1213,9 +1662,32 @@ public final class RegisteredVehicleControllerBlockEntity extends BlockEntity
         tag.putString("Name", getTransportName().getString());
         tag.putString("Owner", ownerName);
         tag.putString("Kind", transportKind().name());
+        tag.putString("AircraftClass", aircraftClass.name());
+        tag.putString("FlightPhase", flightPhase);
+        tag.putString("FlightTerminal", flightTerminalOffset == null ? "-" : flightTerminalOffset.toShortString());
+        tag.putString("ExecutionMode", "PHYSICAL");
+        tag.putString("HybridStatus", "sable_custody_transaction_missing");
+        if (transportKind() == Kind.AIR && level instanceof ServerLevel server && flightTerminalOffset != null) {
+            var flight = FlightControlBridge.inspectVehicle(server,worldPosition.offset(flightTerminalOffset));
+            tag.putString("FlightComputerMode",flight.airframeMode());
+            tag.putBoolean("FlightStateFresh",flight.fresh());
+            tag.putBoolean("FlightComputerWorking",flight.computerWorking());
+        }
         tag.putString("Status", status.name());
         tag.putString("Reason", reason);
         tag.putBoolean("Registered", registration.registered());
+        tag.putString("AircraftClass", aircraftClass.name());
+        tag.putString("FlightPhase", flightPhase);
+        tag.putString("FlightFingerprint", flightFingerprint);
+        tag.putString("ArrivalFacility", arrivalFacility);
+        tag.putBoolean("FlightPending", flightPending);
+        tag.putBoolean("ReturnFlightPending", returnFlightPending);
+        tag.putBoolean("DepartureFlightPending", departureFlightPending);
+        tag.putBoolean("RecoveryRequired", recoveryRequired);
+        if (airportPreflightAttempt != null) tag.putUUID("AirportPreflightAttempt", airportPreflightAttempt);
+        if (returnOrigin != null) tag.putLong("ReturnOrigin", returnOrigin.asLong());
+        if (flightTask != null) tag.putUUID("FlightTask", flightTask);
+        if (flightTerminalOffset != null) tag.putLong("FlightTerminalOffset", flightTerminalOffset.asLong());
         tag.putBoolean("Active", active);
         tag.putBoolean("Paused", paused);
         tag.putBoolean("ManualTakeover", manualTakeover);
@@ -1277,6 +1749,18 @@ public final class RegisteredVehicleControllerBlockEntity extends BlockEntity
         tag.putBoolean("AllowReverse", allowReverse);
         tag.putBoolean("AutoReturn", autoReturn);
         tag.putBoolean("AutoUnload", autoUnload);
+        tag.putString("AircraftClass", aircraftClass.name());
+        tag.putString("FlightPhase", flightPhase);
+        tag.putString("FlightFingerprint", flightFingerprint);
+        tag.putString("ArrivalFacility", arrivalFacility);
+        tag.putBoolean("FlightPending", flightPending);
+        tag.putBoolean("ReturnFlightPending", returnFlightPending);
+        tag.putBoolean("DepartureFlightPending", departureFlightPending);
+        tag.putBoolean("RecoveryRequired", recoveryRequired);
+        if (airportPreflightAttempt != null) tag.putUUID("AirportPreflightAttempt", airportPreflightAttempt);
+        if (returnOrigin != null) tag.putLong("ReturnOrigin", returnOrigin.asLong());
+        if (flightTask != null) tag.putUUID("FlightTask", flightTask);
+        if (flightTerminalOffset != null) tag.putLong("FlightTerminalOffset", flightTerminalOffset.asLong());
         tag.putBoolean("Active", active);
         tag.putBoolean("Paused", paused);
         tag.putBoolean("ReturnTrip", returnTrip);
@@ -1314,6 +1798,20 @@ public final class RegisteredVehicleControllerBlockEntity extends BlockEntity
         super.loadAdditional(tag, provider);
         if (tag.contains("Registration"))
             registration = ControllerRegistration.load(tag.getCompound("Registration"));
+        try { aircraftClass = AircraftClass.valueOf(tag.getString("AircraftClass")); }
+        catch (IllegalArgumentException ignored) { aircraftClass = AircraftClass.AIRSHIP; }
+        flightPhase = tag.getString("FlightPhase"); flightFingerprint = tag.getString("FlightFingerprint");
+        arrivalFacility = tag.getString("ArrivalFacility"); flightPending = tag.getBoolean("FlightPending");
+        // FC task UUIDs are runtime leases and change after chunk/server reload.
+        flightTask = null;
+        returnFlightPending = tag.getBoolean("ReturnFlightPending");
+        departureFlightPending = tag.getBoolean("DepartureFlightPending");
+        recoveryRequired = tag.getBoolean("RecoveryRequired");
+        airportPreflightAttempt = tag.hasUUID("AirportPreflightAttempt") ? tag.getUUID("AirportPreflightAttempt") : null;
+        returnOrigin = tag.contains("ReturnOrigin") ? BlockPos.of(tag.getLong("ReturnOrigin")) : null;
+        flightRecovering = transportKind() == Kind.AIR && FlightRecoveryPolicy.needsReloadGuard(
+                tag.getBoolean("Active"), departureFlightPending, returnFlightPending);
+        flightTerminalOffset = tag.contains("FlightTerminalOffset") ? BlockPos.of(tag.getLong("FlightTerminalOffset")) : null;
         vehicleName = tag.getString("Name");
         ownerName = tag.getString("OwnerName");
         portsConfirmed = tag.getBoolean("PortsConfirmed");
@@ -1356,7 +1854,7 @@ public final class RegisteredVehicleControllerBlockEntity extends BlockEntity
                 ports.put(channel, Direction.valueOf(portTag.getString(channel.name())));
             } catch (IllegalArgumentException ignored) {
             }
-        if (!ControllerRegistration.validControlPorts(ports)) {
+        if (transportKind() != Kind.AIR && !ControllerRegistration.validControlPorts(ports)) {
             portsConfirmed = false;
             paused = true;
             status = ControllerStatus.FAULT;

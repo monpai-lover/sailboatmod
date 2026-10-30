@@ -11,13 +11,16 @@
 })(typeof window !== "undefined" ? window : null, function () {
   "use strict";
 
-  const KINDS = ["sailboat", "carriage", "train"];
+  const KINDS = ["sailboat", "carriage", "train", "airship", "helicopter", "airplane"];
 
   // One colour per transport mode, shared by the list, the detail card and the map. Red is reserved for "stuck".
   const MODE_STYLES = {
     sailboat: { color: "#4fb6e8", trail: "rgba(79, 182, 232, ", label: { en: "Sea", zh: "海运" } },
     carriage: { color: "#c99a52", trail: "rgba(201, 154, 82, ", label: { en: "Road", zh: "陆运" } },
-    train: { color: "#a48cf2", trail: "rgba(164, 140, 242, ", label: { en: "Rail", zh: "铁路" } }
+    train: { color: "#a48cf2", trail: "rgba(164, 140, 242, ", label: { en: "Rail", zh: "铁路" } },
+    airship: { color: "#6fcbb0", trail: "rgba(111, 203, 176, ", label: { en: "Airship", zh: "飞艇" } },
+    helicopter: { color: "#e2b66f", trail: "rgba(226, 182, 111, ", label: { en: "Helicopter", zh: "旋翼" } },
+    airplane: { color: "#90b8f4", trail: "rgba(144, 184, 244, ", label: { en: "Airplane", zh: "固定翼" } }
   };
   const STUCK_COLOR = "#ff6b6b";
   const MAX_PARTICLES = 24;
@@ -30,6 +33,9 @@
   /** Whole words only, same rule as TransportModes.vehicleKind on the server: CREATE_RAIL is a train, BOATYARD_EXPRESS is not a boat. */
   function kindFromMode(mode) {
     const words = String(mode || "").trim().toUpperCase().split(/[^A-Z0-9]+/);
+    if (words.includes("AIRSHIP") || words.includes("ZEPPELIN")) return "airship";
+    if (words.includes("HELICOPTER") || words.includes("ROTORCRAFT")) return "helicopter";
+    if (words.some((word) => ["AIRPLANE", "AIRCRAFT", "AIR", "AIRPORT", "PLANE", "FIXEDWING"].includes(word)) || (words.includes("FIXED") && words.includes("WING"))) return "airplane";
     if (words.some((word) => TRAIN_WORDS.includes(word))) {
       return "train";
     }
@@ -447,11 +453,39 @@
     ctx.restore();
   }
 
+  function drawAircraft(ctx, kind, size, style, t) {
+    ctx.save();
+    ctx.scale(size / 24, size / 24);
+    ctx.fillStyle = style.color;
+    ctx.strokeStyle = "rgba(255,255,255,.9)";
+    ctx.lineWidth = 1.2;
+    ctx.beginPath();
+    if (kind === "airship") {
+      ctx.ellipse(0, 0, 12, 6, 0, 0, Math.PI * 2);
+      ctx.fill(); ctx.stroke();
+      ctx.fillRect(-5, 5, 8, 3);
+      ctx.beginPath(); ctx.moveTo(-8, 0); ctx.lineTo(-13, -7); ctx.lineTo(-12, 6); ctx.closePath(); ctx.fill();
+    } else if (kind === "helicopter") {
+      ctx.ellipse(3, 0, 7, 4, 0, 0, Math.PI * 2);
+      ctx.fill(); ctx.stroke();
+      ctx.fillRect(-12, -1.5, 12, 3);
+      ctx.beginPath(); ctx.moveTo(-10, -5); ctx.lineTo(-10, 5); ctx.stroke();
+      ctx.rotate(t ? t * 15 : Math.PI / 4);
+      ctx.beginPath(); ctx.moveTo(-12, 0); ctx.lineTo(12, 0); ctx.moveTo(0, -12); ctx.lineTo(0, 12); ctx.stroke();
+    } else {
+      [[13,0],[-3,-3],[-7,-12],[-10,-12],[-7,-2],[-12,-2],[-14,-6],[-16,-6],[-14,0],[-16,6],[-14,6],[-12,2],[-7,2],[-10,12],[-7,12],[-3,3]].forEach(([x,y],i) => i ? ctx.lineTo(x,y) : ctx.moveTo(x,y));
+      ctx.closePath(); ctx.fill(); ctx.stroke();
+    }
+    ctx.restore();
+  }
+
   function drawVehicle(ctx, kind, size, style, t) {
     if (kind === "sailboat") {
       drawSailboat(ctx, size, style, t);
     } else if (kind === "train") {
       drawTrain(ctx, size, style);
+    } else if (["airship", "helicopter", "airplane"].includes(kind)) {
+      drawAircraft(ctx, kind, size, style, t);
     } else {
       drawCarriage(ctx, size, style, t);
     }
@@ -474,6 +508,7 @@
 
   /** Spawns and ages particles behind a vehicle at screen position (x, y) heading `angle`. Call once per frame. */
   function stepEffects(effects, id, kind, x, y, angle, nowMs, moving) {
+    if (["airship", "helicopter", "airplane"].includes(kind)) return;
     const e = emitterFor(effects, id);
     e.seen = nowMs;
     const interval = kind === "sailboat" ? 140 : kind === "train" ? 180 : 110;
@@ -539,6 +574,9 @@
 
   // Small inline icons for the list and detail card (same silhouettes as the map, simplified).
   const LIST_ICONS = {
+    airship: '<svg viewBox="0 0 24 24" aria-hidden="true"><ellipse cx="13" cy="10" rx="10" ry="6" fill="currentColor" opacity=".65"/><path d="M6 10L1 3v14zM9 17h7v3H9z" fill="currentColor"/></svg>',
+    helicopter: '<svg viewBox="0 0 24 24" aria-hidden="true"><ellipse cx="15" cy="13" rx="6" ry="4" fill="currentColor" opacity=".65"/><path d="M3 13h8M3 9v8M15 5v5M7 5h16M9 20h13" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>',
+    airplane: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 2l2 8 8 5v2l-8-2v5l3 2v1l-5-1-5 1v-1l3-2v-5l-8 2v-2l8-5z" fill="currentColor"/></svg>',
     sailboat: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 16h18l-3 4H6z" fill="currentColor"/><path d="M12 3v12M12 4l6 10h-6zM11 6l-5 8h5z" fill="currentColor" opacity=".55"/></svg>',
     carriage: '<svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="8" width="11" height="7" rx="2" fill="currentColor" opacity=".55"/><circle cx="6" cy="17" r="2.2" fill="currentColor"/><circle cx="12" cy="17" r="2.2" fill="currentColor"/><path d="M14 12h4l2-3" stroke="currentColor" stroke-width="2" fill="none" stroke-linecap="round"/></svg>',
     train: '<svg viewBox="0 0 24 24" aria-hidden="true"><rect x="5" y="4" width="14" height="12" rx="3" fill="currentColor" opacity=".55"/><rect x="8" y="7" width="8" height="4" rx="1" fill="currentColor"/><path d="M7 20l2-3M17 20l-2-3" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>'

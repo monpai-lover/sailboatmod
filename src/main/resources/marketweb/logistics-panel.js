@@ -150,6 +150,32 @@
    * The detail card. ctx: label, modeLabel as for cardHtml; following when the camera follows this vehicle;
    * history for a finished shipment (no follow button); nowGameTime for the timeline's "ago" times.
    */
+  function flightStatsHtml(flight, label) {
+    if (!flight) return "";
+    const states = { PREFLIGHT: "flightPreflight", QUIESCING: "flightQuiescing", AWAITING_RECOVERY: "flightRecovery", CANCELLED: "eventFailed", UNKNOWN: "flightUnknown", PARKED: "flightParked", LOADING: "flightLoading", TAXIING: "flightTaxiing", TAKEOFF: "flightTakeoff", TAKING_OFF: "flightTakeoff", CLIMBING: "flightClimbing", CRUISING: "flightCruising", CRUISE: "flightCruising", APPROACH: "flightApproach", APPROACHING: "flightApproach", LANDING: "flightLanding", LANDED: "flightLanded", HOLDING: "flightHolding", BLOCKED: "flightBlocked" };
+    const executions = { QUIESCING: "flightQuiescing", MATERIALIZING: "flightRecovery", PHYSICAL: "executionPhysical", VIRTUAL: "executionVirtual", OFFLINE: "executionVirtual" };
+    const height = flight.worldY != null && Number.isFinite(Number(flight.worldY)) ? `${Number(flight.worldY).toFixed(1)} m` : "-";
+    return `<div><dt>${escapeHtml(label("worldY"))}</dt><dd>${escapeHtml(height)}</dd></div>`
+      + `<div><dt>${escapeHtml(label("flightState"))}</dt><dd>${escapeHtml(states[flight.flightState] ? label(states[flight.flightState]) : flight.flightState || "-")}</dd></div>`
+      + `<div><dt>${escapeHtml(label("executionMode"))}</dt><dd>${escapeHtml(executions[flight.executionMode] ? label(executions[flight.executionMode]) : flight.executionMode || "-")}</dd></div>`;
+  }
+
+  function airportHtml(airport, ctx) {
+    const label = ctx.label;
+    const typeKeys = { RUNWAY: "runway", HELIPAD: "helipad", MOORING: "mooring" };
+    const facilities = Array.isArray(airport.facilities) ? airport.facilities : [];
+    return `<div class="map-detail-card"><p class="section-kicker">${escapeHtml(label("airports"))}</p><h3>${escapeHtml(airport.name || airport.airportId || "-")}</h3>`
+      + `<dl><dt>X / Y / Z</dt><dd>${[airport.x, airport.y, airport.z].map(v => Math.round(Number(v) || 0)).join(" / ")}</dd></dl>`
+      + `<p class="map-empty-note">${escapeHtml(label("facilityUnchecked"))}</p>`
+      + facilities.map(f => {
+        const length = Math.hypot(Number(f.end?.x) - Number(f.start?.x), Number(f.end?.z) - Number(f.start?.z));
+        return `<div class="map-shipment-cargo-list"><h4>${escapeHtml(typeKeys[f.type] ? label(typeKeys[f.type]) : f.type || "-")} · ${escapeHtml(f.id || "-")}</h4>`
+          + `<dl class="map-shipment-stats"><div><dt>${escapeHtml(label("length"))}</dt><dd>${Number.isFinite(length) ? length.toFixed(0) : "-"} m</dd></div>`
+          + `<div><dt>${escapeHtml(label("width"))}</dt><dd>${Math.max(0, Number(f.width) || 0)} m</dd></div>`
+          + `<div><dt>${escapeHtml(label("clearance"))}</dt><dd>${Math.max(0, Number(f.clearanceHeight) || 0)} m</dd></div></dl></div>`;
+      }).join("") + `</div>`;
+  }
+
   function detailHtml(shipment, ctx) {
     const label = ctx.label;
     const kind = render.vehicleKindOf(shipment);
@@ -179,6 +205,7 @@
           <div><dt>${escapeHtml(label("eta"))}</dt><dd>${etaSec > 0 ? escapeHtml(formatEta(etaSec)) : "-"}</dd></div>
           <div><dt>${escapeHtml(label("speed"))}</dt><dd>${speed > 0 ? escapeHtml(formatSpeed(speed)) : "-"}</dd></div>
           <div><dt>${escapeHtml(label("status"))}</dt><dd class="map-shipment-status">${escapeHtml(ctx.history ? label(eventKey(shipment.status, "")) : statusText(shipment, label))}</dd></div>
+          ${flightStatsHtml(shipment.flight, label)}
         </dl>
         ${timelineHtml(shipment.events, Number(ctx.nowGameTime) || 0, ctx)}
         <div class="map-shipment-cargo-list">
@@ -190,6 +217,6 @@
     `;
   }
 
-  return { escapeHtml, formatEta, formatSpeed, shipmentRoute, shipmentPercent, cardHtml, detailHtml,
+  return { escapeHtml, formatEta, formatSpeed, shipmentRoute, shipmentPercent, cardHtml, detailHtml, airportHtml,
     relativeTime, timelineHtml, historyCardHtml };
 });

@@ -97,4 +97,44 @@ class MarketWebMapJsonTest {
         assertEquals(8.0D, json.get(1).getAsJsonObject().get("z").getAsDouble());
     }
 
+    @Test
+    void persistedFlightTelemetryReachesJsonWithoutChangingOrderStatus() {
+        var original = new com.monpai.sailboatmod.market.logistics.ShippingTraceRecord(
+                "air-1", "owner", "minecraft:overworld", "AIRPLANE", "IN_TRANSIT", "", "", "A", "B",
+                java.util.List.of(new net.minecraft.world.phys.Vec3(1, 70, 2), new net.minecraft.world.phys.Vec3(100, 90, 2)),
+                1, 0.5, 100, 200, 50, 2, 1.2, java.util.List.of(), false);
+        var tag = original.save();
+        var flight = new net.minecraft.nbt.CompoundTag();
+        flight.putDouble("WorldY", -12.5);
+        flight.putString("FlightState", "CRUISING");
+        flight.putString("ExecutionMode", "VIRTUAL");
+        tag.put("Flight", flight);
+        var loaded = com.monpai.sailboatmod.market.logistics.ShippingTraceRecord.load(tag).withProgress(1, 0.6, 220);
+        var json = MarketWebMapJson.shipment(com.monpai.sailboatmod.market.logistics.ShippingTraceService.toDto(loaded, null, null, null));
+        assertTrue(json.has("flight"), "persisted flight telemetry must survive updates and reach the web");
+        assertEquals(-12.5, json.getAsJsonObject("flight").get("worldY").getAsDouble());
+        assertEquals("CRUISING", json.getAsJsonObject("flight").get("flightState").getAsString());
+        assertEquals("VIRTUAL", json.getAsJsonObject("flight").get("executionMode").getAsString());
+        assertEquals("IN_TRANSIT", json.get("status").getAsString());
+        assertEquals("CRUISING", loaded.save().getCompound("Flight").getString("FlightState"));
+    }
+
+    @Test
+    void airportJsonIncludesRegisteredRunwayGeometryWithoutClaimingCurrentAvailability() {
+        var facility = new com.monpai.sailboatmod.transport.air.airport.AirportFacility("09",
+                com.monpai.sailboatmod.transport.air.airport.AirportFacility.Type.RUNWAY,
+                new net.minecraft.core.BlockPos(10, 72, 20), new net.minecraft.core.BlockPos(130, 72, 20), 12, 24);
+        var airport = new com.monpai.sailboatmod.transport.air.airport.AirportSavedData.AirportSnapshot(
+                "minecraft:overworld", facility.start(), "Player Airport", "town", "private-owner", java.util.List.of(facility));
+        var json = MarketWebMapJson.airports(java.util.List.of(airport)).get(0).getAsJsonObject();
+        assertEquals("Player Airport", json.get("name").getAsString());
+        org.junit.jupiter.api.Assertions.assertFalse(json.has("ownerUuid"));
+        var runway = json.getAsJsonArray("facilities").get(0).getAsJsonObject();
+        assertEquals("RUNWAY", runway.get("type").getAsString());
+        assertEquals(130, runway.getAsJsonObject("end").get("x").getAsInt());
+        assertEquals(72, runway.getAsJsonObject("start").get("y").getAsInt());
+        assertEquals(12, runway.get("width").getAsInt());
+        assertEquals("not_checked", runway.get("availability").getAsString());
+    }
+
 }

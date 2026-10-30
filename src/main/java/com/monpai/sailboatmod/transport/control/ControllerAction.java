@@ -23,5 +23,7 @@ public enum ControllerAction {
     RESUME,
     STOP,
     TOGGLE_AUTO_RETURN,
-    TOGGLE_AUTO_UNLOAD
+    TOGGLE_AUTO_UNLOAD,
+    SET_AIRCRAFT_CLASS,
+    SET_FLIGHT_TERMINAL
 }

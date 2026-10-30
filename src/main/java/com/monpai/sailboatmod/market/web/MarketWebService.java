@@ -138,6 +138,12 @@ public final class MarketWebService {
         return MarketWebMapJson.territories(mapLayers.territories(server));
     }
 
+    public JsonArray mapAirports(MinecraftServer server, MarketPlayerIdentity identity) {
+        if (server == null) return new JsonArray();
+        return MarketWebMapJson.airports(com.monpai.sailboatmod.transport.air.airport.AirportSavedData.get(server.overworld())
+                .airports(com.monpai.sailboatmod.market.map.MarketWebMapConstants.OVERWORLD));
+    }
+
     public JsonArray mapShipments(MinecraftServer server, MarketPlayerIdentity identity) {
         JsonArray shipments = MarketWebMapJson.shipments(mapLayers.shipments(server, identity));
         for (com.google.gson.JsonElement element : shipments) {
