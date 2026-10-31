@@ -126,7 +126,8 @@ public class AutoRouteDockSelectionScreen extends ThemedScreen {
     }
 
     private UIElement dockRow(AvailableDockEntry dock) {
-        UIElement row = Ui.row("sm-row");
+        UIElement row = Ui.row();
+        row.addClass("sm-row");
         row.layout(l -> l.widthPercent(100).height(22).paddingHorizontal(Ui.GAP_S).gapAll(Ui.GAP_S).flexShrink(0));
         UIElement names = Ui.column();
         names.layout(l -> l.width(0).flexGrow(1).minWidth(0));
@@ -160,6 +161,11 @@ public class AutoRouteDockSelectionScreen extends ThemedScreen {
 
     private void createRoute() {
         if (selectedIndex >= 0 && selectedIndex < docks.size()) {
+            // Freeze the selected destination and retire the old list request before tracking a build.
+            // Otherwise a list completion hidden by build progress can leave the retry button disabled.
+            if (listing) ModNetwork.CHANNEL.sendToServer(new com.monpai.sailboatmod.network.packet.CancelPortWorkPacket(listRequest,false));
+            listing=false;
+            listRequest=java.util.UUID.randomUUID();
             routeRequest=java.util.UUID.randomUUID();building=true;progressStarted=ticks();
             progressPercent=0;progressState=0;progressStage="排队 / 异步载入码头";
             ModNetwork.CHANNEL.sendToServer(new CreateAutoRoutePacket(sourceDockPos,docks.get(selectedIndex).pos(),selectedMode,routeRequest));

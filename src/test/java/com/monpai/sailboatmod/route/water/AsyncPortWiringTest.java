@@ -10,4 +10,11 @@ class AsyncPortWiringTest {
     @Test void ioQueueRejectsRatherThanRunsOnCaller()throws Exception{String s=src("route/water/PortAsyncRuntime.java");assertTrue(s.contains("new ThreadPoolExecutor.AbortPolicy()"));assertTrue(s.contains("MAIN_BUDGET_NANOS"));}
     @Test void cancelledListDoesNotReopenScreen()throws Exception{String s=src("client/DockClientHooks.java");assertTrue(s.contains("selection.acceptsList(requestId)"));}
     @Test void chatMixinIsClientOnlyResource()throws Exception{String s=Files.readString(Path.of("src/main/resources/sailboatmod-chat.mixins.json"));assertTrue(s.contains("\"client\""));assertFalse(s.contains("\"mixins\""));}
+    @Test void buildingRetiresPreviousListRequest()throws Exception{
+        String s=src("client/screen/AutoRouteDockSelectionScreen.java");
+        String create=s.substring(s.indexOf("private void createRoute()"),s.indexOf("public boolean acceptsList"));
+        assertTrue(create.contains("CancelPortWorkPacket(listRequest,false)"));
+        assertTrue(create.indexOf("listing=false")<create.indexOf("building=true"));
+        assertTrue(create.contains("listRequest=java.util.UUID.randomUUID()"));
+    }
 }
