@@ -100,7 +100,7 @@ class TellusNativeRoutesTest {
             var status=HierarchicalWaterRoutePlanner.Status.RUNNING;long next=0,maxSlice=0;int waits=0;
             while(status==HierarchicalWaterRoutePlanner.Status.RUNNING||status==HierarchicalWaterRoutePlanner.Status.WAITING) {
                 long before=System.nanoTime();status=planner.step(64);maxSlice=Math.max(maxSlice,System.nanoTime()-before);
-                if(status==HierarchicalWaterRoutePlanner.Status.WAITING){waits++;Thread.sleep(2);}
+                if(status==HierarchicalWaterRoutePlanner.Status.WAITING){waits++;terrain.awaitProgress(10);}
                 if(System.nanoTime()>=next){String line=name+" "+planner.progress()+" step="+planner.currentStepSize()+" "+terrain.diagnostic();System.out.println(line);Files.writeString(OUT.resolve(name+"-progress.txt"),line+"\n",StandardOpenOption.CREATE,StandardOpenOption.APPEND);next=System.nanoTime()+5_000_000_000L;}
                 if(System.nanoTime()-started>800_000_000_000L)break;
             }

@@ -41,6 +41,7 @@ public final class WaterRoutePathfinder {
     private boolean lastDirection;
     private int directionRun;
     private int forwardExpansions, backwardExpansions;
+    private boolean retryForwardFirst;
 
     private int lastLoggedAt = 0; // 上次打进度时的 expandedNodes
 
@@ -189,15 +190,33 @@ public final class WaterRoutePathfinder {
         return edges;
     }
 
-    /** Retry a bounded number of pending edges, not the already completed node expansion. */
+    private static void defer(Search self, Node node, int mask) {
+        Deferred entry = new Deferred(node, mask, self.deferredSequence++);
+        self.deferred.add(entry);
+        self.deferredAge.add(entry);
+    }
+
+    /** Terrain latency must not turn A* into a breadth-first flood. Prioritize suspended
+     * frontiers by the same f score as ready nodes, with one age-ordered slot in eight
+     * to prevent a permanently unavailable low-f edge from starving other directions.
+     * Remove the whole bounded batch before re-enqueueing, so no edge is polled twice
+     * in one slice and both indexes stay bounded by the number of suspended nodes.
+     */
     private void retryDeferred(Search self, BlockPos target, int limit) {
         int count = Math.min(limit, self.deferred.size());
+        List<Deferred> batch = new ArrayList<>(count);
         for (int i = 0; i < count; i++) {
+            Deferred entry = (self.retryTurns++ & 7) == 7
+                    ? self.deferredAge.first() : self.deferred.first();
+            self.deferred.remove(entry);
+            self.deferredAge.remove(entry);
+            batch.add(entry);
+        }
+        for (Deferred entry : batch) {
             WaterRouteCancellation.check();
-            Deferred deferred = self.deferred.removeFirst();
-            if (self.best.get(key(deferred.node.pos)) != deferred.node) continue;
-            int mask = expandEdges(self, deferred.node, target, deferred.mask);
-            if (mask != 0) self.deferred.addLast(new Deferred(deferred.node, mask));
+            if (self.best.get(key(entry.node.pos)) != entry.node) continue;
+            int mask = expandEdges(self, entry.node, target, entry.mask);
+            if (mask != 0) defer(self, entry.node, mask);
         }
     }
 
@@ -214,8 +233,16 @@ public final class WaterRoutePathfinder {
         int budget = Math.max(1, maxNodeExpansions);
         // A cold edge must not prevent the other seven edges or the opposite frontier from running.
         // Retain just its direction bit; successful work and node/fairness counters are never rolled back.
-        retryDeferred(forward, goal, Math.max(1, budget / 8));
-        retryDeferred(backward, start, Math.max(1, budget / 8));
+        // Both fronts share bounded terrain IO slots. Always polling forward first can
+        // monopolize every slot even when CPU expansion itself is fair.
+        retryForwardFirst = !retryForwardFirst;
+        if (retryForwardFirst) {
+            retryDeferred(forward, goal, Math.max(1, budget / 8));
+            retryDeferred(backward, start, Math.max(1, budget / 8));
+        } else {
+            retryDeferred(backward, start, Math.max(1, budget / 8));
+            retryDeferred(forward, goal, Math.max(1, budget / 8));
+        }
         for (int i = 0; i < budget; i++) {
             WaterRouteCancellation.check();
             discardStale(forward);
@@ -293,7 +320,7 @@ public final class WaterRoutePathfinder {
         }
 
         int mask = expandEdges(self, current, target, 0xFF);
-        if (mask != 0) self.deferred.addLast(new Deferred(current, mask));
+        if (mask != 0) defer(self, current, mask);
         return false;
     }
 
@@ -306,7 +333,8 @@ public final class WaterRoutePathfinder {
         // Global 128-block guidance misses the Dardanelles entirely. Refine only blocked coastal
         // edges, not the whole Aegean. All steps divide the same grid, so both fronts can still meet.
         int minimumHop = waitForUnknown ? 1 : step;
-        for (int i = 0; i < dx.length; i++) {
+        int[] directions = directionOrder(current.pos, target, dx, dz);
+        for (int i : directions) {
             if ((mask & (1 << i)) == 0) continue;
             for (int hop = step; hop >= minimumHop; hop = hop == 1 ? 0 : Math.max(1, hop / 2)) {
                 WaterRouteCancellation.check();
@@ -352,6 +380,23 @@ public final class WaterRoutePathfinder {
             }
         }
         return unresolved;
+    }
+
+    /** Issue scarce IO slots toward the destination first, not always north first. */
+    private int[] directionOrder(BlockPos from, BlockPos target, int[] dx, int[] dz) {
+        int[] order = {0, 1, 2, 3, 4, 5, 6, 7};
+        double[] scores = new double[8];
+        for (int i = 0; i < 8; i++) {
+            BlockPos p = from.offset(dx[i] * step, 0, dz[i] * step);
+            scores[i] = Math.hypot((double) p.getX() - from.getX(), (double) p.getZ() - from.getZ())
+                    + heuristic(p, target);
+        }
+        for (int i = 1; i < order.length; i++) {
+            int value = order[i], j = i - 1;
+            while (j >= 0 && scores[order[j]] > scores[value]) { order[j + 1] = order[j]; j--; }
+            order[j + 1] = value;
+        }
+        return order;
     }
 
     /** Refine to unit cells only between nearby opposing banks. A one-sided coast
@@ -590,14 +635,18 @@ public final class WaterRoutePathfinder {
         WAITING
     }
 
-    private record Deferred(Node node, int mask) { }
+    private record Deferred(Node node, int mask, long sequence) { }
 
     /** 一侧搜索状态(前向或后向)。 */
     private static final class Search {
         private final PriorityQueue<Node> open = new PriorityQueue<>();
         private final Map<Long, Node> best = new HashMap<>();
         private final Set<Long> closed = new HashSet<>();
-        private final ArrayDeque<Deferred> deferred = new ArrayDeque<>();
+        private long deferredSequence, retryTurns;
+        private final java.util.NavigableSet<Deferred> deferred = new java.util.TreeSet<>(
+                java.util.Comparator.comparingDouble((Deferred d) -> d.node.f()).thenComparingLong(Deferred::sequence));
+        private final java.util.NavigableSet<Deferred> deferredAge = new java.util.TreeSet<>(
+                java.util.Comparator.comparingLong(Deferred::sequence));
     }
 
     private static final class Node implements Comparable<Node> {

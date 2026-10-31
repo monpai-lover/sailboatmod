@@ -543,7 +543,10 @@ public final class WaterAutoRouteService {
                             progress.expandedNodes(), planner.pendingEdges(), terrain.diagnostic());
                     nextDiagnostic = System.nanoTime() + 10_000_000_000L;
                 }
-                if (status == HierarchicalWaterRoutePlanner.Status.WAITING) java.util.concurrent.locks.LockSupport.parkNanos(10_000_000L);
+                if (status == HierarchicalWaterRoutePlanner.Status.WAITING) {
+                    if (terrain != null) terrain.awaitProgress(10L);
+                    else java.util.concurrent.locks.LockSupport.parkNanos(10_000_000L);
+                }
             }
         } // cancel outstanding request-owned futures on success, failure or cancellation
     }

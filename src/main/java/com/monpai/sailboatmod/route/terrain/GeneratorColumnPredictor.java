@@ -60,6 +60,14 @@ public final class GeneratorColumnPredictor implements TerrainPredictor {
         } catch (Throwable t) {
             // 预取只是提示:预取失败(网络/Tellus API 变动)不等于不能预测,getBaseColumn 会自己阻塞下载(spike §1)。
         }
+        return predictChunkDirect(cx, cz);
+    }
+
+    /** Only for callers already running on bounded terrain IO workers. The generator
+     * loads the precise column data it needs; do not gate a 16x16 read on an unrelated
+     * full-resolution 512x512 speculative prefetch. Never call this on a tick thread.
+     */
+    public Prediction predictChunkDirect(int cx, int cz) {
         try {
             NoiseColumn[] columns = new NoiseColumn[16 * 16];
             int baseX = cx << 4;
