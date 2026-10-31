@@ -36,6 +36,10 @@ jobs:
           pathlib.Path('/tmp/offshore-files.json').write_text(json.dumps(list(data['expected'])))
           subprocess.run(['git','apply','--check','/tmp/offshore.patch'],check=True)
           subprocess.run(['git','apply','/tmp/offshore.patch'],check=True)
+          followup=pathlib.Path('tools/postprocess-update/cold-input.patch')
+          assert hashlib.sha256(followup.read_bytes()).hexdigest()=='073ae5d62254c6dd4751e1f1d6ead64ebbc60723196be4e16a843a926fde12a5'
+          subprocess.run(['git','apply','--check',str(followup)],check=True)
+          subprocess.run(['git','apply',str(followup)],check=True)
           PY
       - name: Compile focused regressions and package
         run: |
