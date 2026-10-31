@@ -43,6 +43,9 @@ class LongWaterGeometryTest {
         assertTrue(length>=6999,"long-route coverage must not collapse to a short fixture");
         Path out=Path.of("build/route-regression");Files.createDirectories(out);
         Files.writeString(out.resolve("geometry-matrix.txt"),name+" SUCCESS lengthBlocks="+length+" "+planner.progress()+" ms="+(System.nanoTime()-begun)/1_000_000.0+"\n",StandardOpenOption.CREATE,StandardOpenOption.APPEND);
+        StringBuilder csv=new StringBuilder("x,y,z\n");
+        for(BlockPos p:planner.path())csv.append(p.getX()).append(',').append(p.getY()).append(',').append(p.getZ()).append('\n');
+        Files.writeString(out.resolve(name+"-route.csv"),csv);
         return planner.path();
     }
     @Test void sevenKilometresThroughThirtyFourAlternatingIslands() throws Exception {

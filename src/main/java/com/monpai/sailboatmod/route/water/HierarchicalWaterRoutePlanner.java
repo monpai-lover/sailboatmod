@@ -35,6 +35,8 @@ public final class HierarchicalWaterRoutePlanner {
     private RouteStageBudget stageBudget;
     private int detailStep, detailExpandedNodes;
     private List<BlockPos> result = List.of();
+    private List<BlockPos> coarseGuidance = List.of();
+    private int skippedGuidanceAnchors;
 
     public HierarchicalWaterRoutePlanner(WaterRouteWorld coarseWorld, WaterRouteWorld detailedWorld,
                                          BlockPos start, BlockPos goal, WaterRoutePolicy detailedPolicy) {
@@ -75,6 +77,7 @@ public final class HierarchicalWaterRoutePlanner {
         if (expired != WaterRouteFailureReason.NONE) { fail(expired); return status; }
         if (search == null) {
             if (coarse && coarseExpandedNodes >= MAX_COARSE_NODES) { fail(WaterRouteFailureReason.NODE_BUDGET_EXCEEDED); return status; }
+            if (!coarse && !prepareDetailedEndpoint(policy)) return status;
             world.unknown = false;
             BlockPos a = coarse ? start : segments.get(completedSegments).from();
             BlockPos b = coarse ? goal : segments.get(completedSegments).to();
@@ -90,6 +93,7 @@ public final class HierarchicalWaterRoutePlanner {
         if (current == WaterRoutePathfinder.Status.SUCCESS) {
             if (coarse) {
                 List<BlockPos> guidance = new ArrayList<>(search.path());
+                coarseGuidance = List.copyOf(guidance);
                 splitGuidance(guidance);
                 coarse = false;
             } else {
@@ -144,6 +148,59 @@ public final class HierarchicalWaterRoutePlanner {
     public int currentStepSize() { return coarse ? coarsePolicy.stepSize() : detailStep; }
     public int pendingEdges() { return search == null ? 0 : search.pendingEdges(); }
     public boolean isCoarseStage() { return coarse; }
+    /** Guidance only, never a sailing route until all detailed segments are verified. */
+    public List<BlockPos> coarseGuidance() { return coarseGuidance; }
+    public int skippedGuidanceAnchors() { return skippedGuidanceAnchors; }
+
+    /**
+     * A LOD waypoint is a hint, not a mandatory docking position. Native LOD and
+     * actual generator columns differ at some shores. Never force a fine search
+     * to end on an intermediate hint which precise 2x2 sampling proves is land.
+     * Merge that hint into the following segment, preserving the already verified
+     * starting point. Real user endpoints are never moved or removed. Unknown data
+     * suspends this preparation; it is NOT interpreted as a bad hint or as water.
+     * Each poll is bounded so a long run of bad LOD hints remains cancellable.
+     */
+    private boolean prepareDetailedEndpoint(WaterRoutePolicy policy) {
+        for (int checks = 0; checks < 32; checks++) {
+            WaterRouteCancellation.check();
+            Segment segment = segments.get(completedSegments);
+            BlockPos hint = segment.to();
+            WaterColumn column = detailedWorld.sample(hint.getX(), hint.getZ(), policy);
+            if (column == null) {
+                WaterRouteFailureReason expired = stageBudget.advance(true);
+                if (expired != WaterRouteFailureReason.NONE) fail(expired);
+                else status = Status.WAITING;
+                return false;
+            }
+            boolean finalEndpoint = completedSegments == segments.size() - 1;
+            if (column.passable() && column.surfacePos() != null) {
+                BlockPos exact = column.surfacePos();
+                if (finalEndpoint && !exact.equals(goal)) {
+                    fail(WaterRouteFailureReason.NO_WATER_PATH);
+                    return false;
+                }
+                if (!exact.equals(hint)) {
+                    segments.set(completedSegments, new Segment(segment.from(), exact));
+                    if (!finalEndpoint) {
+                        Segment next = segments.get(completedSegments + 1);
+                        segments.set(completedSegments + 1, new Segment(exact, next.to()));
+                    }
+                }
+                return true;
+            }
+            if (finalEndpoint) {
+                fail(WaterRouteFailureReason.NO_WATER_PATH);
+                return false;
+            }
+            Segment next = segments.remove(completedSegments + 1);
+            // Do not jump over terrain: the merged segment is still searched at
+            // full precision, then checked by finishSegment before it is appended.
+            segments.set(completedSegments, new Segment(segment.from(), next.to()));
+            skippedGuidanceAnchors++;
+        }
+        return false; // RUNNING: bounded preparation continues on the next slice.
+    }
 
     private WaterRoutePolicy detailWithStep(int step) {
         WaterRoutePolicy p = detailedPolicy;

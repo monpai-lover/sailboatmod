@@ -80,7 +80,7 @@ class TellusNativeRoutesTest {
         route("tellus-delayed-strait",29145,-48695,30120,-49350,true);
     }
     static void route(String name,int sx,int sz,int gx,int gz,boolean delayed) throws Exception {
-        long started=System.nanoTime();BlockPos start=endpoint(sx,sz),goal=endpoint(gx,gz);
+        long started=System.nanoTime();long columnsBefore=rawColumns.get(),surfaceBefore=nativeSurfaces.get();BlockPos start=endpoint(sx,sz),goal=endpoint(gx,gz);
         AtomicInteger jobs=new AtomicInteger();
         var pool=new ThreadPoolExecutor(4,4,0,TimeUnit.MILLISECONDS,new ArrayBlockingQueue<>(128),r->{Thread t=new Thread(r,"Tellus-native-test-IO");t.setDaemon(true);return t;},new ThreadPoolExecutor.AbortPolicy());
         RouteTerrainSource.AsyncWork executor=new RouteTerrainSource.AsyncWork(){
@@ -104,8 +104,11 @@ class TellusNativeRoutesTest {
                 if(System.nanoTime()>=next){String line=name+" "+planner.progress()+" step="+planner.currentStepSize()+" "+terrain.diagnostic();System.out.println(line);Files.writeString(OUT.resolve(name+"-progress.txt"),line+"\n",StandardOpenOption.CREATE,StandardOpenOption.APPEND);next=System.nanoTime()+5_000_000_000L;}
                 if(System.nanoTime()-started>800_000_000_000L)break;
             }
-            String report="status="+status+" reason="+planner.failureReason()+" "+planner.progress()+" elapsedMs="+(System.nanoTime()-started)/1_000_000.0+" maxPlannerSliceMs="+maxSlice/1_000_000.0+" waitingPolls="+waits+" nativeColumns="+rawColumns+" nativeSurfaceCalls="+nativeSurfaces+"\n"+terrain.diagnostic()+"\n";
+            String report="status="+status+" reason="+planner.failureReason()+" "+planner.progress()+" elapsedMs="+(System.nanoTime()-started)/1_000_000.0+" maxPlannerSliceMs="+maxSlice/1_000_000.0+" waitingPolls="+waits+" skippedLodHints="+planner.skippedGuidanceAnchors()+" nativeColumns="+(rawColumns.get()-columnsBefore)+" nativeSurfaceCalls="+(nativeSurfaces.get()-surfaceBefore)+"\n"+terrain.diagnostic()+"\n";
             Files.writeString(OUT.resolve(name+"-result.txt"),report);
+            StringBuilder guidance=new StringBuilder("x,y,z\n");
+            for(BlockPos p:planner.coarseGuidance())guidance.append(p.getX()).append(',').append(p.getY()).append(',').append(p.getZ()).append('\n');
+            Files.writeString(OUT.resolve(name+"-coarse.csv"),guidance);
             assertEquals(HierarchicalWaterRoutePlanner.Status.SUCCESS,status,report);
             assertEquals(start,planner.path().getFirst());assertEquals(goal,planner.path().getLast());
             // Independently sample every quarter block of the final route against ACTUAL Tellus columns.
@@ -126,6 +129,19 @@ class TellusNativeRoutesTest {
             Files.writeString(OUT.resolve(name+"-result.txt"),"lengthBlocks="+length+" strictNativeHullSamples="+checked+" collisions=0\n",StandardOpenOption.APPEND);
             if(name.contains("7623")||name.contains("crete"))assertTrue(length>7000);
         } finally {pool.shutdownNow();dumpColumns(name);}
+    }
+    /** Plot data come from the actual pinned Tellus sampler, never a replacement coastline. */
+    @AfterAll @Timeout(300) static void exportNativeOverview() throws Exception {
+        if(generator==null)return;
+        var nativeSampler=surface();
+        try(var writer=new BufferedWriter(new OutputStreamWriter(new java.util.zip.GZIPOutputStream(
+                Files.newOutputStream(OUT.resolve("tellus-overview-lod.csv.gz"))),java.nio.charset.StandardCharsets.UTF_8))) {
+            writer.write("x,z,water,surfaceBlockY\n");
+            for(int z=-50752;z<=-41600;z+=32)for(int x=26880;x<=32896;x+=32){
+                var s=nativeSampler.sample(x,z,32);
+                writer.write(x+","+z+","+(s.isEmpty()?-1:s.get().water()?1:0)+","+(s.isEmpty()?0:s.get().surfaceY())+"\n");
+            }
+        }
     }
     static void dumpColumns(String name) throws IOException {
         try(var writer=new BufferedWriter(new OutputStreamWriter(new java.util.zip.GZIPOutputStream(Files.newOutputStream(OUT.resolve(name+"-columns.csv.gz"))),java.nio.charset.StandardCharsets.UTF_8))) {
