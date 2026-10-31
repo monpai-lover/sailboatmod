@@ -1,0 +1,80 @@
+name: Validate and apply async port chat update
+on:
+  push:
+    branches: [fix/autoroute-candidates-flag-preview]
+    paths: ['.github/async-chat-edits.*.b64', '.github/workflows/apply-async-chat.yml']
+permissions:
+  contents: write
+concurrency:
+  group: apply-async-chat
+  cancel-in-progress: false
+jobs:
+  validate-and-apply:
+    if: github.repository == 'monpai-lover/sailboatmod' && github.ref == 'refs/heads/fix/autoroute-candidates-flag-preview'
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          lfs: true
+          fetch-depth: 0
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
+      - name: Verify and stage exact source edits
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          import base64, hashlib, json, lzma
+          from pathlib import Path
+          encoded = ''.join(Path(f'.github/async-chat-edits.{i}.b64').read_text().strip() for i in range(4))
+          raw = lzma.decompress(base64.b64decode(encoded, validate=True))
+          assert hashlib.sha256(raw).hexdigest() == '172e58355ca6063d3928835aa37f8cfd1bd827739c06f794520ae1adfe293f2b'
+          pending = []
+          for item in json.loads(raw):
+              p = Path(item['path'])
+              assert not p.is_absolute() and '..' not in p.parts
+              assert str(p).startswith(('src/main/', 'src/test/', 'docs/handoff/')) or str(p) in ('build.gradle', '.github/workflows/async-port-chat.yml')
+              old = p.read_bytes() if p.exists() else None
+              assert (hashlib.sha256(old).hexdigest() if old is not None else None) == item['before'], f'Concurrent or unexpected edit: {p}'
+              lines = old.decode('utf-8').splitlines(keepends=True) if old is not None else []
+              for start, end, text in reversed(item['edits']):
+                  lines[start:end] = [text]
+              new = ''.join(lines).encode('utf-8')
+              assert hashlib.sha256(new).hexdigest() == item['after'], f'Output mismatch: {p}'
+              pending.append((p, new))
+          for p, new in pending:
+              p.parent.mkdir(parents=True, exist_ok=True)
+              p.write_bytes(new)
+          print(f'Verified {len(pending)} source/test/document edits')
+          PY
+          git diff --check
+      - name: Compile, execute focused regressions, and build jar
+        run: |
+          chmod +x gradlew
+          ./gradlew --no-daemon -PneoForge.disableRecompilation=true -PfixIndex=async_chat '-Dorg.gradle.jvmargs=-Xmx3G -Dfile.encoding=UTF-8' test --tests '*PortBerthValidatorTest' --tests '*PortTerrain*Test' --tests '*PortDockSnapshotTest' --tests '*AsyncPortWiringTest' --tests '*AsyncRouteExecutorTest' --tests '*RouteProgressProtocolTest' --tests '*WaterRouteCandidateServiceTest' --tests '*WaterRouteTask*Test' --tests '*FlagPreviewLayoutTest' --tests '*ChatFlag*Test' --tests '*NationOfficeTitleTest' jar
+      - name: Commit only validated code to the existing fix branch
+        run: |
+          test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
+          test "$(git ls-remote origin refs/heads/fix/autoroute-candidates-flag-preview | cut -f1)" = "$GITHUB_SHA"
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add src/main src/test build.gradle docs/handoff/ASYNC_PORT_PROGRESS_CHAT.md
+          git commit -m 'feat: bounded async port work, progress UI, custom nation titles and chat flag thumbnails'
+          git push origin HEAD:refs/heads/fix/autoroute-candidates-flag-preview
+          git rev-parse HEAD > validated-commit.txt
+      - name: Archive exact checked sources
+        if: always()
+        run: tar -czf validation-source.tar.gz src/main src/test build.gradle gradle.properties settings.gradle AGENTS.md docs/handoff/ASYNC_PORT_PROGRESS_CHAT.md
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: async-port-chat-validation-${{ github.run_id }}
+          path: |
+            build/reports/tests/test/
+            build/test-results/test/
+            build/libs/*.jar
+            validation-source.tar.gz
+            validated-commit.txt
+          retention-days: 14
