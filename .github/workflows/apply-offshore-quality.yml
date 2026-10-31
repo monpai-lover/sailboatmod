@@ -1,0 +1,94 @@
+name: Verify whole-route offshore quality
+on:
+  push:
+    branches: [fix/autoroute-candidates-flag-preview]
+    paths: ['tools/postprocess-update/**', '.github/workflows/apply-offshore-quality.yml']
+permissions:
+  contents: write
+concurrency:
+  group: offshore-quality-${{ github.ref }}
+  cancel-in-progress: true
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          lfs: true
+          fetch-depth: 2
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
+      - name: Verify exact reviewed source patch
+        run: |
+          python3 - <<'PY'
+          import pathlib,base64,gzip,hashlib,json,subprocess,re
+          payload=gzip.decompress(base64.b64decode(''.join(pathlib.Path('tools/postprocess-update/part%d.txt'%i).read_text() for i in range(5))))
+          assert hashlib.sha256(payload).hexdigest()=='0027dcbdf5b89199b9a39f324b27a64089b068729fbedd83b95637b783a1bca1'
+          data=json.loads(payload)
+          for name,digest in data['expected'].items():
+              p=pathlib.Path(name)
+              assert (hashlib.sha256(p.read_bytes()).hexdigest() if p.exists() else None)==digest, 'Concurrent source change: '+name
+          patch=re.sub(r'(diff --git [^\n]+\n)(--- /dev/null\n)',r'\1new file mode 100644\n\2',data['patch'])
+          pathlib.Path('/tmp/offshore.patch').write_text(patch)
+          pathlib.Path('/tmp/offshore-files.json').write_text(json.dumps(list(data['expected'])))
+          subprocess.run(['git','apply','--check','/tmp/offshore.patch'],check=True)
+          subprocess.run(['git','apply','/tmp/offshore.patch'],check=True)
+          followup=pathlib.Path('tools/postprocess-update/cold-input.patch')
+          assert hashlib.sha256(followup.read_bytes()).hexdigest()=='073ae5d62254c6dd4751e1f1d6ead64ebbc60723196be4e16a843a926fde12a5'
+          subprocess.run(['git','apply','--check',str(followup)],check=True)
+          subprocess.run(['git','apply',str(followup)],check=True)
+          PY
+      - name: Compile focused regressions and package
+        run: |
+          chmod +x gradlew
+          ./gradlew --no-daemon -PneoForge.disableRecompilation=true -PfixIndex=offshore_quality '-Dorg.gradle.jvmargs=-Xmx3G -Dfile.encoding=UTF-8' test --tests '*route.water.*' --tests '*route.terrain.*' --tests '*ChatFlag*Test' --tests '*NationOfficeTitleTest' --tests '*FlagPreviewLayoutTest' jar
+          cp -r build/test-results/test build/offline-test-results
+      - name: Prepare pinned Tellus runtime
+        run: |
+          mkdir -p build/native-runtime build/native-evidence
+          python3 - <<'PY'
+          import pathlib,zipfile,hashlib
+          p=pathlib.Path('libs/compile-only/Tellus-neoforge-1.21.1-0.8.3.jar')
+          pathlib.Path('build/native-evidence/tellus-sha256.txt').write_text(hashlib.sha256(p.read_bytes()).hexdigest()+'\n')
+          with zipfile.ZipFile(p) as z:
+              for n in z.namelist():
+                  if n.startswith('META-INF/jarjar/') and n.endswith('.jar'):
+                      pathlib.Path('build/native-runtime',pathlib.Path(n).name).write_bytes(z.read(n))
+          PY
+      - name: Actual Tellus long routes with global postprocessing and independent hull validation
+        run: |
+          ./gradlew --no-daemon -I tools/tellus-native/native.init.gradle -PneoForge.disableRecompilation=true '-Dorg.gradle.jvmargs=-Xmx2G -Dfile.encoding=UTF-8' test --tests '*TellusNativeRoutesTest' --rerun-tasks
+      - name: Publish only validated code without overwriting concurrent changes
+        run: |
+          git fetch origin fix/autoroute-candidates-flag-preview
+          test "$(git rev-parse FETCH_HEAD)" = "${{ github.sha }}"
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          python3 - <<'PY'
+          import subprocess,json,pathlib
+          subprocess.run(['git','add','--',*json.loads(pathlib.Path('/tmp/offshore-files.json').read_text())],check=True)
+          PY
+          git commit -m 'feat: globally prune route loops, shift offshore and round only verified water corners'
+          git push origin HEAD:fix/autoroute-candidates-flag-preview
+      - name: Archive checked source and evidence
+        if: always()
+        run: |
+          mkdir -p build/native-evidence
+          git rev-parse HEAD > build/native-evidence/commit.txt
+          sha256sum build/libs/*.jar > build/native-evidence/jar-sha256.txt || true
+          tar czf build/verified-source.tar.gz src tools docs build.gradle gradle.properties settings.gradle
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: offshore-quality-${{ github.run_id }}
+          path: |
+            build/libs/*.jar
+            build/native-evidence/
+            build/route-regression/
+            build/offline-test-results/
+            build/test-results/test/
+            build/verified-source.tar.gz
+          retention-days: 14

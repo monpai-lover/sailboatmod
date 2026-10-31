@@ -1,0 +1,58 @@
+name: Auto-route and flag preview checks
+
+on:
+  push:
+    branches: [fix/autoroute-candidates-flag-preview]
+  pull_request:
+    branches: [1.21.1-neoforge]
+    paths:
+      - 'src/main/java/com/monpai/sailboatmod/route/**'
+      - 'src/main/java/com/monpai/sailboatmod/compat/tellus/**'
+      - 'src/main/java/com/monpai/sailboatmod/network/packet/*AutoRoute*'
+      - 'src/main/java/com/monpai/sailboatmod/client/ui/territory/FlagPreview*.java'
+      - 'src/test/java/com/monpai/sailboatmod/route/**'
+      - 'src/test/java/com/monpai/sailboatmod/client/ui/territory/FlagPreviewLayoutTest.java'
+      - '.github/workflows/autoroute-flag-preview.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: autoroute-flag-preview-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  compile-and-test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          lfs: true
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
+      - name: Archive the exact validation sources
+        run: |
+          mkdir -p build
+          tar -czf build/validation-source.tar.gz src/main/java src/test/java src/main/resources/assets/sailboatmod/lang .github/workflows build.gradle gradle.properties settings.gradle AGENTS.md
+      - name: Compile, run focused regressions, and package
+        run: |
+          chmod +x gradlew
+          ./gradlew --no-daemon -PneoForge.disableRecompilation=true \
+            '-Dorg.gradle.jvmargs=-Xmx3G -Dfile.encoding=UTF-8' \
+            test --tests '*WaterRouteCandidateServiceTest' --tests '*PortTerrain*Test' --tests '*PortBerth*Test' --tests '*FlagPreviewLayoutTest' jar
+      - name: Upload test reports and built jars
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: autoroute-flag-preview-${{ github.sha }}
+          path: |
+            build/reports/tests/test/
+            build/test-results/test/
+            build/libs/*.jar
+            build/validation-source.tar.gz
+          if-no-files-found: warn
+          retention-days: 14

@@ -102,6 +102,20 @@ class GeneratorColumnPredictorTest {
                 "prefetch is advisory: getBaseColumn downloads by itself");
     }
 
+    @Test
+    void boundedWorkerDirectReadDoesNotWaitForSpeculativeAreaPrefetch() {
+        java.util.concurrent.atomic.AtomicInteger calls = new java.util.concurrent.atomic.AtomicInteger();
+        PrefetchGate never = new PrefetchGate() {
+            public CompletableFuture<Void> request(int cx, int cz) { calls.incrementAndGet(); return new CompletableFuture<>(); }
+            public List<CompletableFuture<Void>> requestCorridor(BlockPos a, BlockPos b, int side) { return List.of(); }
+        };
+        GeneratorColumnPredictor predictor = new GeneratorColumnPredictor((x, z) -> column(true), never, MIN_Y, MAX_Y);
+        Prediction result = predictor.predictChunkDirect(0, 0);
+        assertEquals(Prediction.Status.READY, result.status());
+        assertEquals(0, calls.get());
+        assertTrue(result.columns().water()[0]);
+    }
+
     /** stone up to 60, then water to 64 (wet) or stone to 64 (dry), air above. */
     private static NoiseColumn column(boolean wet) {
         BlockState[] states = new BlockState[MAX_Y - MIN_Y];

@@ -5,6 +5,7 @@ import net.minecraft.core.BlockPos;
 import org.slf4j.Logger;
 
 import java.util.ArrayList;
+import java.util.ArrayDeque;
 import java.util.Collections;
 import java.util.HashMap;
 import java.util.HashSet;
@@ -34,6 +35,13 @@ public final class WaterRoutePathfinder {
     /** 软代价(extraCost)按步长归一化的基准步长:每步软代价 = extraCost × step / NORMALIZE_STEP,使不同 step 的
      *  阶段(coarse step24 / refine step8)跨同样格数累积的总软代价一致,消除 refine 因密度高而虚高绕远。取 8(refine 步长)。 */
     private static final int NORMALIZE_STEP = 8;
+
+    // Lowest-f alone can starve the other front for tens of thousands of expansions.
+    static final int MAX_CONSECUTIVE_EXPANSIONS = 8;
+    private boolean lastDirection;
+    private int directionRun;
+    private int forwardExpansions, backwardExpansions;
+    private boolean retryForwardFirst;
 
     private int lastLoggedAt = 0; // 上次打进度时的 expandedNodes
 
@@ -91,13 +99,14 @@ public final class WaterRoutePathfinder {
         // 关键:前向/后向必须落在同一套全局 step 网格上,否则两边格点错位(start/goal 在 step 上不整除时)
         // 永远命中不到同一格 → 双向 A* 永不相遇(实测前后向各扩展上千节点、前沿在目标附近横跳却碰不上)。
         // snap 把任意坐标对齐到 step 的整数倍,从 start 还是 goal 出发,落点都在同一网格,必能相遇。
-        BlockPos snappedStart = snapToGrid(start);
-        BlockPos snappedGoal = snapToGrid(goal);
-        WaterColumn startColumn = world.sample(snappedStart.getX(), snappedStart.getZ(), policy);
-        WaterColumn goalColumn = world.sample(snappedGoal.getX(), snappedGoal.getZ(), policy);
+        pendingTerrain = false;
+        BlockPos snappedStart = connectedGridPoint(start);
+        BlockPos snappedGoal = connectedGridPoint(goal);
+        WaterColumn startColumn = snappedStart == null ? null : world.sample(snappedStart.getX(), snappedStart.getZ(), policy);
+        WaterColumn goalColumn = snappedGoal == null ? null : world.sample(snappedGoal.getX(), snappedGoal.getZ(), policy);
         boolean startOk = startColumn != null && startColumn.passable();
         boolean goalOk = goalColumn != null && goalColumn.passable();
-        if (waitForUnknown && (startColumn == null || goalColumn == null)) {
+        if (waitForUnknown && pendingTerrain && (startColumn == null || goalColumn == null)) {
             status = Status.WAITING;
             return;
         }
@@ -108,11 +117,11 @@ public final class WaterRoutePathfinder {
             // 精确原因:3×3 在哪格过不去(中心非水/区块读不到/占地哪格陆/约束外/泊位信任)。定位 seed 0 节点失败。
             if (!startOk) {
                 LOGGER.warn("[WaterPath] 起点不可航 snap={} 原因={}", snappedStart,
-                        world.sampleDiagnostic(snappedStart.getX(), snappedStart.getZ(), policy));
+                        snappedStart == null ? "没有可达的网格接点" : world.sampleDiagnostic(snappedStart.getX(), snappedStart.getZ(), policy));
             }
             if (!goalOk) {
                 LOGGER.warn("[WaterPath] 终点不可航 snap={} 原因={}", snappedGoal,
-                        world.sampleDiagnostic(snappedGoal.getX(), snappedGoal.getZ(), policy));
+                        snappedGoal == null ? "没有可达的网格接点" : world.sampleDiagnostic(snappedGoal.getX(), snappedGoal.getZ(), policy));
             }
             fail(WaterRouteFailureReason.NO_WATER_PATH);
             return;
@@ -135,7 +144,83 @@ public final class WaterRoutePathfinder {
         return new BlockPos(sx, pos.getY(), sz);
     }
 
-    /** chunkBudget 参数保留以兼容调用方,但噪声采样零区块加载,已忽略。 */
+    private BlockPos connectedGridPoint(BlockPos endpoint) {
+        WaterColumn actual = world.sample(endpoint.getX(), endpoint.getZ(), policy);
+        if (actual == null) { pendingTerrain |= waitForUnknown; return null; }
+        if (!actual.passable()) return null;
+        // A valid two-block harbour can lie between every coarse grid line. Attach to
+        // the coarsest reachable nested lattice, down to unit cells, without relabelling land.
+        int minimum = waitForUnknown ? 1 : step;
+        for (int grid = step; grid >= minimum; grid = Math.max(1, grid / 2)) {
+            BlockPos snapped = new BlockPos(Math.floorDiv(endpoint.getX(), grid) * grid,
+                    endpoint.getY(), Math.floorDiv(endpoint.getZ(), grid) * grid);
+            List<BlockPos> candidates = new ArrayList<>(9);
+            for (int dx = -1; dx <= 1; dx++) for (int dz = -1; dz <= 1; dz++) {
+                candidates.add(snapped.offset(dx * grid, 0, dz * grid));
+            }
+            candidates.sort(java.util.Comparator.comparingDouble(endpoint::distSqr));
+            for (BlockPos candidate : candidates) {
+                WaterRouteCancellation.check();
+                WaterColumn column = world.sample(candidate.getX(), candidate.getZ(), policy);
+                if (column == null) { pendingTerrain |= waitForUnknown; continue; }
+                if (column.passable() && segmentPassable(endpoint, column.surfacePos())) return column.surfacePos();
+            }
+            if (grid == minimum) break;
+        }
+        return null;
+    }
+
+    private static void discardStale(Search search) {
+        while (!search.open.isEmpty()) {
+            Node first = search.open.peek();
+            long k = key(first.pos);
+            if (!search.closed.contains(k) && search.best.get(k) == first) break;
+            search.open.poll();
+        }
+    }
+
+    public int forwardExpansions() { return forwardExpansions; }
+    public int backwardExpansions() { return backwardExpansions; }
+
+    public int pendingEdges() { return pendingEdges(forward) + pendingEdges(backward); }
+
+    private static int pendingEdges(Search search) {
+        int edges = 0;
+        for (Deferred deferred : search.deferred) edges += Integer.bitCount(deferred.mask);
+        return edges;
+    }
+
+    private static void defer(Search self, Node node, int mask) {
+        Deferred entry = new Deferred(node, mask, self.deferredSequence++);
+        self.deferred.add(entry);
+        self.deferredAge.add(entry);
+    }
+
+    /** Terrain latency must not turn A* into a breadth-first flood. Prioritize suspended
+     * frontiers by the same f score as ready nodes, with one age-ordered slot in eight
+     * to prevent a permanently unavailable low-f edge from starving other directions.
+     * Remove the whole bounded batch before re-enqueueing, so no edge is polled twice
+     * in one slice and both indexes stay bounded by the number of suspended nodes.
+     */
+    private void retryDeferred(Search self, BlockPos target, int limit) {
+        int count = Math.min(limit, self.deferred.size());
+        List<Deferred> batch = new ArrayList<>(count);
+        for (int i = 0; i < count; i++) {
+            Deferred entry = (self.retryTurns++ & 7) == 7
+                    ? self.deferredAge.first() : self.deferred.first();
+            self.deferred.remove(entry);
+            self.deferredAge.remove(entry);
+            batch.add(entry);
+        }
+        for (Deferred entry : batch) {
+            WaterRouteCancellation.check();
+            if (self.best.get(key(entry.node.pos)) != entry.node) continue;
+            int mask = expandEdges(self, entry.node, target, entry.mask);
+            if (mask != 0) defer(self, entry.node, mask);
+        }
+    }
+
+    /** chunkBudget remains for callers; sampling never requests world generation here. */
     public Status step(int maxNodeExpansions, int chunkBudget) {
         if (status == Status.WAITING) {
             status = Status.RUNNING;
@@ -146,34 +231,58 @@ public final class WaterRoutePathfinder {
             return status;
         }
         int budget = Math.max(1, maxNodeExpansions);
+        // A cold edge must not prevent the other seven edges or the opposite frontier from running.
+        // Retain just its direction bit; successful work and node/fairness counters are never rolled back.
+        // Both fronts share bounded terrain IO slots. Always polling forward first can
+        // monopolize every slot even when CPU expansion itself is fair.
+        retryForwardFirst = !retryForwardFirst;
+        if (retryForwardFirst) {
+            retryDeferred(forward, goal, Math.max(1, budget / 8));
+            retryDeferred(backward, start, Math.max(1, budget / 8));
+        } else {
+            retryDeferred(backward, start, Math.max(1, budget / 8));
+            retryDeferred(forward, goal, Math.max(1, budget / 8));
+        }
         for (int i = 0; i < budget; i++) {
             WaterRouteCancellation.check();
+            discardStale(forward);
+            discardStale(backward);
+            if (forward.open.isEmpty() && backward.open.isEmpty()) {
+                if (pendingEdges() > 0) status = Status.WAITING;
+                else fail(WaterRouteFailureReason.NO_WATER_PATH);
+                return status;
+            }
             if (expandedNodes >= policy.maxExpandedNodes()) {
                 fail(WaterRouteFailureReason.NODE_BUDGET_EXCEEDED);
                 return status;
             }
-            if (forward.open.isEmpty() && backward.open.isEmpty()) {
-                fail(WaterRouteFailureReason.NO_WATER_PATH);
-                return status;
-            }
-            // 交替扩展 f 较小的一侧(平衡双向前沿)
+            // Prefer lower f, but guarantee service to both nonempty frontiers.
             double fF = forward.open.isEmpty() ? Double.MAX_VALUE : forward.open.peek().f();
             double fB = backward.open.isEmpty() ? Double.MAX_VALUE : backward.open.peek().f();
             boolean expandForward = fF <= fB;
+            if (!forward.open.isEmpty() && !backward.open.isEmpty()
+                    && directionRun >= MAX_CONSECUTIVE_EXPANSIONS && expandForward == lastDirection) {
+                expandForward = !expandForward;
+            }
+            if (expandForward == lastDirection) directionRun++;
+            else { lastDirection = expandForward; directionRun = 1; }
             if (expandStep(expandForward)) {
                 return status; // 相遇 → complete 已设状态
             }
-            if (status == Status.WAITING) return status;
             if (expandedNodes - lastLoggedAt >= LOG_EVERY_NODES) {
                 lastLoggedAt = expandedNodes;
                 BlockPos fFront = forward.open.isEmpty() ? null : forward.open.peek().pos;
                 BlockPos bFront = backward.open.isEmpty() ? null : backward.open.peek().pos;
                 long fToGoal = fFront == null ? -1 : Math.round(Math.sqrt(fFront.distSqr(goal)));
                 long bToStart = bFront == null ? -1 : Math.round(Math.sqrt(bFront.distSqr(start)));
-                LOGGER.info("[WaterPath] 扩展{} 前向开集={} 后向开集={} 前向前沿离目标={}格 后向前沿离起点={}格",
-                        expandedNodes, forward.open.size(), backward.open.size(), fToGoal, bToStart);
+                LOGGER.info("[WaterPath] 扩展{} (前向={} 后向={}) 前向开集={} 后向开集={} 前向前沿离目标={}格 后向前沿离起点={}格",
+                        expandedNodes, forwardExpansions, backwardExpansions,
+                        forward.open.size(), backward.open.size(), fToGoal, bToStart);
             }
         }
+        // Yield between bounded slices while downloads are outstanding, but the next slice is free
+        // to advance every ready direction. WAITING no longer means a global search barrier.
+        if (pendingEdges() > 0) status = Status.WAITING;
         return status;
     }
 
@@ -188,10 +297,11 @@ public final class WaterRoutePathfinder {
         }
         Node current = self.open.poll();
         long curKey = key(current.pos);
-        if (!self.closed.add(curKey)) {
+        if (self.best.get(curKey) != current || !self.closed.add(curKey)) {
             return false;
         }
         expandedNodes++;
+        if (isForward) forwardExpansions++; else backwardExpansions++;
 
         // 相遇检测:<b>必须对侧已 closed(确定最优到达)该格</b>才拼接,不能只看 best 里生成过。
         // 根因([[water_route_real_root_autopilot]] 的真正下游 bug):best 里有「仅 open 待扩展」的陈旧节点,
@@ -209,60 +319,101 @@ public final class WaterRoutePathfinder {
             // current 已 closed(确实处理过),邻居照常入 open,直到出现真正逐格连续的合法相遇才收敛。
         }
 
-        int[] dx = {0, step, 0, -step, step, step, -step, -step};
-        int[] dz = {step, 0, -step, 0, step, -step, step, -step};
-        for (int i = 0; i < dx.length; i++) {
-            int nx = current.pos.getX() + dx[i];
-            int nz = current.pos.getZ() + dz[i];
-            if (!withinSearchRadius(nx, nz)) {
-                continue;
-            }
-            WaterColumn column = world.sample(nx, nz, policy);
-            if (column == null && waitForUnknown) {
-                pauseAt(self, current, curKey);
-                return false;
-            }
-            if (column == null || !column.passable() || column.surfacePos() == null) {
-                continue;
-            }
-            BlockPos npos = column.surfacePos();
-            if (self.closed.contains(key(npos))) {
-                continue;
-            }
-            if (!segmentPassable(current.pos, npos)) {
-                if (pendingTerrain) { pauseAt(self, current, curKey); return false; }
-                continue;
-            }
-            if (dx[i] != 0 && dz[i] != 0 && !diagonalCorridorPassable(current.pos, nx, nz)) {
-                if (pendingTerrain) { pauseAt(self, current, curKey); return false; }
-                continue;
-            }
-            double edge = (dx[i] != 0 && dz[i] != 0) ? step * 1.4142135623730951D : step;
-            // 2026-06 软代价按步长归一化(修 refine 比 coarse 还差):extraCost(贴岸/占地软惩罚)原来每步加一个固定量,
-            // 不随 step 缩放 → refine(step8)在同一窄道扩展步数是 coarse(step24)的 3 倍 → 累积软代价 ~3 倍 → A* 误判
-            // 窄道「贵 3 倍」宁可绕远,结果 refine 比 coarse 更差。修法:每步软代价 = extraCost × step / NORMALIZE_STEP,
-            // 这样跨同样格数累积的总软代价与 step 无关(coarse 步少但每步重、refine 步多但每步轻,总和相等)。
-            // NORMALIZE_STEP=8(refine 步长)使 refine 权重不变、coarse 跟着加重到一致。([[water_route_real_root_autopilot]] 相关)
-            double normalizedExtra = column.extraCost() * step / (double) NORMALIZE_STEP;
-            double g = current.gCost + edge + normalizedExtra;
-            long nkey = key(npos);
-            Node prev = self.best.get(nkey);
-            if (prev != null && prev.gCost <= g) {
-                continue;
-            }
-            Node next = new Node(npos, g, heuristic(npos, target), current);
-            self.best.put(nkey, next);
-            self.open.add(next);
-        }
+        int mask = expandEdges(self, current, target, 0xFF);
+        if (mask != 0) defer(self, current, mask);
         return false;
     }
 
-    private void pauseAt(Search self, Node current, long currentKey) {
-        self.closed.remove(currentKey);
-        self.open.add(current);
-        expandedNodes--; // Waiting for an unknown edge is not a completed expansion or a repeated budget charge.
-        pendingTerrain = true;
-        status = Status.WAITING;
+    private int expandEdges(Search self, Node current, BlockPos target, int mask) {
+        int[] dx = {0, 1, 0, -1, 1, 1, -1, -1};
+        int[] dz = {1, 0, -1, 0, 1, -1, 1, -1};
+        int unresolved = 0;
+        Boolean microAllowed = null;
+        boolean microPending = false;
+        // Global 128-block guidance misses the Dardanelles entirely. Refine only blocked coastal
+        // edges, not the whole Aegean. All steps divide the same grid, so both fronts can still meet.
+        int minimumHop = waitForUnknown ? 1 : step;
+        int[] directions = directionOrder(current.pos, target, dx, dz);
+        for (int i : directions) {
+            if ((mask & (1 << i)) == 0) continue;
+            for (int hop = step; hop >= minimumHop; hop = hop == 1 ? 0 : Math.max(1, hop / 2)) {
+                WaterRouteCancellation.check();
+                if (hop < 4 && step >= 4 && edgeSampleSpacing > 1) {
+                    if (microAllowed == null) {
+                        pendingTerrain = false;
+                        microAllowed = constrainedWater(current.pos);
+                        microPending = pendingTerrain;
+                    }
+                    if (!microAllowed) {
+                        if (microPending) unresolved |= 1 << i;
+                        break;
+                    }
+                }
+                int baseX = minimumHop == step ? current.pos.getX() : (int) Math.round(current.pos.getX() / (double) hop) * hop;
+                int baseZ = minimumHop == step ? current.pos.getZ() : (int) Math.round(current.pos.getZ() / (double) hop) * hop;
+                int nx = baseX + dx[i] * hop;
+                int nz = baseZ + dz[i] * hop;
+                double edge = Math.hypot((double) nx - current.pos.getX(), (double) nz - current.pos.getZ());
+                if (edge == 0 || edge > MAX_LEGAL_HOP) continue;
+                if (!withinSearchRadius(nx, nz)) continue;
+                pendingTerrain = false;
+                WaterColumn column = world.sample(nx, nz, policy);
+                if (column == null && waitForUnknown) { unresolved |= 1 << i; break; }
+                if (column == null || !column.passable() || column.surfacePos() == null) continue;
+                BlockPos npos = column.surfacePos();
+                if (!segmentPassable(current.pos, npos)
+                        || (dx[i] != 0 && dz[i] != 0 && !diagonalCorridorPassable(current.pos, nx, nz))) {
+                    if (pendingTerrain) { unresolved |= 1 << i; break; }
+                    continue;
+                }
+                if (!self.closed.contains(key(npos))) {
+                    double g = current.gCost + edge + column.extraCost() * hop / (double) NORMALIZE_STEP;
+                    long nkey = key(npos);
+                    Node previous = self.best.get(nkey);
+                    if (previous == null || previous.gCost > g) {
+                        Node next = new Node(npos, g, heuristic(npos, target), current);
+                        self.best.put(nkey, next);
+                        self.open.add(next);
+                    }
+                }
+                break; // widest known-safe edge in this direction; unknown never means land
+            }
+        }
+        return unresolved;
+    }
+
+    /** Issue scarce IO slots toward the destination first, not always north first. */
+    private int[] directionOrder(BlockPos from, BlockPos target, int[] dx, int[] dz) {
+        int[] order = {0, 1, 2, 3, 4, 5, 6, 7};
+        double[] scores = new double[8];
+        for (int i = 0; i < 8; i++) {
+            BlockPos p = from.offset(dx[i] * step, 0, dz[i] * step);
+            scores[i] = Math.hypot((double) p.getX() - from.getX(), (double) p.getZ() - from.getZ())
+                    + heuristic(p, target);
+        }
+        for (int i = 1; i < order.length; i++) {
+            int value = order[i], j = i - 1;
+            while (j >= 0 && scores[order[j]] > scores[value]) { order[j + 1] = order[j]; j--; }
+            order[j + 1] = value;
+        }
+        return order;
+    }
+
+    /** Refine to unit cells only between nearby opposing banks. A one-sided coast
+     * must retain the coarse graph; otherwise its unit fringe exhausts global node budgets.
+     * Unknown cells remain deferred and are never counted as banks.
+     */
+    private boolean constrainedWater(BlockPos at) {
+        boolean unknown = false;
+        int[][] axes = {{3,0},{0,3}};
+        for (int[] axis : axes) {
+            WaterColumn a = world.sample(at.getX() + axis[0], at.getZ() + axis[1], policy);
+            WaterColumn b = world.sample(at.getX() - axis[0], at.getZ() - axis[1], policy);
+            if (a == null || b == null) { unknown = true; continue; }
+            if (!a.passable() && !b.passable()) { pendingTerrain = false; return true; }
+        }
+        pendingTerrain = unknown;
+        return false;
     }
 
     /**
@@ -308,9 +459,8 @@ public final class WaterRoutePathfinder {
         path.addAll(gridChain);
         // 首尾补回真实泊位坐标(搜索走 snap 网格,首尾可能偏真实泊位几格;补上让船精确停靠)。
         // Y 沿用路径首/尾航点(海平面),start/goal 的 Y 即泊位 Y,二者一致。
-        int surfaceY = path.isEmpty() ? start.getY() : path.get(0).getY();
-        BlockPos realStart = new BlockPos(start.getX(), surfaceY, start.getZ());
-        BlockPos realGoal = new BlockPos(goal.getX(), surfaceY, goal.getZ());
+        BlockPos realStart = start;
+        BlockPos realGoal = goal;
         if (!path.isEmpty() && !path.get(0).equals(realStart)) {
             path.add(0, realStart);
         }
@@ -332,6 +482,16 @@ public final class WaterRoutePathfinder {
     private boolean segmentPassable(BlockPos from, BlockPos to) {
         if (from == null || to == null) {
             return false;
+        }
+        if (waitForUnknown && edgeSampleSpacing == 1) {
+            // Fine segments must cover every intersected hull anchor, not just rounded samples.
+            if (from.getY() != to.getY()) return false;
+            return WaterGridTraversal.all(from.getX(), from.getZ(), to.getX(), to.getZ(), (x, z) -> {
+                WaterColumn column = world.sample(x, z, policy);
+                if (column == null) { pendingTerrain = true; return false; }
+                return column.passable() && column.surfacePos() != null
+                        && column.surfacePos().getY() == from.getY();
+            });
         }
         int dx = to.getX() - from.getX();
         int dz = to.getZ() - from.getZ();
@@ -399,11 +559,10 @@ public final class WaterRoutePathfinder {
             BlockPos previous = out.get(out.size() - 1);
             BlockPos current = input.get(i);
             BlockPos next = input.get(i + 1);
-            int dx1 = Integer.compare(current.getX() - previous.getX(), 0);
-            int dz1 = Integer.compare(current.getZ() - previous.getZ(), 0);
-            int dx2 = Integer.compare(next.getX() - current.getX(), 0);
-            int dz2 = Integer.compare(next.getZ() - current.getZ(), 0);
-            if (dx1 != dx2 || dz1 != dz2) {
+            long dx1 = (long) current.getX() - previous.getX(), dz1 = (long) current.getZ() - previous.getZ();
+            long dx2 = (long) next.getX() - current.getX(), dz2 = (long) next.getZ() - current.getZ();
+            if (dx1 * dz2 != dz1 * dx2 || dx1 * dx2 + dz1 * dz2 <= 0
+                    || previous.getY() != current.getY() || current.getY() != next.getY()) {
                 out.add(current);
             }
         }
@@ -476,11 +635,18 @@ public final class WaterRoutePathfinder {
         WAITING
     }
 
+    private record Deferred(Node node, int mask, long sequence) { }
+
     /** 一侧搜索状态(前向或后向)。 */
     private static final class Search {
         private final PriorityQueue<Node> open = new PriorityQueue<>();
         private final Map<Long, Node> best = new HashMap<>();
         private final Set<Long> closed = new HashSet<>();
+        private long deferredSequence, retryTurns;
+        private final java.util.NavigableSet<Deferred> deferred = new java.util.TreeSet<>(
+                java.util.Comparator.comparingDouble((Deferred d) -> d.node.f()).thenComparingLong(Deferred::sequence));
+        private final java.util.NavigableSet<Deferred> deferredAge = new java.util.TreeSet<>(
+                java.util.Comparator.comparingLong(Deferred::sequence));
     }
 
     private static final class Node implements Comparable<Node> {

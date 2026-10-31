@@ -1,0 +1,62 @@
+name: Verified Tellus paths and diagrams
+on:
+  push:
+    branches: [fix/autoroute-candidates-flag-preview]
+    paths: ['src/**', 'tools/tellus-native/**', '.github/workflows/verified-tellus-paths.yml']
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: verified-tellus-paths-${{ github.ref }}
+  cancel-in-progress: true
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          lfs: true
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
+      - name: Compile and run focused offline regressions
+        run: |
+          chmod +x gradlew
+          ./gradlew --no-daemon -PneoForge.disableRecompilation=true -PfixIndex=verified_tellus_paths '-Dorg.gradle.jvmargs=-Xmx3G -Dfile.encoding=UTF-8' test --tests '*route.water.*' --tests '*route.terrain.*' --tests '*ChatFlag*Test' --tests '*NationOfficeTitleTest' --tests '*FlagPreviewLayoutTest' jar
+          cp -r build/test-results/test build/offline-test-results
+      - name: Prepare pinned native Tellus runtime
+        run: |
+          mkdir -p build/native-runtime build/native-evidence
+          python3 - <<'PY'
+          import pathlib,zipfile,hashlib
+          p=pathlib.Path('libs/compile-only/Tellus-neoforge-1.21.1-0.8.3.jar')
+          pathlib.Path('build/native-evidence/tellus-sha256.txt').write_text(hashlib.sha256(p.read_bytes()).hexdigest()+'\n')
+          with zipfile.ZipFile(p) as z:
+              for n in z.namelist():
+                  if n.startswith('META-INF/jarjar/') and n.endswith('.jar'):
+                      pathlib.Path('build/native-runtime',pathlib.Path(n).name).write_bytes(z.read(n))
+          PY
+      - name: Live Tellus LOD and precise columns - original route, Crete, reverse and delayed strait
+        run: |
+          ./gradlew --no-daemon -I tools/tellus-native/native.init.gradle -PneoForge.disableRecompilation=true '-Dorg.gradle.jvmargs=-Xmx2G -Dfile.encoding=UTF-8' test --tests '*TellusNativeRoutesTest' --rerun-tasks
+      - name: Archive exact sources and build identity
+        if: always()
+        run: |
+          mkdir -p build/native-evidence
+          git rev-parse HEAD > build/native-evidence/commit.txt
+          sha256sum build/libs/*.jar > build/native-evidence/jar-sha256.txt
+          tar czf build/verified-source.tar.gz src tools docs build.gradle gradle.properties settings.gradle
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: verified-tellus-paths-${{ github.run_id }}
+          path: |
+            build/libs/*.jar
+            build/native-evidence/
+            build/route-regression/
+            build/offline-test-results/
+            build/test-results/test/
+            build/verified-source.tar.gz
+          retention-days: 14

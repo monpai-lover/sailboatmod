@@ -31,7 +31,7 @@ public final class WaterRouteTaskService {
         if (task == null) {
             return WaterRouteResult.failure(WaterRouteFailureReason.NO_WATER_PATH);
         }
-        if (pendingTasks.containsKey(task.key())) {
+        if (pendingTasks.size() >= 36 || pendingTasks.containsKey(task.key())) {
             return WaterRouteResult.failure(WaterRouteFailureReason.ALREADY_PENDING);
         }
         pendingTasks.put(task.key(), task);
@@ -68,6 +68,10 @@ public final class WaterRouteTaskService {
             }
         }
         completedKeys.forEach(pendingTasks::remove);
+        // Rotate the advanced prefix so long-running jobs cannot starve later queued jobs.
+        List<String> rotate=new ArrayList<>();
+        for(String key:pendingTasks.keySet()){if(rotate.size()>=advanced)break;rotate.add(key);}
+        for(String key:rotate){WaterRouteTask task=pendingTasks.remove(key);pendingTasks.put(key,task);}
     }
 
     public void clear() {

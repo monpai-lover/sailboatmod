@@ -103,6 +103,7 @@ tasks.named('processResources', ProcessResources) {
         def addonMetadata = layout.buildDirectory.file('generated/marketWebResources/META-INF/neoforge.mods.toml').get().asFile.text
         def addonStart = addonMetadata.indexOf('[[mods]]')
         if (addonStart < 0) throw new GradleException('Missing market web addon metadata')
+        mainMetadata.append('\n[[mixins]]\nconfig="sailboatmod-chat.mixins.json"\n', 'UTF-8')
         mainMetadata.append('\n# DEVELOPMENT_MARKET_WEB_METADATA\n' + addonMetadata.substring(addonStart), 'UTF-8')
     }
 }

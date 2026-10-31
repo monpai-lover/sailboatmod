@@ -24,7 +24,7 @@ import java.util.Optional;
  *
  * <p><b>两层读真实方块</b>:
  * <ol>
- *   <li><b>NBT 后台读(主力)</b>:{@link OfflineChunkNbtReader#readSafeFromWorkerThread}(IOWorker 异步读、不 join
+ *   <li><b>NBT 后台读(主力)</b>:{@link OfflineChunkNbtReader#readSafeFromWorkerThread}(旧入口;当前采用预算内快照复制，不再全局保存。异步读、不 join
  *       主线程;读前 flush 走 server.submit.join 单向投递不死锁)。见 {@link #readOffThread}。</li>
  *   <li><b>force 兜底(主线程,极少)</b>:NBT 返回 empty(磁盘上没有)→ forceChunk+getChunk(FULL) 后再读。
  *       见 {@link #readForcedOnMainThread}。</li>
@@ -44,32 +44,51 @@ public final class NbtChunkWaterReader {
 
     /**
      * <b>后台线程</b>:异步读盘一个区块的 region NBT 并解出判水列。收口到 {@link OfflineChunkNbtReader}
-     * (IOWorker 异步读 + 读前 flush)。磁盘上没有/超时/非主世界 → empty。
+     * 当前使用异步 IOWorker + 预算内主线程内存复制；不触发全局 save/flush。缺失/超时返回 empty。
      */
+    public enum ReadStatus { READY, ABSENT, UNAVAILABLE }
+
+    /** Only ABSENT permits prediction: IO failure or non-FULL terrain is not an ungenerated ocean. */
+    public record ReadResult(ReadStatus status, ChunkColumns columns) {
+        public static ReadResult ready(ChunkColumns columns) { return new ReadResult(ReadStatus.READY, columns); }
+        public static ReadResult absent() { return new ReadResult(ReadStatus.ABSENT, null); }
+        public static ReadResult unavailable() { return new ReadResult(ReadStatus.UNAVAILABLE, null); }
+    }
+
     public static Optional<ChunkColumns> readOffThread(ServerLevel level, int cx, int cz, long timeoutMs) {
-        if (level == null || !OVERWORLD.equals(level.dimension().location().toString())) {
-            return Optional.empty();
+        ReadResult result = readForRouting(level, cx, cz, timeoutMs);
+        return result.status() == ReadStatus.READY ? Optional.of(result.columns()) : Optional.empty();
+    }
+
+    public static ReadResult readForRouting(ServerLevel level, int cx, int cz, long timeoutMs) {
+        // A null level is used by injected terrain-only tests; it has no saved world to override.
+        if (level == null) return ReadResult.absent();
+        if (!OVERWORLD.equals(level.dimension().location().toString())) return ReadResult.unavailable();
+        if (level.getServer().isSameThread()) {
+            var loaded = level.getChunkSource().getChunkNow(cx, cz);
+            return loaded == null ? ReadResult.unavailable() : ReadResult.ready(
+                    com.monpai.sailboatmod.route.water.lookahead.LoadedChunkWaterColumns.capture(loaded));
         }
         WaterRouteCancellation.check();
         try {
-            // Most distant Tellus chunks have no NBT. Do not schedule a server save for every absent chunk.
-            // A present probe is never decoded or copied here: the established safe reader still owns that path.
-            if (OfflineChunkNbtReader.beginProbe(level, new ChunkPos(cx, cz))
-                    .get(Math.max(1L, timeoutMs), java.util.concurrent.TimeUnit.MILLISECONDS).isEmpty()) return Optional.empty();
+            Optional<CompoundTag> raw = level.getChunkSource().chunkMap.read(new ChunkPos(cx, cz))
+                    .get(Math.max(1, timeoutMs), java.util.concurrent.TimeUnit.MILLISECONDS);
+            if (raw.isEmpty()) return ReadResult.absent();
+            var ownership = PortAsyncRuntime.onMain(level.getServer(), () -> raw.get().copy());
+            CompoundTag owned;
+            try { owned = ownership.get(Math.max(1, timeoutMs), java.util.concurrent.TimeUnit.MILLISECONDS); }
+            catch (Exception e) { ownership.cancel(false); throw e; }
+            WaterRouteCancellation.check();
+            if (!OfflineChunkPalette.isFullStatus(owned)) return ReadResult.unavailable();
+            return decode(owned, level.getMinBuildHeight(), level.getMaxBuildHeight())
+                    .map(ReadResult::ready).orElseGet(ReadResult::unavailable);
         } catch (InterruptedException interrupted) {
             Thread.currentThread().interrupt();
             WaterRouteCancellation.check();
-            return Optional.empty();
+            return ReadResult.unavailable();
         } catch (java.util.concurrent.ExecutionException | java.util.concurrent.TimeoutException unavailable) {
-            return Optional.empty();
+            return ReadResult.unavailable();
         }
-        WaterRouteCancellation.check();
-        int minY = level.getMinBuildHeight();
-        int maxY = level.getMaxBuildHeight();
-        Optional<CompoundTag> tag = OfflineChunkNbtReader.readSafeFromWorkerThread(
-                level, new ChunkPos(cx, cz), timeoutMs, true);
-        WaterRouteCancellation.check();
-        return tag.flatMap(value -> decode(value, minY, maxY));
     }
 
     /**
