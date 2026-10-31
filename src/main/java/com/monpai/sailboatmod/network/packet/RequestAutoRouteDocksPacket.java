@@ -27,17 +27,23 @@ public class RequestAutoRouteDocksPacket {
     private static final Logger LOGGER = LogUtils.getLogger();
 
     private final BlockPos sourceDockPos;
+    private final java.util.UUID requestId;
 
     public RequestAutoRouteDocksPacket(BlockPos sourceDockPos) {
+        this(sourceDockPos,java.util.UUID.randomUUID());
+    }
+    public RequestAutoRouteDocksPacket(BlockPos sourceDockPos,java.util.UUID requestId) {
+        this.requestId=requestId;
         this.sourceDockPos = sourceDockPos;
     }
 
     public static void encode(RequestAutoRouteDocksPacket msg, FriendlyByteBuf buf) {
         buf.writeBlockPos(msg.sourceDockPos);
+        buf.writeUUID(msg.requestId);
     }
 
     public static RequestAutoRouteDocksPacket decode(FriendlyByteBuf buf) {
-        return new RequestAutoRouteDocksPacket(buf.readBlockPos());
+        return new RequestAutoRouteDocksPacket(buf.readBlockPos(),buf.readUUID());
     }
 
     public static void handle(RequestAutoRouteDocksPacket msg, Supplier<NetworkEvent.Context> ctx) {
@@ -46,9 +52,16 @@ public class RequestAutoRouteDocksPacket {
             if (player == null) return;
             if (!(player.level() instanceof net.minecraft.server.level.ServerLevel serverLevel)) return;
 
-            if (TellusWorlds.isTellusLevel(serverLevel)
-                    && !PortCandidateListing.acceptRequest(serverLevel.getServer(), player.getUUID())) return;
-            if (!(serverLevel.getBlockEntity(msg.sourceDockPos) instanceof DockBlockEntity sourceDock)) return;
+            var sourceDock=com.monpai.sailboatmod.route.water.PortDockSnapshot.loaded(serverLevel,msg.sourceDockPos);
+            if(sourceDock==null || player.distanceToSqr(net.minecraft.world.phys.Vec3.atCenterOf(msg.sourceDockPos))>128.0*128.0){
+                ModNetwork.CHANNEL.send(player,new RouteWorkProgressPacket(msg.sourceDockPos,msg.requestId,false,0,0,0,RouteWorkProgressPacket.FAILED,"出发码头不可用，请重新打开"));return;}
+            if(!(sourceDock instanceof PostStationBlockEntity)){
+                if(!PortCandidateListing.acceptRequest(serverLevel.getServer(),player.getUUID())){
+                    ModNetwork.CHANNEL.send(player,new RouteWorkProgressPacket(msg.sourceDockPos,msg.requestId,false,0,0,0,
+                            RouteWorkProgressPacket.BUSY,"请求过于频繁，请稍后重新验证"));return;
+                }
+                PortCandidateListing.request(serverLevel,sourceDock,player,msg.requestId);return;
+            }
 
             PortCandidateListing.cancelPrevious(serverLevel.getServer(), player.getUUID());
             List<AvailableDockEntry> available = new ArrayList<>();
@@ -103,12 +116,9 @@ public class RequestAutoRouteDocksPacket {
             LOGGER.info("[AutoRoute] 源 @{} 模式={} 共扫描 {} 个其它码头,列出 {} 个可用",
                     msg.sourceDockPos, postStationMode ? "驿站" : "码头", scanned, available.size());
 
-            if (!postStationMode && TellusWorlds.isTellusLevel(serverLevel)) {
-                PortCandidateListing.refine(serverLevel, sourceDock, permittedDocks, available, player);
-            } else {
-                ModNetwork.CHANNEL.send(player,
-                    new SyncAutoRouteDocksPacket(msg.sourceDockPos, terminalKind, available));
-            }
+            ModNetwork.CHANNEL.send(player,new SyncAutoRouteDocksPacket(msg.sourceDockPos,terminalKind,available,msg.requestId));
+            ModNetwork.CHANNEL.send(player,new RouteWorkProgressPacket(msg.sourceDockPos,msg.requestId,false,100,scanned,scanned,
+                    RouteWorkProgressPacket.DONE,"驿站检查结束"));
         });
         ctx.get().setPacketHandled(true);
     }

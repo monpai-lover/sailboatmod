@@ -24,7 +24,7 @@ import java.util.Optional;
  *
  * <p><b>两层读真实方块</b>:
  * <ol>
- *   <li><b>NBT 后台读(主力)</b>:{@link OfflineChunkNbtReader#readSafeFromWorkerThread}(IOWorker 异步读、不 join
+ *   <li><b>NBT 后台读(主力)</b>:{@link OfflineChunkNbtReader#readSafeFromWorkerThread}(旧入口;当前采用预算内快照复制，不再全局保存。异步读、不 join
  *       主线程;读前 flush 走 server.submit.join 单向投递不死锁)。见 {@link #readOffThread}。</li>
  *   <li><b>force 兜底(主线程,极少)</b>:NBT 返回 empty(磁盘上没有)→ forceChunk+getChunk(FULL) 后再读。
  *       见 {@link #readForcedOnMainThread}。</li>
@@ -44,32 +44,31 @@ public final class NbtChunkWaterReader {
 
     /**
      * <b>后台线程</b>:异步读盘一个区块的 region NBT 并解出判水列。收口到 {@link OfflineChunkNbtReader}
-     * (IOWorker 异步读 + 读前 flush)。磁盘上没有/超时/非主世界 → empty。
+     * 当前使用异步 IOWorker + 预算内主线程内存复制；不触发全局 save/flush。缺失/超时返回 empty。
      */
     public static Optional<ChunkColumns> readOffThread(ServerLevel level, int cx, int cz, long timeoutMs) {
         if (level == null || !OVERWORLD.equals(level.dimension().location().toString())) {
             return Optional.empty();
         }
-        WaterRouteCancellation.check();
-        try {
-            // Most distant Tellus chunks have no NBT. Do not schedule a server save for every absent chunk.
-            // A present probe is never decoded or copied here: the established safe reader still owns that path.
-            if (OfflineChunkNbtReader.beginProbe(level, new ChunkPos(cx, cz))
-                    .get(Math.max(1L, timeoutMs), java.util.concurrent.TimeUnit.MILLISECONDS).isEmpty()) return Optional.empty();
-        } catch (InterruptedException interrupted) {
-            Thread.currentThread().interrupt();
-            WaterRouteCancellation.check();
-            return Optional.empty();
-        } catch (java.util.concurrent.ExecutionException | java.util.concurrent.TimeoutException unavailable) {
-            return Optional.empty();
+        if (level.getServer().isSameThread()) {
+            // Legacy main-thread probes may only consume already-complete data, never wait for IO.
+            var loaded=level.getChunkSource().getChunkNow(cx,cz);
+            return loaded==null?Optional.empty():Optional.of(
+                    com.monpai.sailboatmod.route.water.lookahead.LoadedChunkWaterColumns.capture(loaded));
         }
         WaterRouteCancellation.check();
-        int minY = level.getMinBuildHeight();
-        int maxY = level.getMaxBuildHeight();
-        Optional<CompoundTag> tag = OfflineChunkNbtReader.readSafeFromWorkerThread(
-                level, new ChunkPos(cx, cz), timeoutMs, true);
-        WaterRouteCancellation.check();
-        return tag.flatMap(value -> decode(value, minY, maxY));
+        try {
+            Optional<CompoundTag> raw=level.getChunkSource().chunkMap.read(new ChunkPos(cx,cz))
+                    .get(Math.max(1,timeoutMs),java.util.concurrent.TimeUnit.MILLISECONDS);
+            if(raw.isEmpty())return Optional.empty();
+            var ownership=PortAsyncRuntime.onMain(level.getServer(),()->raw.get().copy());
+            CompoundTag owned;
+            try {owned=ownership.get(Math.max(1,timeoutMs),java.util.concurrent.TimeUnit.MILLISECONDS);}
+            catch(Exception e){ownership.cancel(false);throw e;}
+            WaterRouteCancellation.check();
+            return decode(owned,level.getMinBuildHeight(),level.getMaxBuildHeight());
+        } catch(InterruptedException interrupted){Thread.currentThread().interrupt();WaterRouteCancellation.check();return Optional.empty();}
+        catch(java.util.concurrent.ExecutionException|java.util.concurrent.TimeoutException unavailable){return Optional.empty();}
     }
 
     /**

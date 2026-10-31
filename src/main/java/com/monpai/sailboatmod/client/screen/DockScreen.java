@@ -188,7 +188,8 @@ public class DockScreen<T extends DockMenu> extends TransportTerminalScreen<T> {
         reverseButton = new ActionButton(screenText("reverse"), Ui.Tone.SECONDARY, () -> send(KEY_ACTION, DockGuiActionPacket.Action.REVERSE_ROUTE));
         autoRouteButton = new ActionButton(screenText("auto_route"), Ui.Tone.SECONDARY, () -> {
             if (pending.begin(KEY_ACTION, ticks())) {
-                ModNetwork.CHANNEL.sendToServer(new RequestAutoRouteDocksPacket(data.dockPos()));
+                com.monpai.sailboatmod.client.DockClientHooks.beginAutoRoute(data.dockPos(),
+                        com.monpai.sailboatmod.market.TransportTerminalKind.PORT);
                 refresh();
             }
         });

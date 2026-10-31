@@ -121,7 +121,7 @@ public final class WaterAutoRouteService {
         DockSnapshot targetSnapshot = snapshot(target);
         WaterRoutePolicy policy = WaterRoutePolicy.defaults();
         // Resolve Tellus endpoints inside the cancellable worker task, not on the server thread.
-        if (com.monpai.sailboatmod.route.terrain.TellusWorlds.isTellusLevel(level)) {
+        if (com.monpai.sailboatmod.route.terrain.TellusWorlds.isTellusLevel(level) || midMode == WaterMidMode.NBT) {
             return submitTellusAutoRoute(level, source, target, sourceSnapshot, targetSnapshot, player);
         }
         // Tellus 地球世界:未生成区块用 Tellus 地形预测(NBT 优先),一律走单段 NBT,忽略 UI 选的模式。
@@ -322,7 +322,7 @@ public final class WaterAutoRouteService {
                 targetSnapshot.pos(), sourceSnapshot.pos(), targetSnapshot.pos(), playerName(player), policy, search, result -> {
             // Do not publish a late result after a dock/zone/ownership change.
             WaterRouteResult<List<BlockPos>> accepted = result;
-            if (result.successful() && (source.isRemoved() || target.isRemoved()
+            if (result.successful() && ((player != null && !source.canManageDock(player)) || source.isRemoved() || target.isRemoved()
                     || !snapshot(source).equals(sourceSnapshot) || !snapshot(target).equals(targetSnapshot)
                     || !WaterRouteCandidateService.canListCandidate(level, source, target).successful())) {
                 accepted = WaterRouteResult.failure(WaterRouteFailureReason.TERRAIN_NOT_READY);

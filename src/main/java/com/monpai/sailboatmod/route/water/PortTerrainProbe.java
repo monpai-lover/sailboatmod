@@ -29,6 +29,7 @@ public final class PortTerrainProbe {
     // A present null value means loaded but not captured within budget: never replace it with prediction.
     private final Map<Long, NbtChunkWaterReader.ChunkColumns> live = new HashMap<>();
     private final Map<Long, Disk> disk = new HashMap<>();
+    private final java.util.Set<Long> liveChecked = new java.util.HashSet<>();
     private final Map<Long, NbtChunkWaterReader.ChunkColumns> predicted = new HashMap<>();
     private final Map<Long, Boolean> ready = new HashMap<>();
     private final TerrainPredictor predictor;
@@ -55,23 +56,7 @@ public final class PortTerrainProbe {
     public static PortTerrainProbe capture(ServerLevel level, List<Zone> zones, TerrainPredictor predictor) {
         if (!level.getServer().isSameThread()) throw new IllegalStateException("Port capture requires server thread");
         PortTerrainProbe probe = new PortTerrainProbe(level, predictor);
-        int captured = 0;
-        for (Zone zone : zones) {
-            int r = MAX_ZONE_RADIUS, margin = SNAPSHOT_MARGIN;
-            int minX = zone.x() + Math.max(-r, zone.minX()) - margin;
-            int maxX = zone.x() + Math.min(r, zone.maxX()) + margin;
-            int minZ = zone.z() + Math.max(-r, zone.minZ()) - margin;
-            int maxZ = zone.z() + Math.min(r, zone.maxZ()) + margin;
-            for (int cx = minX >> 4; cx <= maxX >> 4; cx++) {
-                for (int cz = minZ >> 4; cz <= maxZ >> 4; cz++) {
-                    long key = ChunkPos.asLong(cx, cz);
-                    if (probe.live.containsKey(key)) continue;
-                    LevelChunk chunk = level.getChunkSource().getChunkNow(cx, cz);
-                    if (chunk == null) continue; // no chunk generation or synchronous disk IO
-                    probe.live.put(key, captured++ < MAX_LIVE_CHUNKS ? LoadedChunkWaterColumns.capture(chunk) : null);
-                }
-            }
-        }
+        // Metadata-only construction. Live columns are copied lazily in budgeted tick slices.
         return probe;
     }
 
@@ -96,12 +81,22 @@ public final class PortTerrainProbe {
     /** Retain real/ready data, but allow a later worker slice to retry unavailable terrain. */
     public void retryPending() {
         ready.entrySet().removeIf(e -> !e.getValue());
+        live.entrySet().removeIf(e -> { if (e.getValue() == null) { liveChecked.remove(e.getKey()); return true; } return false; });
         disk.entrySet().removeIf(e -> e.getValue().columns == null && !e.getValue().absent);
     }
 
     private Cell sample(int x, int z) {
         if (expired()) return Cell.unknown();
         long key = ChunkPos.asLong(x >> 4, z >> 4);
+        if (liveChecked.add(key)) {
+            var capture = PortChunkSnapshot.capture(level, x >> 4, z >> 4);
+            try {
+                var snapshot = capture.get(Math.max(1, Math.min(1000, waitMillis() * 5)), TimeUnit.MILLISECONDS);
+                if (snapshot.loaded()) live.put(key, snapshot.columns());
+            } catch (InterruptedException interrupted) {
+                capture.cancel(false); Thread.currentThread().interrupt(); live.put(key, null);
+            } catch (Exception unavailable) { capture.cancel(false); live.put(key, null); }
+        }
         Cell loaded = live.containsKey(key) ? column(live.get(key), x, z, Origin.LIVE) : null;
         if (loaded != null) return loaded;
         Disk stored = disk.computeIfAbsent(key, ignored -> readDisk(x >> 4, z >> 4));
@@ -119,11 +114,7 @@ public final class PortTerrainProbe {
             if (raw.isEmpty()) return new Disk(null, true, Origin.NONE);
             // Pending-write tags can also be seen by main-thread data fixing. Own a copy there,
             // then decode off-thread. No global save/flush is scheduled for a menu query.
-            var ownership = level.getServer().submit(() -> {
-                LevelChunk loaded = level.getChunkSource().getChunkNow(cx, cz);
-                return loaded != null ? new Owned(null, LoadedChunkWaterColumns.capture(loaded))
-                        : new Owned(raw.get().copy(), null);
-            });
+            var ownership = PortAsyncRuntime.onMain(level.getServer(), () -> new Owned(raw.get().copy(), null));
             Owned owned;
             try {
                 owned = ownership.get(waitMillis(), TimeUnit.MILLISECONDS);

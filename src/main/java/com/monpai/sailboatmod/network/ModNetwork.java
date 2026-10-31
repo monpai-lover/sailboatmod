@@ -109,7 +109,7 @@ import net.neoforged.bus.api.IEventBus;
 import java.util.Optional;
 
 public final class ModNetwork {
-    private static final String PROTOCOL_VERSION = "17"; // Live market updates plus aircraft actions and airport terminals.
+    private static final String PROTOCOL_VERSION = "18"; // Live market updates plus aircraft actions and airport terminals.
     public static final PayloadChannel CHANNEL = new PayloadChannel(PROTOCOL_VERSION);
 
     private static int packetId = 0;
@@ -1010,6 +1010,8 @@ public final class ModNetwork {
                 com.monpai.sailboatmod.network.packet.MarketLiveUpdatePacket::decode,
                 com.monpai.sailboatmod.network.packet.MarketLiveUpdatePacket::handle,
                 Optional.of(NetworkDirection.PLAY_TO_CLIENT));
+        CHANNEL.registerMessage(packetId++,com.monpai.sailboatmod.network.packet.RouteWorkProgressPacket.class,com.monpai.sailboatmod.network.packet.RouteWorkProgressPacket::encode,com.monpai.sailboatmod.network.packet.RouteWorkProgressPacket::decode,com.monpai.sailboatmod.network.packet.RouteWorkProgressPacket::handle,Optional.of(NetworkDirection.PLAY_TO_CLIENT));
+        CHANNEL.registerMessage(packetId++,com.monpai.sailboatmod.network.packet.CancelPortWorkPacket.class,com.monpai.sailboatmod.network.packet.CancelPortWorkPacket::encode,com.monpai.sailboatmod.network.packet.CancelPortWorkPacket::decode,com.monpai.sailboatmod.network.packet.CancelPortWorkPacket::handle,Optional.of(NetworkDirection.PLAY_TO_SERVER));
     }
 
     private ModNetwork() {

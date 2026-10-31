@@ -31,15 +31,25 @@ public final class DockClientHooks {
         return null;
     }
 
-    public static void openAutoRouteDockSelection(BlockPos sourceDockPos, TransportTerminalKind terminalKind, List<AvailableDockEntry> docks) {
-        Minecraft minecraft = Minecraft.getInstance();
-        if (minecraft.screen instanceof AutoRouteDockSelectionScreen selection && selection.isForDock(sourceDockPos, terminalKind)) {
+    public static void beginAutoRoute(BlockPos pos,TransportTerminalKind kind) {
+        var screen=new AutoRouteDockSelectionScreen(pos,kind,List.of());
+        Minecraft.getInstance().setScreen(screen);
+        screen.requestValidation();
+    }
+    public static void openAutoRouteDockSelection(BlockPos pos,TransportTerminalKind kind,List<AvailableDockEntry> docks) {
+        openAutoRouteDockSelection(pos,kind,docks,new java.util.UUID(0,0));
+    }
+    public static void openAutoRouteDockSelection(BlockPos sourceDockPos, TransportTerminalKind terminalKind,
+            List<AvailableDockEntry> docks,java.util.UUID requestId) {
+        Minecraft minecraft=Minecraft.getInstance();
+        if(minecraft.screen instanceof AutoRouteDockSelectionScreen selection
+                &&selection.isForDock(sourceDockPos,terminalKind)&&selection.acceptsList(requestId)) {
             selection.updateDocks(docks);
-        } else if ((minecraft.screen instanceof DockScreen dock && dock.isForDock(sourceDockPos))
-                || (minecraft.screen instanceof PostStationScreen station && station.isForStation(sourceDockPos))) {
-            minecraft.setScreen(new AutoRouteDockSelectionScreen(sourceDockPos, terminalKind, docks));
         }
-        // Closed or unrelated screen: an asynchronous terrain reply must not reopen a dialog.
+        // Only the explicit local click opens a screen; closed/unrelated screens ignore late packets.
+    }
+    public static void progress(com.monpai.sailboatmod.network.packet.RouteWorkProgressPacket packet) {
+        if(Minecraft.getInstance().screen instanceof AutoRouteDockSelectionScreen screen)screen.updateProgress(packet);
     }
 
     private DockClientHooks() {

@@ -33,10 +33,19 @@ public class AutoRouteDockSelectionScreen extends ThemedScreen {
     private ScrollerView dockList;
     private final List<UIElement> rows = new ArrayList<>();
     private int selectedIndex = -1;
-    private WaterMidMode selectedMode = WaterMidMode.HYBRID;
+    private WaterMidMode selectedMode = WaterMidMode.NBT;
     private TabBar<WaterMidMode> modeTabs;
     private Label modeDescription;
     private Button createButton;
+    private Button retryButton,cancelWorkButton;
+    private com.monpai.sailboatmod.client.ui.kit.MeterBar progressBar;
+    private Label progressLabel;
+    private java.util.UUID listRequest=new java.util.UUID(0,0),routeRequest=new java.util.UUID(0,0);
+    private boolean listing,building;
+    private int progressPercent,progressState;
+    private String progressStage="准备中";
+    private long progressStarted;
+
 
     public AutoRouteDockSelectionScreen(BlockPos sourceDockPos, TransportTerminalKind terminalKind, List<AvailableDockEntry> docks) {
         super(Component.translatable(baseKey(terminalKind) + ".title"));
@@ -59,21 +68,14 @@ public class AutoRouteDockSelectionScreen extends ThemedScreen {
         dockList.layout(l -> l.height(150).flexGrow(0));
         rebuildRows();
         body.addChild(dockList);
+        progressLabel=Ui.text("准备中","sm-muted");
+        progressBar=new com.monpai.sailboatmod.client.ui.kit.MeterBar();
+        progressBar.layout(l->l.widthPercent(100).height(8));
+        body.addChildren(progressLabel,progressBar);
+
 
         if (terminalKind == TransportTerminalKind.PORT) {
-            modeTabs = TabBar.horizontal(mode -> {
-                selectedMode = mode;
-                refresh();
-            });
-            modeTabs.add(WaterMidMode.NOISE, new ItemStack(Items.FEATHER), Component.translatable("screen.sailboatmod.ui.route_mode.noise"))
-                    .add(WaterMidMode.NBT, new ItemStack(Items.SPYGLASS), Component.translatable("screen.sailboatmod.ui.route_mode.nbt"))
-                    .add(WaterMidMode.HYBRID, new ItemStack(Items.COMPASS), Component.translatable("screen.sailboatmod.ui.route_mode.hybrid"));
-            modeDescription = Ui.text("", "sm-muted");
-            UIElement modeRow = Ui.row();
-            modeRow.layout(l -> l.widthPercent(100).minWidth(0).gapAll(Ui.GAP_S)
-                    .flexWrap(dev.vfyjxf.taffy.style.FlexWrap.WRAP));
-            modeRow.addChildren(Ui.muted(Component.translatable("screen.sailboatmod.ui.route_mode")), modeTabs.element());
-            body.addChildren(modeRow, modeDescription);
+            body.addChild(Ui.paragraph(Component.literal("后台异步规划：真实方块 / NBT 优先，Tellus 补足未生成地形。"),"sm-muted"));
             if (net.neoforged.fml.ModList.get() != null
                     && net.neoforged.fml.ModList.get().isLoaded(com.monpai.sailboatmod.route.terrain.TellusWorlds.MOD_ID)) {
                 // Tellus 地球世界:服务器忽略上面的模式,一律用真实地形 + 既有方块规划(协定不变,只做说明)。
@@ -85,12 +87,11 @@ public class AutoRouteDockSelectionScreen extends ThemedScreen {
         UIElement actions = Ui.row();
         actions.layout(l -> l.widthPercent(100).minWidth(0).gapAll(Ui.GAP_S)
                 .flexWrap(dev.vfyjxf.taffy.style.FlexWrap.WRAP).flexShrink(0));
-        actions.addChildren(Ui.clippedText(autoRouteText("hint"), "sm-muted"), Ui.spacer(),
+        actions.addChildren(Ui.clippedText(Component.literal("关闭窗口后航线继续；取消任务会停止计算"), "sm-muted"), Ui.spacer(),
                 Ui.button(Component.translatable("screen.sailboatmod.route_name.cancel"), Ui.Tone.SECONDARY, this::onClose), createButton);
-        if (terminalKind == TransportTerminalKind.PORT) {
-            actions.addChild(Ui.button(Component.literal("重新验证"), Ui.Tone.SECONDARY,
-                    () -> ModNetwork.CHANNEL.sendToServer(new RequestAutoRouteDocksPacket(sourceDockPos))));
-        }
+        retryButton=Ui.button(Component.literal("重新验证"),Ui.Tone.SECONDARY,this::requestValidation);
+        cancelWorkButton=Ui.button(Component.literal("取消任务"),Ui.Tone.DANGER,this::cancelWork);
+        actions.addChildren(retryButton,cancelWorkButton);
         body.addChild(actions);
         refresh();
         return body;
@@ -153,17 +154,56 @@ public class AutoRouteDockSelectionScreen extends ThemedScreen {
             modeDescription.setValue(Component.literal(selectedMode.label()));
         }
         if (createButton != null) {
-            createButton.setActive(selectedIndex >= 0 && selectedIndex < docks.size());
+            createButton.setActive(!building && selectedIndex >= 0 && selectedIndex < docks.size());
         }
     }
 
     private void createRoute() {
         if (selectedIndex >= 0 && selectedIndex < docks.size()) {
-            ModNetwork.CHANNEL.sendToServer(new CreateAutoRoutePacket(sourceDockPos, docks.get(selectedIndex).pos(), selectedMode));
-            onClose();
+            routeRequest=java.util.UUID.randomUUID();building=true;progressStarted=ticks();
+            progressPercent=0;progressState=0;progressStage="排队 / 异步载入码头";
+            ModNetwork.CHANNEL.sendToServer(new CreateAutoRoutePacket(sourceDockPos,docks.get(selectedIndex).pos(),selectedMode,routeRequest));
+            refreshProgress();refresh();
             return;
         }
         toast.show(autoRouteText("select_target"), false, ticks());
+    }
+
+    public boolean acceptsList(java.util.UUID id){return listRequest.equals(id);}
+    public void requestValidation(){
+        if(building)return;
+        listRequest=java.util.UUID.randomUUID();listing=true;progressStarted=ticks();progressPercent=0;progressState=0;
+        progressStage="读取码头元数据 / 准备地形";
+        ModNetwork.CHANNEL.sendToServer(new RequestAutoRouteDocksPacket(sourceDockPos,listRequest));refreshProgress();
+    }
+    public void updateProgress(com.monpai.sailboatmod.network.packet.RouteWorkProgressPacket p){
+        if(!p.matches(sourceDockPos,listRequest,routeRequest))return;
+        if(building&&!p.route())return;
+        progressPercent=p.percent();progressState=p.state();
+        progressStage=p.stage()+(p.total()>0?" ("+p.checked()+"/"+p.total()+")":"");
+        if(p.route())building=p.state()==0;else listing=p.state()==0;
+        refreshProgress();refresh();
+    }
+    private void refreshProgress(){
+        if(progressBar==null)return;
+        int color=progressState>=2?0xFFE09A59:progressState==1?0xFF58B58D:0xFF7AA2C6;
+        progressBar.set(progressPercent/100f,color);
+        progressLabel.setValue(Component.literal(progressStage+" · "+progressPercent+"%"+
+                ((listing||building)?" · "+((ticks()-progressStarted)/20)+"秒":"")));
+        if(retryButton!=null)retryButton.setActive(!building&&!listing);
+        if(cancelWorkButton!=null)cancelWorkButton.setActive(building||listing);
+    }
+    private void cancelWork(){
+        boolean route=building;
+        ModNetwork.CHANNEL.sendToServer(new com.monpai.sailboatmod.network.packet.CancelPortWorkPacket(route?routeRequest:listRequest,route));
+        if(route){building=false;routeRequest=java.util.UUID.randomUUID();}else{listing=false;listRequest=java.util.UUID.randomUUID();}
+        progressState=3;progressStage="已请求取消";refreshProgress();refresh();
+    }
+    @Override protected void onUiTick(){refreshProgress();}
+    @Override public void onClose(){
+        if(listing)ModNetwork.CHANNEL.sendToServer(new com.monpai.sailboatmod.network.packet.CancelPortWorkPacket(listRequest,false));
+        // A route keeps running when the dialog closes; the top-screen boss bar remains visible.
+        super.onClose();
     }
 
     @Override

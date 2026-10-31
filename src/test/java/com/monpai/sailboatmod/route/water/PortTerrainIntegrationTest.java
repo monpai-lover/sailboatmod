@@ -21,7 +21,7 @@ class PortTerrainIntegrationTest {
         assertFalse(s.contains("forceChunk("));
         assertFalse(s.contains("getChunk("));
         assertFalse(s.contains(".save("));
-        assertTrue(s.contains("getChunkNow("));
+        assertTrue(source("route/water/PortChunkSnapshot.java").contains("getChunkNow("));
         assertTrue(s.contains("raw.get().copy()"));
     }
     @Test void bothPlannerPathsReceiveUnsavedRealSnapshots() throws Exception {
@@ -34,7 +34,7 @@ class PortTerrainIntegrationTest {
     @Test void clientUpdatesRatherThanReopeningClosedScreens() throws Exception {
         String s = source("client/DockClientHooks.java");
         assertTrue(s.contains("selection.updateDocks(docks)"));
-        assertTrue(s.contains("instanceof DockScreen"));
+        assertTrue(s.contains("selection.acceptsList(requestId)"));
         String screen = source("client/screen/AutoRouteDockSelectionScreen.java");
         assertTrue(screen.contains("docks.get(i).pos().equals(selected)"));
     }
