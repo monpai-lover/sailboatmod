@@ -8,7 +8,7 @@ import com.monpai.sailboatmod.market.TransportTerminalKind;
 import com.monpai.sailboatmod.nation.data.NationSavedData;
 import com.monpai.sailboatmod.network.ModNetwork;
 import com.monpai.sailboatmod.route.RoadAutoRouteService;
-import com.monpai.sailboatmod.route.water.WaterAutoRouteService;
+import com.monpai.sailboatmod.route.water.WaterRouteCandidateService;
 import com.monpai.sailboatmod.route.water.WaterRouteResult;
 import com.mojang.logging.LogUtils;
 import net.minecraft.core.BlockPos;
@@ -73,7 +73,9 @@ public class RequestAutoRouteDocksPacket {
                         LOGGER.info("[AutoRoute] 驿站候选被刷掉 {} @{}: 路网不可达", targetDock.getDockName(), dockPos);
                     }
                 } else {
-                    WaterRouteResult<?> result = WaterAutoRouteService.canListCandidate(serverLevel, sourceDock, targetDock);
+                    // Listing is metadata/permission-only. Strict real-water berth checks remain
+                    // in submitAutoRoute; noise predictions must not hide imported/edited ports.
+                    WaterRouteResult<?> result = WaterRouteCandidateService.canListCandidate(serverLevel, sourceDock, targetDock);
                     canCreate = result.successful();
                     if (!canCreate) {
                         LOGGER.info("[AutoRoute] 码头候选被刷掉 {} @{}: {}", targetDock.getDockName(), dockPos, result.reason());
