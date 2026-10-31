@@ -204,7 +204,9 @@ public class DockScreen<T extends DockMenu> extends TransportTerminalScreen<T> {
             button.element().layout(l -> l.widthPercent(100));
         }
         side.addChildren(panelHeading(screenText("zone_map")), miniMap,
-                importButton.element(), reverseButton.element(), autoRouteButton.element(), deleteButton.element());
+                importButton.element(), reverseButton.element(), autoRouteButton.element(), deleteButton.element(),
+                Ui.button(Component.literal("寻路任务队列"), Ui.Tone.SECONDARY,
+                        () -> net.minecraft.client.Minecraft.getInstance().setScreen(new RouteTaskQueueScreen(this))));
         ScrollerView sideViewport = Ui.scroller();
         sideViewport.layout(l -> l.height(100).width(82).minWidth(82).flexGrow(1).flexShrink(1));
         sideViewport.addScrollViewChild(side);

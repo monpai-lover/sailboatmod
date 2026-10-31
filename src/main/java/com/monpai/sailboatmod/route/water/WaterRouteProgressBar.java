@@ -24,8 +24,13 @@ public final class WaterRouteProgressBar {
     private long lastSend,removeAt;private Update sent;private boolean shown;
     private record Update(int percent,String stage,int state){}
     public WaterRouteProgressBar(MinecraftServer server,ServerPlayer player,String source,String target){
+        this(server, player, source, target, null, null);
+    }
+    public WaterRouteProgressBar(MinecraftServer server, ServerPlayer player, String source, String target,
+                                 net.minecraft.core.BlockPos sourcePos, net.minecraft.core.BlockPos targetPos) {
         this.server=server;this.player=player;name=(source==null?"":source)+" → "+(target==null?"":target);
-        session=RouteUiSessions.current(player);
+        session=sourcePos == null || targetPos == null ? RouteUiSessions.current(player)
+                : RouteUiSessions.forRoute(player, sourcePos, targetPos);
         bar=new ServerBossEvent(Component.literal("航线计算 "+name),BossEvent.BossBarColor.BLUE,BossEvent.BossBarOverlay.PROGRESS);
     }
     public void show(){if(server!=null&&player!=null)ACTIVE.add(this);}

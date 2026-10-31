@@ -45,6 +45,8 @@ public class AutoRouteDockSelectionScreen extends ThemedScreen {
     private int progressPercent,progressState;
     private String progressStage="准备中";
     private long progressStarted;
+    private java.util.UUID recoveryQuery;
+
 
 
     public AutoRouteDockSelectionScreen(BlockPos sourceDockPos, TransportTerminalKind terminalKind, List<AvailableDockEntry> docks) {
@@ -91,7 +93,8 @@ public class AutoRouteDockSelectionScreen extends ThemedScreen {
                 Ui.button(Component.translatable("screen.sailboatmod.route_name.cancel"), Ui.Tone.SECONDARY, this::onClose), createButton);
         retryButton=Ui.button(Component.literal("重新验证"),Ui.Tone.SECONDARY,this::requestValidation);
         cancelWorkButton=Ui.button(Component.literal("取消任务"),Ui.Tone.DANGER,this::cancelWork);
-        actions.addChildren(retryButton,cancelWorkButton);
+        actions.addChildren(retryButton,cancelWorkButton,
+                Ui.button(Component.literal("寻路任务队列"), Ui.Tone.SECONDARY, this::openTaskQueue));
         body.addChild(actions);
         refresh();
         return body;
@@ -202,8 +205,9 @@ public class AutoRouteDockSelectionScreen extends ThemedScreen {
     private void cancelWork(){
         boolean route=building;
         ModNetwork.CHANNEL.sendToServer(new com.monpai.sailboatmod.network.packet.CancelPortWorkPacket(route?routeRequest:listRequest,route));
-        if(route){building=false;routeRequest=java.util.UUID.randomUUID();}else{listing=false;listRequest=java.util.UUID.randomUUID();}
-        progressState=3;progressStage="已请求取消";refreshProgress();refresh();
+        // Keep the stable route ID until the server confirms cancellation.
+        if (!route) { listing=false; listRequest=java.util.UUID.randomUUID(); }
+        progressStage="已请求取消，等待服务端确认";refreshProgress();refresh();
     }
     @Override protected void onUiTick(){refreshProgress();}
     @Override public void onClose(){
@@ -215,6 +219,33 @@ public class AutoRouteDockSelectionScreen extends ThemedScreen {
     @Override
     protected void afterInit() {
         refresh();
+        recoveryQuery = java.util.UUID.randomUUID();
+        ModNetwork.CHANNEL.sendToServer(new com.monpai.sailboatmod.network.packet.RequestRouteTasksPacket(recoveryQuery));
+    }
+
+    private void openTaskQueue() {
+        if (listing) ModNetwork.CHANNEL.sendToServer(new com.monpai.sailboatmod.network.packet.CancelPortWorkPacket(listRequest,false));
+        listing = false;
+        net.minecraft.client.Minecraft.getInstance().setScreen(new RouteTaskQueueScreen(this));
+    }
+
+    public void restoreTasks(com.monpai.sailboatmod.network.packet.SyncRouteTasksPacket packet) {
+        if (!packet.query().equals(recoveryQuery)) return;
+        var level = net.minecraft.client.Minecraft.getInstance().level;
+        if (level == null) return;
+        // Prefer this window's running task when returning from the queue; otherwise restore the newest one.
+        var task = packet.tasks().stream().filter(t -> t.id().equals(routeRequest)).findFirst().orElse(null);
+        if (task == null) task = packet.tasks().stream().filter(t -> t.active() && t.source().equals(sourceDockPos)
+                && t.dimension().equals(level.dimension().location().toString())).findFirst().orElse(null);
+        if (task == null) return;
+        if (listing) ModNetwork.CHANNEL.sendToServer(new com.monpai.sailboatmod.network.packet.CancelPortWorkPacket(listRequest,false));
+        listing = false;
+        listRequest = java.util.UUID.randomUUID();
+        routeRequest = task.id();
+        building = task.active();
+        progressPercent = task.percent(); progressState = task.state(); progressStage = task.stage();
+        progressStarted = ticks() - task.elapsedMillis(System.currentTimeMillis()) / 50L;
+        refreshProgress(); refresh();
     }
 
     private Component rowText(AvailableDockEntry dock) {

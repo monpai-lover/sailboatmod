@@ -153,7 +153,7 @@ public final class WaterAutoRouteService {
         // 进度条(原版 BossBar,顶部血条):航线计算可能跑几十秒~几分钟(REALCHUNK 模式),让玩家实时看到进度。
         String srcLabel = sourceTownName.isBlank() ? source.getDockName() : sourceTownName;
         String dstLabel = targetTownName.isBlank() ? target.getDockName() : targetTownName;
-        WaterRouteProgressBar bar = new WaterRouteProgressBar(level.getServer(), player, srcLabel, dstLabel);
+        WaterRouteProgressBar bar = new WaterRouteProgressBar(level.getServer(), player, srcLabel, dstLabel, sourceSnapshot.pos(), targetSnapshot.pos());
         bar.show();
 
         // metas 旁路:后台 Supplier 计算平滑点的同时算出每点 segment/origin,经此 AtomicReference 传到主线程
@@ -291,7 +291,8 @@ public final class WaterAutoRouteService {
         String targetTown = resolveTownName(level, targetSnapshot);
         int seaY = level.getSeaLevel();
         WaterRoutePolicy policy = WaterRoutePolicy.defaults();
-        WaterRouteProgressBar bar = new WaterRouteProgressBar(level.getServer(), player, sourceSnapshot.name(), targetSnapshot.name());
+        WaterRouteProgressBar bar = new WaterRouteProgressBar(level.getServer(), player, sourceSnapshot.name(), targetSnapshot.name(),
+                sourceSnapshot.pos(), targetSnapshot.pos());
         var metas = new java.util.concurrent.atomic.AtomicReference<List<WaypointMeta>>(List.of());
         java.util.function.Supplier<WaterRouteResult<List<BlockPos>>> search = () -> {
             probe.start(true, 10_000, () -> false);
@@ -334,6 +335,8 @@ public final class WaterAutoRouteService {
         });
         WaterRouteResult<WaterRouteTask> submitted = WaterRouteTaskService.global().submit(task);
         if (!submitted.successful()) return WaterRouteResult.failure(submitted.reason());
+        var session = RouteUiSessions.forRoute(player, sourceSnapshot.pos(), targetSnapshot.pos());
+        if (session != null) session.attach(task);
         bar.show();
         return WaterRouteResult.success(null);
     }
@@ -372,7 +375,9 @@ public final class WaterAutoRouteService {
             @Nullable com.monpai.sailboatmod.route.terrain.PredictionBudget budget,
             java.util.Map<Long, NbtChunkWaterReader.ChunkColumns> portSnapshots) {
         WaterRouteCancellation.check();
-        if (Math.hypot((double) targetBerth.getX() - sourceBerth.getX(), (double) targetBerth.getZ() - sourceBerth.getZ()) > 8192) {
+        // Every Tellus route, not just >8192 blocks, uses native LOD guidance + strict detailed terrain.
+        if (useHierarchicalTerrain(predictor != null,
+                Math.hypot((double) targetBerth.getX() - sourceBerth.getX(), (double) targetBerth.getZ() - sourceBerth.getZ()))) {
             return runHierarchicalNbt(level, sourceBerth, targetBerth, seaY, boatHalfWidth, metasOut, bar, predictor, budget, portSnapshots);
         }
         if (predictor != null) {
@@ -477,35 +482,45 @@ public final class WaterAutoRouteService {
         WaterRouteWorld coarse;
         if (surface != null) {
             com.monpai.sailboatmod.route.terrain.TerrainSurfaceSampler nativeSurface = surface;
-            coarse = new CoarseWaterRouteWorld((cx, cz) -> portSnapshots.containsKey(net.minecraft.world.level.ChunkPos.asLong(cx, cz))
-                            ? java.util.Optional.of(portSnapshots.get(net.minecraft.world.level.ChunkPos.asLong(cx, cz)))
-                            : NbtChunkWaterReader.readOffThread(level, cx, cz, 1500),
+            coarse = CoarseWaterRouteWorld.realFirst((cx, cz) -> portSnapshots.containsKey(net.minecraft.world.level.ChunkPos.asLong(cx, cz))
+                            ? NbtChunkWaterReader.ReadResult.ready(portSnapshots.get(net.minecraft.world.level.ChunkPos.asLong(cx, cz)))
+                            : NbtChunkWaterReader.readForRouting(level, cx, cz, 200),
                     (x, z, spacing) -> {
                         WaterRouteCancellation.check();
-                        if (predictor != null && !predictor.gate().request(Math.floorDiv(x, 16), Math.floorDiv(z, 16)).isDone()) return java.util.Optional.empty();
+                        if (predictor != null) {
+                            var ready = predictor.gate().request(Math.floorDiv(x, 16), Math.floorDiv(z, 16));
+                            if (!ready.isDone() || ready.isCompletedExceptionally() || ready.isCancelled()) return java.util.Optional.empty();
+                        }
                         return nativeSurface.sample(x, z, spacing);
                     }, seaY);
         } else if (predictor != null) {
             // Also supports injected predictors and existing NBT worlds without a cheap native surface API.
             coarse = RealBlockWaterWorld.streaming(map, seaY, 0, source, target);
         } else {
-            coarse = new CoarseWaterRouteWorld((cx, cz) -> portSnapshots.containsKey(net.minecraft.world.level.ChunkPos.asLong(cx, cz))
-                            ? java.util.Optional.of(portSnapshots.get(net.minecraft.world.level.ChunkPos.asLong(cx, cz)))
-                            : NbtChunkWaterReader.readOffThread(level, cx, cz, 1500), null, seaY);
+            coarse = CoarseWaterRouteWorld.realFirst((cx, cz) -> portSnapshots.containsKey(net.minecraft.world.level.ChunkPos.asLong(cx, cz))
+                            ? NbtChunkWaterReader.ReadResult.ready(portSnapshots.get(net.minecraft.world.level.ChunkPos.asLong(cx, cz)))
+                            : NbtChunkWaterReader.readForRouting(level, cx, cz, 200), null, seaY);
         }
         HierarchicalWaterRoutePlanner planner = new HierarchicalWaterRoutePlanner(coarse, detailed, source, target,
                 WaterRoutePolicy.nbtRefine(), raw -> finishDetailedSegment(map, raw, seaY, boatHalfWidth));
         int previousCompleted = -1;
+        long nextProgress = 0;
+        LOGGER.info("[WaterPath] 地形分层规划: coarse={} detail=FULL_NBT/GENERATOR 严格船宽=2×2 距离={}格",
+                surface != null ? "TELLUS_NATIVE_LOD" : "REAL_FIRST_COLUMNS",
+                Math.round(Math.hypot((double) target.getX() - source.getX(), (double) target.getZ() - source.getZ())));
         HierarchicalWaterRoutePlanner.Status previousStatus = null;
         while (true) {
             WaterRouteCancellation.check();
             HierarchicalWaterRoutePlanner.Status status = planner.step(64);
             HierarchicalWaterRoutePlanner.Progress progress = planner.progress();
-            if (progress.completedSegments() != previousCompleted || status != previousStatus) {
+            if (progress.completedSegments() != previousCompleted || status != previousStatus || System.nanoTime() >= nextProgress) {
                 int percent = progress.totalSegments() == 0 ? 5 : 10 + 80 * progress.completedSegments() / progress.totalSegments();
                 String stage = status == HierarchicalWaterRoutePlanner.Status.WAITING ? "等待地形"
-                        : progress.totalSegments() == 0 ? "全局水域走向" : "分段精寻 " + progress.completedSegments() + "/" + progress.totalSegments();
+                        : progress.totalSegments() == 0 ? (surface != null ? "Tellus LOD粗寻" : "真实地形粗寻")
+                        : "分段精寻 " + progress.completedSegments() + "/" + progress.totalSegments();
+                stage += " · step=" + planner.currentStepSize() + " · 节点=" + progress.expandedNodes();
                 bar.update(percent, stage);
+                nextProgress = System.nanoTime() + 500_000_000L;
                 previousCompleted = progress.completedSegments();
                 previousStatus = status;
             }
@@ -515,26 +530,47 @@ public final class WaterAutoRouteService {
                 map.logLayerStats("远航分段");
                 return WaterRouteResult.success(path);
             }
-            if (status == HierarchicalWaterRoutePlanner.Status.FAILED) return WaterRouteResult.failure(planner.failureReason());
+            if (status == HierarchicalWaterRoutePlanner.Status.FAILED) {
+                map.logLayerStats(planner.isCoarseStage() ? "分层粗寻失败" : "分层精寻失败");
+                LOGGER.warn("[WaterPath] 分层规划停止 reason={} step={} 节点={} 已完成段={}/{}",
+                        planner.failureReason(), planner.currentStepSize(), progress.expandedNodes(),
+                        progress.completedSegments(), progress.totalSegments());
+                return WaterRouteResult.failure(planner.failureReason());
+            }
             if (status == HierarchicalWaterRoutePlanner.Status.CANCELLED) return WaterRouteResult.failure(WaterRouteFailureReason.CANCELLED);
             if (status == HierarchicalWaterRoutePlanner.Status.WAITING) java.util.concurrent.locks.LockSupport.parkNanos(10_000_000L);
         }
     }
 
+    static boolean useHierarchicalTerrain(boolean tellusPrediction, double distance) {
+        return tellusPrediction || distance > 8192.0D;
+    }
+
     private static List<BlockPos> finishDetailedSegment(RealBlockWaterMap map, List<BlockPos> raw, int seaY, int halfWidth) {
         WaterRouteCancellation.check();
-        int missing = map.predictionMisses();
+        int missing = map.terrainMisses();
         List<BlockPos> smooth = WaterPathSmoother.smooth(map, raw, seaY, 2.0D, halfWidth);
-        List<BlockPos> verified = smooth == null ? null : WaterRouteNbtVerifier.verify(map, smooth, halfWidth);
-        if (map.predictionMisses() != missing) throw new HierarchicalWaterRoutePlanner.TerrainNotReadyException();
-        if (verified == null || verified.size() < 2 || !verified.getFirst().equals(raw.getFirst()) || !verified.getLast().equals(raw.getLast())) return null;
-        for (int i = 1; i < verified.size(); i++) {
-            WaterRouteCancellation.check();
-            boolean clear = map.segmentHullClear(verified.get(i - 1), verified.get(i), halfWidth);
-            if (map.predictionMisses() != missing) throw new HierarchicalWaterRoutePlanner.TerrainNotReadyException();
-            if (!clear) return null; // The legacy repairer may retain an unresolved edge; far routes must fail closed.
+        // Smoothing is optional: unknown off-path terrain must not delay an already verified raw route.
+        if (map.terrainMisses() == missing) {
+            try { if (strictVerified(map, smooth, raw, halfWidth)) return smooth; }
+            catch (HierarchicalWaterRoutePlanner.TerrainNotReadyException optionalSmoothing) { /* try raw below */ }
         }
-        return verified;
+        if (strictVerified(map, raw, raw, halfWidth)) return raw;
+        return null;
+    }
+
+    private static boolean strictVerified(RealBlockWaterMap map, List<BlockPos> candidate,
+                                          List<BlockPos> endpoints, int halfWidth) {
+        if (candidate == null || candidate.size() < 2 || !candidate.getFirst().equals(endpoints.getFirst())
+                || !candidate.getLast().equals(endpoints.getLast())) return false;
+        int missing = map.terrainMisses();
+        for (int i = 1; i < candidate.size(); i++) {
+            WaterRouteCancellation.check();
+            boolean clear = map.segmentHullClear(candidate.get(i - 1), candidate.get(i), halfWidth);
+            if (map.terrainMisses() != missing) throw new HierarchicalWaterRoutePlanner.TerrainNotReadyException();
+            if (!clear) return false;
+        }
+        return true;
     }
 
     /**
@@ -546,16 +582,18 @@ public final class WaterAutoRouteService {
                                                                     com.monpai.sailboatmod.route.terrain.TerrainPredictor predictor,
                                                                     com.monpai.sailboatmod.route.terrain.PredictionBudget budget) {
         WaterRoutePolicy policy = WaterRoutePolicy.defaults();
-        RealBlockWaterMap probe = new RealBlockWaterMap(level, seaY).enableOnDemand().withPredictor(predictor, budget);
+        RealBlockWaterMap probe = new RealBlockWaterMap(level, seaY).enableOnDemand().retryUnknownPrediction().withPredictor(predictor, budget);
         WaterRouteResult<DockBerthResolver.DockBerth> berth = DockBerthResolver.resolve(
                 RealBlockWaterWorld.coarse(probe, seaY, null, null), destination, policy,
                 WaterRouteFailureReason.NO_TARGET_BERTH);
         if (!berth.successful()) {
-            return WaterRouteResult.failure(berth.reason());
+            return WaterRouteResult.failure(probe.terrainMisses() > 0
+                    ? WaterRouteFailureReason.TERRAIN_NOT_READY : berth.reason());
         }
         BlockPos start = probe.nearestHullWater(boat.getX(), boat.getZ(), 1, 16);
         if (start == null) {
-            return WaterRouteResult.failure(WaterRouteFailureReason.NO_SOURCE_BERTH);
+            return WaterRouteResult.failure(probe.terrainMisses() > 0
+                    ? WaterRouteFailureReason.TERRAIN_NOT_READY : WaterRouteFailureReason.NO_SOURCE_BERTH);
         }
         BlockPos goal = blockPos(berth.value().pos());
         int boatHalfWidth = Math.max(1, policy.boatHalfWidth());

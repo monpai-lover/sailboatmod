@@ -52,6 +52,12 @@ public final class DockClientHooks {
         if(Minecraft.getInstance().screen instanceof AutoRouteDockSelectionScreen screen)screen.updateProgress(packet);
     }
 
+    public static void routeTasks(com.monpai.sailboatmod.network.packet.SyncRouteTasksPacket packet) {
+        var screen = Minecraft.getInstance().screen;
+        if (screen instanceof com.monpai.sailboatmod.client.screen.RouteTaskQueueScreen queue) queue.receive(packet);
+        else if (screen instanceof AutoRouteDockSelectionScreen selection) selection.restoreTasks(packet);
+    }
+
     private DockClientHooks() {
     }
 }

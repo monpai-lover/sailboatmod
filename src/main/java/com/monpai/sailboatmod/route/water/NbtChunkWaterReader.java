@@ -46,29 +46,49 @@ public final class NbtChunkWaterReader {
      * <b>后台线程</b>:异步读盘一个区块的 region NBT 并解出判水列。收口到 {@link OfflineChunkNbtReader}
      * 当前使用异步 IOWorker + 预算内主线程内存复制；不触发全局 save/flush。缺失/超时返回 empty。
      */
+    public enum ReadStatus { READY, ABSENT, UNAVAILABLE }
+
+    /** Only ABSENT permits prediction: IO failure or non-FULL terrain is not an ungenerated ocean. */
+    public record ReadResult(ReadStatus status, ChunkColumns columns) {
+        public static ReadResult ready(ChunkColumns columns) { return new ReadResult(ReadStatus.READY, columns); }
+        public static ReadResult absent() { return new ReadResult(ReadStatus.ABSENT, null); }
+        public static ReadResult unavailable() { return new ReadResult(ReadStatus.UNAVAILABLE, null); }
+    }
+
     public static Optional<ChunkColumns> readOffThread(ServerLevel level, int cx, int cz, long timeoutMs) {
-        if (level == null || !OVERWORLD.equals(level.dimension().location().toString())) {
-            return Optional.empty();
-        }
+        ReadResult result = readForRouting(level, cx, cz, timeoutMs);
+        return result.status() == ReadStatus.READY ? Optional.of(result.columns()) : Optional.empty();
+    }
+
+    public static ReadResult readForRouting(ServerLevel level, int cx, int cz, long timeoutMs) {
+        // A null level is used by injected terrain-only tests; it has no saved world to override.
+        if (level == null) return ReadResult.absent();
+        if (!OVERWORLD.equals(level.dimension().location().toString())) return ReadResult.unavailable();
         if (level.getServer().isSameThread()) {
-            // Legacy main-thread probes may only consume already-complete data, never wait for IO.
-            var loaded=level.getChunkSource().getChunkNow(cx,cz);
-            return loaded==null?Optional.empty():Optional.of(
+            var loaded = level.getChunkSource().getChunkNow(cx, cz);
+            return loaded == null ? ReadResult.unavailable() : ReadResult.ready(
                     com.monpai.sailboatmod.route.water.lookahead.LoadedChunkWaterColumns.capture(loaded));
         }
         WaterRouteCancellation.check();
         try {
-            Optional<CompoundTag> raw=level.getChunkSource().chunkMap.read(new ChunkPos(cx,cz))
-                    .get(Math.max(1,timeoutMs),java.util.concurrent.TimeUnit.MILLISECONDS);
-            if(raw.isEmpty())return Optional.empty();
-            var ownership=PortAsyncRuntime.onMain(level.getServer(),()->raw.get().copy());
+            Optional<CompoundTag> raw = level.getChunkSource().chunkMap.read(new ChunkPos(cx, cz))
+                    .get(Math.max(1, timeoutMs), java.util.concurrent.TimeUnit.MILLISECONDS);
+            if (raw.isEmpty()) return ReadResult.absent();
+            var ownership = PortAsyncRuntime.onMain(level.getServer(), () -> raw.get().copy());
             CompoundTag owned;
-            try {owned=ownership.get(Math.max(1,timeoutMs),java.util.concurrent.TimeUnit.MILLISECONDS);}
-            catch(Exception e){ownership.cancel(false);throw e;}
+            try { owned = ownership.get(Math.max(1, timeoutMs), java.util.concurrent.TimeUnit.MILLISECONDS); }
+            catch (Exception e) { ownership.cancel(false); throw e; }
             WaterRouteCancellation.check();
-            return decode(owned,level.getMinBuildHeight(),level.getMaxBuildHeight());
-        } catch(InterruptedException interrupted){Thread.currentThread().interrupt();WaterRouteCancellation.check();return Optional.empty();}
-        catch(java.util.concurrent.ExecutionException|java.util.concurrent.TimeoutException unavailable){return Optional.empty();}
+            if (!OfflineChunkPalette.isFullStatus(owned)) return ReadResult.unavailable();
+            return decode(owned, level.getMinBuildHeight(), level.getMaxBuildHeight())
+                    .map(ReadResult::ready).orElseGet(ReadResult::unavailable);
+        } catch (InterruptedException interrupted) {
+            Thread.currentThread().interrupt();
+            WaterRouteCancellation.check();
+            return ReadResult.unavailable();
+        } catch (java.util.concurrent.ExecutionException | java.util.concurrent.TimeoutException unavailable) {
+            return ReadResult.unavailable();
+        }
     }
 
     /**

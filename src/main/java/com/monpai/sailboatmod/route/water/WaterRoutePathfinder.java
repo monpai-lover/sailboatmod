@@ -35,6 +35,12 @@ public final class WaterRoutePathfinder {
      *  阶段(coarse step24 / refine step8)跨同样格数累积的总软代价一致,消除 refine 因密度高而虚高绕远。取 8(refine 步长)。 */
     private static final int NORMALIZE_STEP = 8;
 
+    // Lowest-f alone can starve the other front for tens of thousands of expansions.
+    static final int MAX_CONSECUTIVE_EXPANSIONS = 8;
+    private boolean lastDirection;
+    private int directionRun;
+    private int forwardExpansions, backwardExpansions;
+
     private int lastLoggedAt = 0; // 上次打进度时的 expandedNodes
 
     /** 合法 step 边最长是对角 step·√2;×1.2 余量容首尾 snap 微偏。超此即拼接出现空隙=假相遇。 */
@@ -91,13 +97,14 @@ public final class WaterRoutePathfinder {
         // 关键:前向/后向必须落在同一套全局 step 网格上,否则两边格点错位(start/goal 在 step 上不整除时)
         // 永远命中不到同一格 → 双向 A* 永不相遇(实测前后向各扩展上千节点、前沿在目标附近横跳却碰不上)。
         // snap 把任意坐标对齐到 step 的整数倍,从 start 还是 goal 出发,落点都在同一网格,必能相遇。
-        BlockPos snappedStart = snapToGrid(start);
-        BlockPos snappedGoal = snapToGrid(goal);
-        WaterColumn startColumn = world.sample(snappedStart.getX(), snappedStart.getZ(), policy);
-        WaterColumn goalColumn = world.sample(snappedGoal.getX(), snappedGoal.getZ(), policy);
+        pendingTerrain = false;
+        BlockPos snappedStart = connectedGridPoint(start);
+        BlockPos snappedGoal = connectedGridPoint(goal);
+        WaterColumn startColumn = snappedStart == null ? null : world.sample(snappedStart.getX(), snappedStart.getZ(), policy);
+        WaterColumn goalColumn = snappedGoal == null ? null : world.sample(snappedGoal.getX(), snappedGoal.getZ(), policy);
         boolean startOk = startColumn != null && startColumn.passable();
         boolean goalOk = goalColumn != null && goalColumn.passable();
-        if (waitForUnknown && (startColumn == null || goalColumn == null)) {
+        if (waitForUnknown && pendingTerrain && (startColumn == null || goalColumn == null)) {
             status = Status.WAITING;
             return;
         }
@@ -108,11 +115,11 @@ public final class WaterRoutePathfinder {
             // 精确原因:3×3 在哪格过不去(中心非水/区块读不到/占地哪格陆/约束外/泊位信任)。定位 seed 0 节点失败。
             if (!startOk) {
                 LOGGER.warn("[WaterPath] 起点不可航 snap={} 原因={}", snappedStart,
-                        world.sampleDiagnostic(snappedStart.getX(), snappedStart.getZ(), policy));
+                        snappedStart == null ? "没有可达的网格接点" : world.sampleDiagnostic(snappedStart.getX(), snappedStart.getZ(), policy));
             }
             if (!goalOk) {
                 LOGGER.warn("[WaterPath] 终点不可航 snap={} 原因={}", snappedGoal,
-                        world.sampleDiagnostic(snappedGoal.getX(), snappedGoal.getZ(), policy));
+                        snappedGoal == null ? "没有可达的网格接点" : world.sampleDiagnostic(snappedGoal.getX(), snappedGoal.getZ(), policy));
             }
             fail(WaterRouteFailureReason.NO_WATER_PATH);
             return;
@@ -135,6 +142,37 @@ public final class WaterRoutePathfinder {
         return new BlockPos(sx, pos.getY(), sz);
     }
 
+    private BlockPos connectedGridPoint(BlockPos endpoint) {
+        WaterColumn actual = world.sample(endpoint.getX(), endpoint.getZ(), policy);
+        if (actual == null) { pendingTerrain |= waitForUnknown; return null; }
+        if (!actual.passable()) return null;
+        BlockPos snapped = snapToGrid(endpoint);
+        List<BlockPos> candidates = new ArrayList<>(9);
+        for (int dx = -1; dx <= 1; dx++) for (int dz = -1; dz <= 1; dz++) {
+            candidates.add(snapped.offset(dx * step, 0, dz * step));
+        }
+        candidates.sort(java.util.Comparator.comparingDouble(endpoint::distSqr));
+        for (BlockPos p : candidates) {
+            WaterRouteCancellation.check();
+            WaterColumn column = world.sample(p.getX(), p.getZ(), policy);
+            if (column == null) { pendingTerrain |= waitForUnknown; continue; }
+            if (column.passable() && segmentPassable(endpoint, p)) return column.surfacePos();
+        }
+        return null;
+    }
+
+    private static void discardStale(Search search) {
+        while (!search.open.isEmpty()) {
+            Node first = search.open.peek();
+            long k = key(first.pos);
+            if (!search.closed.contains(k) && search.best.get(k) == first) break;
+            search.open.poll();
+        }
+    }
+
+    public int forwardExpansions() { return forwardExpansions; }
+    public int backwardExpansions() { return backwardExpansions; }
+
     /** chunkBudget 参数保留以兼容调用方,但噪声采样零区块加载,已忽略。 */
     public Status step(int maxNodeExpansions, int chunkBudget) {
         if (status == Status.WAITING) {
@@ -156,22 +194,42 @@ public final class WaterRoutePathfinder {
                 fail(WaterRouteFailureReason.NO_WATER_PATH);
                 return status;
             }
-            // 交替扩展 f 较小的一侧(平衡双向前沿)
+            discardStale(forward);
+            discardStale(backward);
+            if (forward.open.isEmpty() && backward.open.isEmpty()) {
+                fail(WaterRouteFailureReason.NO_WATER_PATH);
+                return status;
+            }
+            // Prefer lower f, but guarantee service to both nonempty frontiers.
             double fF = forward.open.isEmpty() ? Double.MAX_VALUE : forward.open.peek().f();
             double fB = backward.open.isEmpty() ? Double.MAX_VALUE : backward.open.peek().f();
+            boolean previousDirection = lastDirection;
+            int previousRun = directionRun;
             boolean expandForward = fF <= fB;
+            if (!forward.open.isEmpty() && !backward.open.isEmpty()
+                    && directionRun >= MAX_CONSECUTIVE_EXPANSIONS && expandForward == lastDirection) {
+                expandForward = !expandForward;
+            }
+            if (expandForward == lastDirection) directionRun++;
+            else { lastDirection = expandForward; directionRun = 1; }
             if (expandStep(expandForward)) {
                 return status; // 相遇 → complete 已设状态
             }
-            if (status == Status.WAITING) return status;
+            if (status == Status.WAITING) {
+                // A suspended node is not an expansion and must not consume the fairness quantum.
+                lastDirection = previousDirection;
+                directionRun = previousRun;
+                return status;
+            }
             if (expandedNodes - lastLoggedAt >= LOG_EVERY_NODES) {
                 lastLoggedAt = expandedNodes;
                 BlockPos fFront = forward.open.isEmpty() ? null : forward.open.peek().pos;
                 BlockPos bFront = backward.open.isEmpty() ? null : backward.open.peek().pos;
                 long fToGoal = fFront == null ? -1 : Math.round(Math.sqrt(fFront.distSqr(goal)));
                 long bToStart = bFront == null ? -1 : Math.round(Math.sqrt(bFront.distSqr(start)));
-                LOGGER.info("[WaterPath] 扩展{} 前向开集={} 后向开集={} 前向前沿离目标={}格 后向前沿离起点={}格",
-                        expandedNodes, forward.open.size(), backward.open.size(), fToGoal, bToStart);
+                LOGGER.info("[WaterPath] 扩展{} (前向={} 后向={}) 前向开集={} 后向开集={} 前向前沿离目标={}格 后向前沿离起点={}格",
+                        expandedNodes, forwardExpansions, backwardExpansions,
+                        forward.open.size(), backward.open.size(), fToGoal, bToStart);
             }
         }
         return status;
@@ -188,10 +246,11 @@ public final class WaterRoutePathfinder {
         }
         Node current = self.open.poll();
         long curKey = key(current.pos);
-        if (!self.closed.add(curKey)) {
+        if (self.best.get(curKey) != current || !self.closed.add(curKey)) {
             return false;
         }
         expandedNodes++;
+        if (isForward) forwardExpansions++; else backwardExpansions++;
 
         // 相遇检测:<b>必须对侧已 closed(确定最优到达)该格</b>才拼接,不能只看 best 里生成过。
         // 根因([[water_route_real_root_autopilot]] 的真正下游 bug):best 里有「仅 open 待扩展」的陈旧节点,
@@ -260,6 +319,7 @@ public final class WaterRoutePathfinder {
     private void pauseAt(Search self, Node current, long currentKey) {
         self.closed.remove(currentKey);
         self.open.add(current);
+        if (self == forward) forwardExpansions--; else backwardExpansions--;
         expandedNodes--; // Waiting for an unknown edge is not a completed expansion or a repeated budget charge.
         pendingTerrain = true;
         status = Status.WAITING;

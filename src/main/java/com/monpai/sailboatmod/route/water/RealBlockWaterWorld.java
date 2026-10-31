@@ -57,7 +57,7 @@ public final class RealBlockWaterWorld implements WaterRouteWorld, DockBerthReso
 
     /** Hierarchical stages can wait for missing prediction without permanently classifying it as land. */
     public static RealBlockWaterWorld streaming(RealBlockWaterMap map, int seaY, int boatHalfWidth, BlockPos berthA, BlockPos berthB) {
-        RealBlockWaterWorld world = singleSegment(map, seaY, boatHalfWidth, berthA, berthB);
+        RealBlockWaterWorld world = new RealBlockWaterWorld(map, null, 0, seaY, boatHalfWidth);
         world.preserveUnknown = true;
         return world;
     }
@@ -96,7 +96,8 @@ public final class RealBlockWaterWorld implements WaterRouteWorld, DockBerthReso
         if (!withinConstraint(x, z)) {
             return WaterColumn.blocked();
         }
-        WaterColumn c = boatHalfWidth > 0 ? map.sampleHull(x, z, boatHalfWidth) : map.sample(x, z);
+        WaterColumn c = preserveUnknown ? map.sampleHullStrict(x, z, boatHalfWidth)
+                : boatHalfWidth > 0 ? map.sampleHull(x, z, boatHalfWidth) : map.sample(x, z);
         if (c == null) {
             return preserveUnknown ? null : WaterColumn.blocked();
         }

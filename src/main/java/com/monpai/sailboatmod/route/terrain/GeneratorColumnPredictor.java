@@ -65,6 +65,7 @@ public final class GeneratorColumnPredictor implements TerrainPredictor {
             int baseX = cx << 4;
             int baseZ = cz << 4;
             for (int localZ = 0; localZ < 16; localZ++) {
+                com.monpai.sailboatmod.route.water.WaterRouteCancellation.check();
                 for (int localX = 0; localX < 16; localX++) {
                     columns[localZ * 16 + localX] = source.column(baseX + localX, baseZ + localZ);
                 }
@@ -72,6 +73,8 @@ public final class GeneratorColumnPredictor implements TerrainPredictor {
             NbtChunkWaterReader.ChunkColumns result = WaterSurfaceRules.scanChunk(
                     (localX, y, localZ) -> stateAt(columns[localZ * 16 + localX], y), minY, maxY);
             return Prediction.ready(result);
+        } catch (java.util.concurrent.CancellationException cancelled) {
+            throw cancelled;
         } catch (Throwable t) {
             return Prediction.failed();
         }

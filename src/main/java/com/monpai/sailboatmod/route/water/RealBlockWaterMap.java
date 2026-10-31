@@ -62,6 +62,10 @@ public final class RealBlockWaterMap {
     private volatile com.monpai.sailboatmod.route.terrain.TerrainPredictor predictor;
     private volatile com.monpai.sailboatmod.route.terrain.PredictionBudget predictionBudget;
     private boolean retryUnknownPrediction;
+    private final ConcurrentHashMap<Long, Boolean> absentSavedChunks = new ConcurrentHashMap<>();
+    private final ConcurrentHashMap<Long, Long> retryAfter = new ConcurrentHashMap<>();
+    private final ConcurrentHashMap<Long, ChunkWater> pinnedSnapshots = new ConcurrentHashMap<>();
+    private final AtomicInteger terrainMisses = new AtomicInteger();
 
     // ---- 按需加载 + 滑动窗口卸载(单段 NBT A* 用)----
     // onDemand=true:sample 未命中时后台 NBT 直读该区块填缓存(不预加载整走廊);读不到的区块本次不 force
@@ -92,6 +96,7 @@ public final class RealBlockWaterMap {
     }
 
     public int predictionMisses() { return predictTimeout.get() + predictFail.get(); }
+    public int terrainMisses() { return terrainMisses.get(); }
 
     /**
      * 挂地形预测后备:按需模式下 NBT 未命中 → predictor(等待受 budget 限制);READY 填预测列,NOT_READY/FAILED 填全陆。
@@ -109,7 +114,11 @@ public final class RealBlockWaterMap {
     /** 直接写入一个区块的判水列(航行前瞻用:已加载区块的内存方块快照,含未存盘改动),覆盖已有缓存。 */
     public void seedChunk(int cx, int cz, NbtChunkWaterReader.ChunkColumns columns) {
         long k = key(cx, cz);
-        cache.put(k, toChunkWater(columns));
+        ChunkWater snapshot = toChunkWater(columns);
+        pinnedSnapshots.put(k, snapshot);
+        cache.put(k, snapshot);
+        retryAfter.remove(k);
+        absentSavedChunks.remove(k);
         lastAccess.put(k, accessClock.incrementAndGet());
     }
 
@@ -407,7 +416,8 @@ public final class RealBlockWaterMap {
     private ChunkWater chunkAt(int cx, int cz) {
         WaterRouteCancellation.check();
         long k = key(cx, cz);
-        ChunkWater cw = cache.get(k);
+        ChunkWater cw = pinnedSnapshots.get(k);
+        if (cw == null) cw = cache.get(k);
         if (cw != null) {
             lastAccess.put(k, accessClock.incrementAndGet());
             return cw;
@@ -415,6 +425,7 @@ public final class RealBlockWaterMap {
         if (!onDemandLoad) {
             return null;
         }
+        if (retryUnknownPrediction) return loadStreaming(cx, cz, k);
         // 按需后台读:读到填真实水图;读不到(未存盘)→ 有预测器问预测器,否则填全陆,既绕开又不反复重读。
         if (!loadNbtOffThread(cx, cz) && !loadPredicted(cx, cz)) {
             if (retryUnknownPrediction && predictor != null) return null;
@@ -424,6 +435,75 @@ public final class RealBlockWaterMap {
         lastAccess.put(k, accessClock.incrementAndGet());
         maybeEvict();
         return cache.get(k);
+    }
+
+    /** Streaming routes retain missing terrain and poll the gate without blocking on downloads. */
+    private ChunkWater loadStreaming(int cx, int cz, long k) {
+        terrainMisses.incrementAndGet();
+        if (System.nanoTime() < retryAfter.getOrDefault(k, 0L)) return null;
+        if (!absentSavedChunks.containsKey(k)) {
+            var stored = NbtChunkWaterReader.readForRouting(level, cx, cz, 200L);
+            if (stored.status() == NbtChunkWaterReader.ReadStatus.READY) {
+                ChunkWater water = toChunkWater(stored.columns());
+                cache.put(k, water);
+                hitNbt.incrementAndGet();
+                lastAccess.put(k, accessClock.incrementAndGet());
+                maybeEvict();
+                terrainMisses.decrementAndGet();
+                return water;
+            }
+            if (stored.status() == NbtChunkWaterReader.ReadStatus.UNAVAILABLE) return pending(k);
+            absentSavedChunks.put(k, true);
+        }
+        var p = predictor;
+        if (p == null) return pending(k);
+        var gate = p.gate().request(cx, cz);
+        if (!gate.isDone() || gate.isCompletedExceptionally() || gate.isCancelled()) {
+            predictTimeout.incrementAndGet();
+            return pending(k);
+        }
+        // Ready data stays usable even after an earlier stage consumed its wait allowance.
+        // Per-stage waiting/search deadlines are enforced by HierarchicalWaterRoutePlanner.
+        var prediction = p.predictChunk(cx, cz, 0L);
+        if (prediction.status() != com.monpai.sailboatmod.route.terrain.Prediction.Status.READY) {
+            if (prediction.status() == com.monpai.sailboatmod.route.terrain.Prediction.Status.NOT_READY)
+                predictTimeout.incrementAndGet();
+            else predictFail.incrementAndGet();
+            return pending(k);
+        }
+        ChunkWater water = toChunkWater(prediction.columns());
+        cache.put(k, water);
+        lastAccess.put(k, accessClock.incrementAndGet());
+        hitPredicted.incrementAndGet();
+        retryAfter.remove(k);
+        maybeEvict();
+        terrainMisses.decrementAndGet();
+        return water;
+    }
+
+    private ChunkWater pending(long k) {
+        retryAfter.put(k, System.nanoTime() + 50_000_000L);
+        hitUnknown.incrementAndGet();
+        // Request-local bookkeeping is bounded independently of successful cached chunks.
+        if (retryAfter.size() > MAX_RESIDENT_CHUNKS) retryAfter.clear();
+        if (absentSavedChunks.size() > MAX_RESIDENT_CHUNKS) absentSavedChunks.clear();
+        return null;
+    }
+
+    /** Strict fine-search footprint; uncertainty in a neighbouring hull cell remains uncertainty. */
+    public WaterColumn sampleHullStrict(int x, int z, int halfWidth) {
+        boolean unknown = false;
+        Integer height = null;
+        int size = halfWidth > 0 ? 2 : 1;
+        for (int dz = 0; dz < size; dz++) for (int dx = 0; dx < size; dx++) {
+            ChunkWater water = chunkAt((x + dx) >> 4, (z + dz) >> 4);
+            if (water == null) { unknown = true; continue; }
+            int index = ((z + dz) & 15) * 16 + ((x + dx) & 15);
+            if (!water.water[index]) return WaterColumn.blocked();
+            if (height != null && height != water.surfaceY[index]) return WaterColumn.blocked();
+            height = water.surfaceY[index];
+        }
+        return unknown ? null : WaterColumn.passable(new BlockPos(x, seaLevel, z), 0.0D);
     }
 
     /** 预测后备:READY → 填预测列返回 true;NOT_READY/FAILED → 计数,返回 false(调用方填全陆)。无预测器 → false。 */
@@ -458,6 +538,8 @@ public final class RealBlockWaterMap {
         for (int i = 0; i < toEvict && i < entries.size(); i++) {
             long ek = entries.get(i).getKey();
             cache.remove(ek);
+            absentSavedChunks.remove(ek);
+            retryAfter.remove(ek);
             lastAccess.remove(ek);
         }
     }
