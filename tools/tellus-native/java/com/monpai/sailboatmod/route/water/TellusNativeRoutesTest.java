@@ -111,13 +111,25 @@ class TellusNativeRoutesTest {
             Files.writeString(OUT.resolve(name+"-coarse.csv"),guidance);
             assertEquals(HierarchicalWaterRoutePlanner.Status.SUCCESS,status,report);
             assertEquals(start,planner.path().getFirst());assertEquals(goal,planner.path().getLast());
+            StringBuilder beforeCsv = new StringBuilder("x,y,z\n");
+            for (BlockPos p : planner.path()) beforeCsv.append(p.getX()).append(',').append(p.getY()).append(',').append(p.getZ()).append('\n');
+            Files.writeString(OUT.resolve(name+"-before-quality.csv"), beforeCsv);
+            var quality = WaterAutoRouteService.finishWholeRoute(map, planner.path(), 1, terrain::awaitProgress, (p,stage)->{});
+            List<BlockPos> finalPath = quality.path();
+            Files.writeString(OUT.resolve(name+"-quality.txt"), "before="+quality.before()+"\nafter="+quality.after()
+                    +"\nshortcuts="+quality.shortcuts()+" loops="+quality.loopsRemoved()+" moved="+quality.moved()
+                    +" rounded="+quality.rounded()+" samples="+quality.samples()+" unknown="+quality.unknown()
+                    +" limited="+quality.budgetLimited()+"\n");
+            assertEquals(start, finalPath.getFirst()); assertEquals(goal, finalPath.getLast());
+            assertTrue(quality.after().length() <= quality.before().length()*1.08+4);
+            assertTrue(quality.after().hairpins() <= quality.before().hairpins());
             // Independently sample every quarter block of the final route against ACTUAL Tellus columns.
             // Do not rely solely on vertices or on the same supercover implementation under test.
             double length=0;long checked=0;StringBuilder path=new StringBuilder("x,y,z\n");
-            for(BlockPos p:planner.path())path.append(p.getX()).append(',').append(p.getY()).append(',').append(p.getZ()).append('\n');
+            for(BlockPos p:finalPath)path.append(p.getX()).append(',').append(p.getY()).append(',').append(p.getZ()).append('\n');
             Files.writeString(OUT.resolve(name+"-route.csv"),path);
-            for(int i=1;i<planner.path().size();i++){
-                var a=planner.path().get(i-1);var b=planner.path().get(i);double d=Math.sqrt(a.distSqr(b));length+=d;int n=Math.max(1,(int)Math.ceil(d*4));
+            for(int i=1;i<finalPath.size();i++){
+                var a=finalPath.get(i-1);var b=finalPath.get(i);double d=Math.sqrt(a.distSqr(b));length+=d;int n=Math.max(1,(int)Math.ceil(d*4));
                 for(int j=0;j<=n;j++){
                     int x=(int)Math.floor(a.getX()+.5+(b.getX()-a.getX())*(double)j/n),z=(int)Math.floor(a.getZ()+.5+(b.getZ()-a.getZ())*(double)j/n);
                     for(int dz=0;dz<2;dz++)for(int dx=0;dx<2;dx++) {

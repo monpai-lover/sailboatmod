@@ -29,9 +29,14 @@ class LongWaterGeometryTest {
         for(int i=0;i<20_000&&(status==HierarchicalWaterRoutePlanner.Status.RUNNING||status==HierarchicalWaterRoutePlanner.Status.WAITING);i++) status=planner.step(64);
         assertEquals(HierarchicalWaterRoutePlanner.Status.SUCCESS,status,name+": "+planner.failureReason()+" "+planner.progress());
         assertEquals(start,planner.path().getFirst());assertEquals(goal,planner.path().getLast());
+        var quality=WaterRoutePostProcessor.optimize((x,z)->world.sample(x,z,WaterRoutePolicy.defaults()),
+                planner.path(),null,null,WaterRoutePostProcessor.Options.defaults());
+        var finalPath=quality.path();
+        assertEquals(start, finalPath.getFirst());assertEquals(goal, finalPath.getLast());
+        assertTrue(quality.after().length()<=quality.before().length()*1.08+4);
         double length=0;
-        for(int i=1;i<planner.path().size();i++) {
-            var a=planner.path().get(i-1);var b=planner.path().get(i);
+        for(int i=1;i<finalPath.size();i++) {
+            var a=finalPath.get(i-1);var b=finalPath.get(i);
             double distance=Math.sqrt(a.distSqr(b));length+=distance;
             int samples=Math.max(1,(int)Math.ceil(distance*4));
             for(int j=0;j<=samples;j++) {
@@ -44,9 +49,9 @@ class LongWaterGeometryTest {
         Path out=Path.of("build/route-regression");Files.createDirectories(out);
         Files.writeString(out.resolve("geometry-matrix.txt"),name+" SUCCESS lengthBlocks="+length+" "+planner.progress()+" ms="+(System.nanoTime()-begun)/1_000_000.0+"\n",StandardOpenOption.CREATE,StandardOpenOption.APPEND);
         StringBuilder csv=new StringBuilder("x,y,z\n");
-        for(BlockPos p:planner.path())csv.append(p.getX()).append(',').append(p.getY()).append(',').append(p.getZ()).append('\n');
+        for(BlockPos p:finalPath)csv.append(p.getX()).append(',').append(p.getY()).append(',').append(p.getZ()).append('\n');
         Files.writeString(out.resolve(name+"-route.csv"),csv);
-        return planner.path();
+        return finalPath;
     }
     @Test void sevenKilometresThroughThirtyFourAlternatingIslands() throws Exception {
         run("7000m-multiple-islands",(x,z)-> {

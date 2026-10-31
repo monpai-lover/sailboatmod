@@ -523,7 +523,14 @@ public final class WaterAutoRouteService {
                     previousStatus = status;
                 }
                 if (status == HierarchicalWaterRoutePlanner.Status.SUCCESS) {
-                    List<BlockPos> path = planner.path();
+                    List<BlockPos> path;
+                    try {
+                        path = finishWholeRoute(map, planner.path(), boatHalfWidth,
+                                terrain == null ? null : terrain::awaitProgress, bar::update).path();
+                    } catch (IllegalArgumentException unverified) {
+                        LOGGER.warn("[WaterPath] 航线后处理输入不能验证: {}", unverified.getMessage());
+                        return WaterRouteResult.failure(WaterRouteFailureReason.TERRAIN_NOT_READY);
+                    }
                     metasOut.set(buildMetas(path, null, path, -1, path.size()));
                     map.logLayerStats("远航分段");
                     return WaterRouteResult.success(path);
@@ -549,6 +556,23 @@ public final class WaterAutoRouteService {
                 }
             }
         } // cancel outstanding request-owned futures on success, failure or cancellation
+    }
+
+    /** Whole-route quality stage, after stitching (including Tellus rescue), before metadata/save.
+     * The sampler is the same strict real-first map as fine search; never call on the tick thread.
+     */
+    static WaterRoutePostProcessor.Result finishWholeRoute(RealBlockWaterMap map, List<BlockPos> path,
+            int halfWidth, WaterRoutePostProcessor.AwaitTerrain await,
+            WaterRoutePostProcessor.Progress progress) {
+        WaterRouteCancellation.check();
+        var result = WaterRoutePostProcessor.optimize((x, z) -> map.sampleHullStrict(x, z, halfWidth),
+                path, await, progress, WaterRoutePostProcessor.Options.defaults());
+        LOGGER.info("[WaterPath] 全局离岸后处理 points={}->{} length={}->{} turnDegrees={}->{} hairpins={}->{} loops={} moved={} rounded={} samples={} unknown={} limited={}",
+                result.before().points(), result.after().points(), Math.round(result.before().length()),
+                Math.round(result.after().length()), Math.round(result.before().turnDegrees()),
+                Math.round(result.after().turnDegrees()), result.before().hairpins(), result.after().hairpins(),
+                result.loopsRemoved(), result.moved(), result.rounded(), result.samples(), result.unknown(), result.budgetLimited());
+        return result;
     }
 
     static boolean useHierarchicalTerrain(boolean tellusPrediction, double distance) {
