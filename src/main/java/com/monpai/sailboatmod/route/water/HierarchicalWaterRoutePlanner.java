@@ -90,6 +90,7 @@ public final class HierarchicalWaterRoutePlanner {
         expandedNodes += search.expandedNodes() - before;
         if (coarse) coarseExpandedNodes += search.expandedNodes() - before;
         else detailExpandedNodes += search.expandedNodes() - before;
+        stageBudget.completedExpansions(coarse ? coarseExpandedNodes : detailExpandedNodes);
         if (current == WaterRoutePathfinder.Status.SUCCESS) {
             if (coarse) {
                 List<BlockPos> guidance = new ArrayList<>(search.path());
