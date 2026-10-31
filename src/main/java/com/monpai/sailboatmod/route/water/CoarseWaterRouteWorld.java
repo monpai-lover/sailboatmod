@@ -44,6 +44,20 @@ public final class CoarseWaterRouteWorld implements WaterRouteWorld {
     @Override
     public WaterColumn sample(int x, int z, WaterRoutePolicy policy) {
         WaterRouteCancellation.check();
+        if (policy == null || policy.boatHalfWidth() <= 0) return sampleColumn(x, z, policy);
+        boolean unknown = false;
+        WaterColumn anchor = null;
+        for (int dz = 0; dz < 2; dz++) for (int dx = 0; dx < 2; dx++) {
+            WaterColumn column = sampleColumn(x + dx, z + dz, policy);
+            if (column == null) { unknown = true; continue; }
+            if (!column.passable()) return WaterColumn.blocked();
+            if (anchor != null && anchor.surfacePos().getY() != column.surfacePos().getY()) return WaterColumn.blocked();
+            if (anchor == null) anchor = column;
+        }
+        return unknown ? null : WaterColumn.passable(new BlockPos(x, anchor.surfacePos().getY(), z), 0);
+    }
+
+    private WaterColumn sampleColumn(int x, int z, WaterRoutePolicy policy) {
         int cx = Math.floorDiv(x, 16), cz = Math.floorDiv(z, 16);
         long key = ((long) cx << 32) | (cz & 0xFFFFFFFFL);
         NbtChunkWaterReader.ReadResult result = chunks.get(key);
@@ -60,8 +74,8 @@ public final class CoarseWaterRouteWorld implements WaterRouteWorld {
                     : WaterColumn.blocked();
         }
         if (predicted == null) return null;
-        return predicted.sample(x, z, Math.max(2, policy.stepSize())).map(surface -> surface.water()
-                ? WaterColumn.passable(new BlockPos(x, surface.surfaceY(), z), 0)
+        return predicted.sample(x, z, Math.max(2, policy == null ? 2 : policy.stepSize())).map(surface -> surface.water()
+                ? WaterColumn.passable(new BlockPos(x, surface.surfaceY() + 1, z), 0)
                 : WaterColumn.blocked()).orElse(null);
     }
     @Override public boolean canLoadMoreChunks(int requested) { return false; }

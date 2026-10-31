@@ -187,6 +187,10 @@ public final class RealBlockWaterWorld implements WaterRouteWorld, DockBerthReso
 
     @Override
     public int waterSurfaceY(int x, int z) {
+        if (preserveUnknown) {
+            WaterColumn column = map.sampleHullStrict(x, z, boatHalfWidth);
+            if (column != null && column.passable()) return column.surfacePos().getY();
+        }
         return seaLevel;
     }
 }

@@ -276,66 +276,39 @@ public final class RealBlockWaterMap {
      * 两侧格),逐格 hullClear,任一格 2×2 有陆即 false。零漏检。
      */
     public boolean segmentHullClear(BlockPos a, BlockPos b, int halfWidth) {
-        int x0 = a.getX();
-        int z0 = a.getZ();
-        int x1 = b.getX();
-        int z1 = b.getZ();
-        int dx = Math.abs(x1 - x0);
-        int dz = Math.abs(z1 - z0);
-        int sx = Integer.signum(x1 - x0);
-        int sz = Integer.signum(z1 - z0);
-        int x = x0;
-        int z = z0;
-        // supercover:沿主轴步进,每步推进 x 或 z,对角穿角时把两侧相邻格也查掉(err==0 的格点),不漏任何穿过的 cell。
-        if (!hullClear(x, z, halfWidth)) {
-            return false;
-        }
-        int err = dx - dz;
-        int guard = (dx + dz) * 2 + 4; // 步数上限兜底(防极端坐标死循环)
-        while ((x != x1 || z != z1) && guard-- > 0) {
-            int e2 = err * 2;
-            if (e2 > -dz && e2 < dx) {
-                // 正好穿过格点对角:两侧相邻格都被线段触及,各查一次(supercover 关键,补 Bresenham 漏的角)。
-                if (!hullClear(x + sx, z, halfWidth) || !hullClear(x, z + sz, halfWidth)) {
-                    return false;
-                }
-                x += sx;
-                z += sz;
-                err += dx - dz;
-            } else if (e2 > -dz) {
-                err -= dz;
-                x += sx;
-            } else {
-                err += dx;
-                z += sz;
-            }
-            if (!hullClear(x, z, halfWidth)) {
-                return false;
-            }
-        }
-        return true;
+        if (a == null || b == null) return false;
+        if (retryUnknownPrediction && a.getY() != b.getY()) return false;
+        return WaterGridTraversal.all(a.getX(), a.getZ(), b.getX(), b.getZ(), (x, z) -> {
+            if (!retryUnknownPrediction) return hullClear(x, z, halfWidth);
+            WaterColumn column = sampleHullStrict(x, z, halfWidth);
+            return column != null && column.passable() && column.surfacePos().getY() == a.getY();
+        });
     }
 
     /**
      * 从 (x,z) 螺旋向外找最近的 3×3 全水格(maxR 半径内)。供安全连线把贴岸/过冲点拉回水里。找不到返回 null。
      */
     public BlockPos nearestHullWater(int x, int z, int halfWidth, int maxR) {
-        if (hullClear(x, z, halfWidth)) {
-            return new BlockPos(x, seaLevel, z);
-        }
+        BlockPos center = hullPosition(x, z, halfWidth);
+        if (center != null) return center;
         for (int r = 1; r <= maxR; r++) {
             for (int dx = -r; dx <= r; dx++) {
                 for (int dz = -r; dz <= r; dz++) {
                     if (Math.max(Math.abs(dx), Math.abs(dz)) != r) {
                         continue; // 只查当前环
                     }
-                    if (hullClear(x + dx, z + dz, halfWidth)) {
-                        return new BlockPos(x + dx, seaLevel, z + dz);
-                    }
+                    BlockPos candidate = hullPosition(x + dx, z + dz, halfWidth);
+                    if (candidate != null) return candidate;
                 }
             }
         }
         return null;
+    }
+
+    private BlockPos hullPosition(int x, int z, int halfWidth) {
+        if (!retryUnknownPrediction) return hullClear(x, z, halfWidth) ? new BlockPos(x, seaLevel, z) : null;
+        WaterColumn column = sampleHullStrict(x, z, halfWidth);
+        return column != null && column.passable() ? column.surfacePos() : null;
     }
 
     /**

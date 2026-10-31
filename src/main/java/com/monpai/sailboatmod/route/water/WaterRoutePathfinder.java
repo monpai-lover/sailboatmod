@@ -147,17 +147,24 @@ public final class WaterRoutePathfinder {
         WaterColumn actual = world.sample(endpoint.getX(), endpoint.getZ(), policy);
         if (actual == null) { pendingTerrain |= waitForUnknown; return null; }
         if (!actual.passable()) return null;
-        BlockPos snapped = snapToGrid(endpoint);
-        List<BlockPos> candidates = new ArrayList<>(9);
-        for (int dx = -1; dx <= 1; dx++) for (int dz = -1; dz <= 1; dz++) {
-            candidates.add(snapped.offset(dx * step, 0, dz * step));
-        }
-        candidates.sort(java.util.Comparator.comparingDouble(endpoint::distSqr));
-        for (BlockPos p : candidates) {
-            WaterRouteCancellation.check();
-            WaterColumn column = world.sample(p.getX(), p.getZ(), policy);
-            if (column == null) { pendingTerrain |= waitForUnknown; continue; }
-            if (column.passable() && segmentPassable(endpoint, p)) return column.surfacePos();
+        // A valid two-block harbour can lie between every coarse grid line. Attach to
+        // the coarsest reachable nested lattice, down to unit cells, without relabelling land.
+        int minimum = waitForUnknown ? 1 : step;
+        for (int grid = step; grid >= minimum; grid = Math.max(1, grid / 2)) {
+            BlockPos snapped = new BlockPos(Math.floorDiv(endpoint.getX(), grid) * grid,
+                    endpoint.getY(), Math.floorDiv(endpoint.getZ(), grid) * grid);
+            List<BlockPos> candidates = new ArrayList<>(9);
+            for (int dx = -1; dx <= 1; dx++) for (int dz = -1; dz <= 1; dz++) {
+                candidates.add(snapped.offset(dx * grid, 0, dz * grid));
+            }
+            candidates.sort(java.util.Comparator.comparingDouble(endpoint::distSqr));
+            for (BlockPos candidate : candidates) {
+                WaterRouteCancellation.check();
+                WaterColumn column = world.sample(candidate.getX(), candidate.getZ(), policy);
+                if (column == null) { pendingTerrain |= waitForUnknown; continue; }
+                if (column.passable() && segmentPassable(endpoint, column.surfacePos())) return column.surfacePos();
+            }
+            if (grid == minimum) break;
         }
         return null;
     }
@@ -294,13 +301,26 @@ public final class WaterRoutePathfinder {
         int[] dx = {0, 1, 0, -1, 1, 1, -1, -1};
         int[] dz = {1, 0, -1, 0, 1, -1, 1, -1};
         int unresolved = 0;
+        Boolean microAllowed = null;
+        boolean microPending = false;
         // Global 128-block guidance misses the Dardanelles entirely. Refine only blocked coastal
         // edges, not the whole Aegean. All steps divide the same grid, so both fronts can still meet.
-        int minimumHop = waitForUnknown && edgeSampleSpacing > 1 && step >= 32 ? 4 : step;
+        int minimumHop = waitForUnknown ? 1 : step;
         for (int i = 0; i < dx.length; i++) {
             if ((mask & (1 << i)) == 0) continue;
-            for (int hop = step; hop >= minimumHop; hop /= 2) {
+            for (int hop = step; hop >= minimumHop; hop = hop == 1 ? 0 : Math.max(1, hop / 2)) {
                 WaterRouteCancellation.check();
+                if (hop < 4 && step >= 4 && edgeSampleSpacing > 1) {
+                    if (microAllowed == null) {
+                        pendingTerrain = false;
+                        microAllowed = constrainedWater(current.pos);
+                        microPending = pendingTerrain;
+                    }
+                    if (!microAllowed) {
+                        if (microPending) unresolved |= 1 << i;
+                        break;
+                    }
+                }
                 int baseX = minimumHop == step ? current.pos.getX() : (int) Math.round(current.pos.getX() / (double) hop) * hop;
                 int baseZ = minimumHop == step ? current.pos.getZ() : (int) Math.round(current.pos.getZ() / (double) hop) * hop;
                 int nx = baseX + dx[i] * hop;
@@ -332,6 +352,23 @@ public final class WaterRoutePathfinder {
             }
         }
         return unresolved;
+    }
+
+    /** Refine to unit cells only between nearby opposing banks. A one-sided coast
+     * must retain the coarse graph; otherwise its unit fringe exhausts global node budgets.
+     * Unknown cells remain deferred and are never counted as banks.
+     */
+    private boolean constrainedWater(BlockPos at) {
+        boolean unknown = false;
+        int[][] axes = {{3,0},{0,3}};
+        for (int[] axis : axes) {
+            WaterColumn a = world.sample(at.getX() + axis[0], at.getZ() + axis[1], policy);
+            WaterColumn b = world.sample(at.getX() - axis[0], at.getZ() - axis[1], policy);
+            if (a == null || b == null) { unknown = true; continue; }
+            if (!a.passable() && !b.passable()) { pendingTerrain = false; return true; }
+        }
+        pendingTerrain = unknown;
+        return false;
     }
 
     /**
@@ -400,6 +437,16 @@ public final class WaterRoutePathfinder {
     private boolean segmentPassable(BlockPos from, BlockPos to) {
         if (from == null || to == null) {
             return false;
+        }
+        if (waitForUnknown && edgeSampleSpacing == 1) {
+            // Fine segments must cover every intersected hull anchor, not just rounded samples.
+            if (from.getY() != to.getY()) return false;
+            return WaterGridTraversal.all(from.getX(), from.getZ(), to.getX(), to.getZ(), (x, z) -> {
+                WaterColumn column = world.sample(x, z, policy);
+                if (column == null) { pendingTerrain = true; return false; }
+                return column.passable() && column.surfacePos() != null
+                        && column.surfacePos().getY() == from.getY();
+            });
         }
         int dx = to.getX() - from.getX();
         int dz = to.getZ() - from.getZ();

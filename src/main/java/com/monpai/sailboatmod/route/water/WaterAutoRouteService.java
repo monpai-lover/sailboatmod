@@ -552,7 +552,7 @@ public final class WaterAutoRouteService {
         return tellusPrediction || distance > 8192.0D;
     }
 
-    private static List<BlockPos> finishDetailedSegment(RealBlockWaterMap map, List<BlockPos> raw, int seaY, int halfWidth) {
+    static List<BlockPos> finishDetailedSegment(RealBlockWaterMap map, List<BlockPos> raw, int seaY, int halfWidth) {
         WaterRouteCancellation.check();
         int missing = map.terrainMisses();
         List<BlockPos> smooth = WaterPathSmoother.smooth(map, raw, seaY, 2.0D, halfWidth);
@@ -590,7 +590,7 @@ public final class WaterAutoRouteService {
         WaterRoutePolicy policy = WaterRoutePolicy.defaults();
         RealBlockWaterMap probe = new RealBlockWaterMap(level, seaY).enableOnDemand().retryUnknownPrediction().withPredictor(predictor, budget);
         WaterRouteResult<DockBerthResolver.DockBerth> berth = DockBerthResolver.resolve(
-                RealBlockWaterWorld.coarse(probe, seaY, null, null), destination, policy,
+                RealBlockWaterWorld.streaming(probe, seaY, 1, null, null), destination, policy,
                 WaterRouteFailureReason.NO_TARGET_BERTH);
         if (!berth.successful()) {
             return WaterRouteResult.failure(probe.terrainMisses() > 0

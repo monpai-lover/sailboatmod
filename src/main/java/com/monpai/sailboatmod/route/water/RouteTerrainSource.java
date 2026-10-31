@@ -18,7 +18,13 @@ import java.util.function.Supplier;
  */
 final class RouteTerrainSource implements AutoCloseable {
     private record Point(int x, int z, int spacing) { }
-    private final ServerLevel level;
+    @FunctionalInterface interface SavedReader {
+        NbtChunkWaterReader.ReadResult read(int cx, int cz);
+    }
+    interface AsyncWork {
+        <T> CompletableFuture<T> submit(Supplier<T> work);
+    }
+    private final AsyncWork executor;
     private final java.util.concurrent.ConcurrentHashMap<Long, TerrainSurfaceSampler> samplers = new java.util.concurrent.ConcurrentHashMap<>();
     private final AtomicBoolean closed = new AtomicBoolean();
     private final DeferredTerrainCache<ChunkPos, NbtChunkWaterReader.ReadResult> saved;
@@ -26,11 +32,20 @@ final class RouteTerrainSource implements AutoCloseable {
     private final DeferredTerrainCache<ChunkPos, Prediction> columns;
 
     RouteTerrainSource(ServerLevel level, TerrainPredictor predictor, Supplier<TerrainSurfaceSampler> surfaceFactory) {
-        this.level = level;
+        this((cx, cz) -> NbtChunkWaterReader.readForRouting(level, cx, cz, 2000),
+                predictor, surfaceFactory, new AsyncWork() {
+                    @Override public <T> CompletableFuture<T> submit(Supplier<T> work) {
+                        return PortAsyncRuntime.worker(level.getServer(), work);
+                    }
+                });
+    }
 
-        saved = new DeferredTerrainCache<>(pos -> submit(() -> NbtChunkWaterReader.readForRouting(
-                level, pos.x, pos.z, 2000)), result -> result.status() != NbtChunkWaterReader.ReadStatus.UNAVAILABLE,
-                4096, 8);
+    /** Native integration tests use the same queues/cache/decoding without inventing a ServerLevel. */
+    RouteTerrainSource(SavedReader reader, TerrainPredictor predictor,
+                       Supplier<TerrainSurfaceSampler> surfaceFactory, AsyncWork executor) {
+        this.executor = executor;
+        saved = new DeferredTerrainCache<>(pos -> submit(() -> reader.read(pos.x, pos.z)),
+                result -> result.status() != NbtChunkWaterReader.ReadStatus.UNAVAILABLE, 4096, 8);
         surfaces = new DeferredTerrainCache<>(p -> submit(() -> {
             TerrainSurfaceSampler sampler = samplers.computeIfAbsent(Thread.currentThread().threadId(), ignored -> surfaceFactory.get());
             return sampler == null ? null : sampler.sample(p.x, p.z, p.spacing).orElse(null);
@@ -41,7 +56,7 @@ final class RouteTerrainSource implements AutoCloseable {
     }
     private <T> CompletableFuture<T> submit(Supplier<T> work) {
         if (closed.get()) return CompletableFuture.failedFuture(new java.util.concurrent.CancellationException());
-        return PortAsyncRuntime.worker(level.getServer(), () -> WaterRouteCancellation.run(closed::get, work));
+        return executor.submit(() -> WaterRouteCancellation.run(closed::get, work));
     }
     NbtChunkWaterReader.ReadResult read(int cx, int cz) {
         var result = saved.poll(new ChunkPos(cx, cz));

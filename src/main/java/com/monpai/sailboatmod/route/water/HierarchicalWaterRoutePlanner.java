@@ -116,13 +116,13 @@ public final class HierarchicalWaterRoutePlanner {
             stageBudget.advance(true);
             status = Status.WAITING;
         } else if (current == WaterRoutePathfinder.Status.FAILED) {
-            if (coarse && search.failureReason() == WaterRouteFailureReason.NO_WATER_PATH && coarsePolicy.stepSize() > 4) {
+            if (coarse && search.failureReason() == WaterRouteFailureReason.NO_WATER_PATH && coarsePolicy.stepSize() > 1) {
                 // A coarse grid can miss a narrow strait or harbour. Retry finer guidance with the same total node/time budget.
                 coarsePolicy = coarseWithStep(coarsePolicy.stepSize() / 2, MAX_COARSE_NODES - coarseExpandedNodes);
                 search = null;
             } else if (!coarse && search.failureReason() == WaterRouteFailureReason.NO_WATER_PATH
-                    && detailStep > 2 && detailExpandedNodes < detailedPolicy.maxExpandedNodes()) {
-                detailStep = Math.max(2, detailStep / 2);
+                    && detailStep > 1 && detailExpandedNodes < detailedPolicy.maxExpandedNodes()) {
+                detailStep = Math.max(1, detailStep / 2);
                 search = null;
             } else fail(search.failureReason());
         }
