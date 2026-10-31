@@ -11,6 +11,7 @@ import com.monpai.sailboatmod.dock.AvailableDockEntry;
 import com.monpai.sailboatmod.market.TransportTerminalKind;
 import com.monpai.sailboatmod.network.ModNetwork;
 import com.monpai.sailboatmod.network.packet.CreateAutoRoutePacket;
+import com.monpai.sailboatmod.network.packet.RequestAutoRouteDocksPacket;
 import com.monpai.sailboatmod.route.water.WaterMidMode;
 import dev.vfyjxf.taffy.style.AlignItems;
 import net.minecraft.core.BlockPos;
@@ -28,7 +29,8 @@ import java.util.List;
 public class AutoRouteDockSelectionScreen extends ThemedScreen {
     private final BlockPos sourceDockPos;
     private final TransportTerminalKind terminalKind;
-    private final List<AvailableDockEntry> docks;
+    private List<AvailableDockEntry> docks;
+    private ScrollerView dockList;
     private final List<UIElement> rows = new ArrayList<>();
     private int selectedIndex = -1;
     private WaterMidMode selectedMode = WaterMidMode.HYBRID;
@@ -53,19 +55,10 @@ public class AutoRouteDockSelectionScreen extends ThemedScreen {
         UIElement body = Ui.column();
         body.addChild(Ui.paragraph(autoRouteText("subtitle"), "sm-muted"));
 
-        ScrollerView list = Ui.scroller();
-        list.layout(l -> l.height(150).flexGrow(0));
-        if (docks.isEmpty()) {
-            list.addScrollViewChild(Ui.emptyState(autoRouteText("empty")));
-        }
-        for (int i = 0; i < docks.size(); i++) {
-            int index = i;
-            UIElement row = dockRow(docks.get(i));
-            Ui.clickable(row, () -> select(index));
-            rows.add(row);
-            list.addScrollViewChild(row);
-        }
-        body.addChild(list);
+        dockList = Ui.scroller();
+        dockList.layout(l -> l.height(150).flexGrow(0));
+        rebuildRows();
+        body.addChild(dockList);
 
         if (terminalKind == TransportTerminalKind.PORT) {
             modeTabs = TabBar.horizontal(mode -> {
@@ -94,9 +87,41 @@ public class AutoRouteDockSelectionScreen extends ThemedScreen {
                 .flexWrap(dev.vfyjxf.taffy.style.FlexWrap.WRAP).flexShrink(0));
         actions.addChildren(Ui.clippedText(autoRouteText("hint"), "sm-muted"), Ui.spacer(),
                 Ui.button(Component.translatable("screen.sailboatmod.route_name.cancel"), Ui.Tone.SECONDARY, this::onClose), createButton);
+        if (terminalKind == TransportTerminalKind.PORT) {
+            actions.addChild(Ui.button(Component.literal("重新验证"), Ui.Tone.SECONDARY,
+                    () -> ModNetwork.CHANNEL.sendToServer(new RequestAutoRouteDocksPacket(sourceDockPos))));
+        }
         body.addChild(actions);
         refresh();
         return body;
+    }
+
+    public boolean isForDock(BlockPos pos, TransportTerminalKind kind) {
+        return sourceDockPos.equals(pos) && terminalKind == kind;
+    }
+
+    /** A late terrain update must preserve selection and the chosen route mode. */
+    public void updateDocks(List<AvailableDockEntry> updated) {
+        BlockPos selected = selectedIndex >= 0 && selectedIndex < docks.size() ? docks.get(selectedIndex).pos() : null;
+        docks = updated == null ? List.of() : List.copyOf(updated);
+        selectedIndex = -1;
+        for (int i = 0; i < docks.size(); i++) if (docks.get(i).pos().equals(selected)) selectedIndex = i;
+        rebuildRows();
+        refresh();
+    }
+
+    private void rebuildRows() {
+        if (dockList == null) return;
+        dockList.clearAllScrollViewChildren();
+        rows.clear();
+        if (docks.isEmpty()) dockList.addScrollViewChild(Ui.emptyState(autoRouteText("empty")));
+        for (int i = 0; i < docks.size(); i++) {
+            int index = i;
+            UIElement row = dockRow(docks.get(i));
+            Ui.clickable(row, () -> select(index));
+            rows.add(row);
+            dockList.addScrollViewChild(row);
+        }
     }
 
     private UIElement dockRow(AvailableDockEntry dock) {

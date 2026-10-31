@@ -9,6 +9,8 @@ import com.monpai.sailboatmod.nation.data.NationSavedData;
 import com.monpai.sailboatmod.network.ModNetwork;
 import com.monpai.sailboatmod.route.RoadAutoRouteService;
 import com.monpai.sailboatmod.route.water.WaterRouteCandidateService;
+import com.monpai.sailboatmod.route.water.PortCandidateListing;
+import com.monpai.sailboatmod.route.terrain.TellusWorlds;
 import com.monpai.sailboatmod.route.water.WaterRouteResult;
 import com.mojang.logging.LogUtils;
 import net.minecraft.core.BlockPos;
@@ -44,9 +46,13 @@ public class RequestAutoRouteDocksPacket {
             if (player == null) return;
             if (!(player.level() instanceof net.minecraft.server.level.ServerLevel serverLevel)) return;
 
+            if (TellusWorlds.isTellusLevel(serverLevel)
+                    && !PortCandidateListing.acceptRequest(serverLevel.getServer(), player.getUUID())) return;
             if (!(serverLevel.getBlockEntity(msg.sourceDockPos) instanceof DockBlockEntity sourceDock)) return;
 
+            PortCandidateListing.cancelPrevious(serverLevel.getServer(), player.getUUID());
             List<AvailableDockEntry> available = new ArrayList<>();
+            List<DockBlockEntity> permittedDocks = new ArrayList<>();
             int scanned = 0;
             boolean postStationMode = sourceDock instanceof PostStationBlockEntity;
             TransportTerminalKind terminalKind = postStationMode ? TransportTerminalKind.POST_STATION : TransportTerminalKind.PORT;
@@ -73,8 +79,8 @@ public class RequestAutoRouteDocksPacket {
                         LOGGER.info("[AutoRoute] 驿站候选被刷掉 {} @{}: 路网不可达", targetDock.getDockName(), dockPos);
                     }
                 } else {
-                    // Listing is metadata/permission-only. Strict real-water berth checks remain
-                    // in submitAutoRoute; noise predictions must not hide imported/edited ports.
+                    // First filter permissions; Tellus berth/exit checks refine the list asynchronously below.
+                    // Never ask the vanilla noise generator whether an edited port is water.
                     WaterRouteResult<?> result = WaterRouteCandidateService.canListCandidate(serverLevel, sourceDock, targetDock);
                     canCreate = result.successful();
                     if (!canCreate) {
@@ -83,6 +89,7 @@ public class RequestAutoRouteDocksPacket {
                 }
                 if (!canCreate) continue;
 
+                permittedDocks.add(targetDock);
                 int distance = (int) Math.sqrt(msg.sourceDockPos.distSqr(dockPos));
                 available.add(new AvailableDockEntry(
                     dockPos,
@@ -96,8 +103,12 @@ public class RequestAutoRouteDocksPacket {
             LOGGER.info("[AutoRoute] 源 @{} 模式={} 共扫描 {} 个其它码头,列出 {} 个可用",
                     msg.sourceDockPos, postStationMode ? "驿站" : "码头", scanned, available.size());
 
-            ModNetwork.CHANNEL.send(player,
-                new SyncAutoRouteDocksPacket(msg.sourceDockPos, terminalKind, available));
+            if (!postStationMode && TellusWorlds.isTellusLevel(serverLevel)) {
+                PortCandidateListing.refine(serverLevel, sourceDock, permittedDocks, available, player);
+            } else {
+                ModNetwork.CHANNEL.send(player,
+                    new SyncAutoRouteDocksPacket(msg.sourceDockPos, terminalKind, available));
+            }
         });
         ctx.get().setPacketHandled(true);
     }

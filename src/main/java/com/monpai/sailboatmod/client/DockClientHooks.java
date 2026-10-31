@@ -2,6 +2,7 @@ package com.monpai.sailboatmod.client;
 
 import com.monpai.sailboatmod.client.screen.AutoRouteDockSelectionScreen;
 import com.monpai.sailboatmod.client.screen.DockScreen;
+import com.monpai.sailboatmod.client.screen.PostStationScreen;
 import com.monpai.sailboatmod.dock.AvailableDockEntry;
 import com.monpai.sailboatmod.dock.DockScreenData;
 import com.monpai.sailboatmod.market.TransportTerminalKind;
@@ -31,7 +32,14 @@ public final class DockClientHooks {
     }
 
     public static void openAutoRouteDockSelection(BlockPos sourceDockPos, TransportTerminalKind terminalKind, List<AvailableDockEntry> docks) {
-        Minecraft.getInstance().setScreen(new AutoRouteDockSelectionScreen(sourceDockPos, terminalKind, docks));
+        Minecraft minecraft = Minecraft.getInstance();
+        if (minecraft.screen instanceof AutoRouteDockSelectionScreen selection && selection.isForDock(sourceDockPos, terminalKind)) {
+            selection.updateDocks(docks);
+        } else if ((minecraft.screen instanceof DockScreen dock && dock.isForDock(sourceDockPos))
+                || (minecraft.screen instanceof PostStationScreen station && station.isForStation(sourceDockPos))) {
+            minecraft.setScreen(new AutoRouteDockSelectionScreen(sourceDockPos, terminalKind, docks));
+        }
+        // Closed or unrelated screen: an asynchronous terrain reply must not reopen a dialog.
     }
 
     private DockClientHooks() {
