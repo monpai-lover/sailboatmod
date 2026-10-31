@@ -2,7 +2,7 @@ allprojects {
     afterEvaluate { p ->
         if (p.plugins.hasPlugin('java')) {
             p.sourceSets.test.java.srcDir(p.file('tools/tellus-native/java'))
-            p.dependencies.add('testRuntimeOnly', p.files('libs/compile-only/Tellus-neoforge-1.21.1-0.8.3.jar'))
+            p.dependencies.add('testImplementation', p.files('libs/compile-only/Tellus-neoforge-1.21.1-0.8.3.jar'))
             p.dependencies.add('testRuntimeOnly', p.fileTree('build/native-runtime') { include '*.jar' })
             p.tasks.named('test', Test) {
                 systemProperty 'tellus.native', 'true'

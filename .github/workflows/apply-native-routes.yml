@@ -1,0 +1,77 @@
+name: Validate native long-route changes
+on:
+  push:
+    branches: [fix/autoroute-candidates-flag-preview]
+    paths: ['tools/tellus-native/pending-native.b64', 'tools/tellus-native/apply_native.py', '.github/workflows/apply-native-routes.yml']
+permissions:
+  contents: write
+concurrency:
+  group: apply-native-routes-${{ github.ref }}
+  cancel-in-progress: true
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          lfs: true
+          ref: fix/autoroute-candidates-flag-preview
+          fetch-depth: 2
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
+      - name: Verify reviewed patch and unchanged inputs
+        run: python3 tools/tellus-native/apply_native.py
+      - name: Compile and run offline geometry and existing regressions
+        run: |
+          chmod +x gradlew
+          ./gradlew --no-daemon -PneoForge.disableRecompilation=true -PfixIndex=tellus_native '-Dorg.gradle.jvmargs=-Xmx2G -Dfile.encoding=UTF-8' test --tests 'com.monpai.sailboatmod.route.water.*' --tests 'com.monpai.sailboatmod.route.terrain.*' --tests '*ChatFlag*Test' --tests '*NationOfficeTitleTest' --tests '*FlagPreviewLayoutTest' jar
+          cp -r build/test-results/test build/offline-test-results
+      - name: Publish validated source changes without overwriting concurrent work
+        run: |
+          python3 - <<'PY'
+          import json,subprocess,pathlib
+          names=list(json.loads(pathlib.Path('build/native-manifest.json').read_text()))
+          subprocess.run(['git','add','--',*names],check=True)
+          PY
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git commit -m 'fix: nested narrow-waterway refinement, exact hull traversal and native Tellus height conventions'
+          test "$(git ls-remote origin refs/heads/fix/autoroute-candidates-flag-preview | cut -f1)" = "$(git rev-parse HEAD^)"
+          git push origin HEAD:refs/heads/fix/autoroute-candidates-flag-preview
+      - name: Prepare pinned Tellus runtime
+        run: |
+          mkdir -p build/native-runtime build/native-evidence
+          python3 - <<'PY'
+          import zipfile,pathlib,hashlib
+          p=pathlib.Path('libs/compile-only/Tellus-neoforge-1.21.1-0.8.3.jar')
+          pathlib.Path('build/native-evidence/tellus-sha256.txt').write_text(hashlib.sha256(p.read_bytes()).hexdigest()+'\n')
+          with zipfile.ZipFile(p) as z:
+              for n in z.namelist():
+                  if n.startswith('META-INF/jarjar/') and n.endswith('.jar'): pathlib.Path('build/native-runtime',pathlib.Path(n).name).write_bytes(z.read(n))
+          PY
+      - name: Run real Tellus LOD and generated-column long routes
+        run: |
+          ./gradlew --no-daemon -I tools/tellus-native/native.init.gradle -PneoForge.disableRecompilation=true -PfixIndex=tellus_native '-Dorg.gradle.jvmargs=-Xmx2G -Dfile.encoding=UTF-8' test --tests '*TellusNativeRoutesTest'
+      - name: Archive exact sources and identity
+        if: always()
+        run: |
+          mkdir -p build/native-evidence
+          git rev-parse HEAD > build/native-evidence/commit.txt
+          tar czf build/native-validated-source.tar.gz src/main/java src/test/java src/main/resources tools/tellus-native build.gradle gradle.properties
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: native-long-routes-${{ github.run_id }}
+          path: |
+            build/native-evidence/
+            build/route-regression/
+            build/offline-test-results/
+            build/test-results/test/
+            build/reports/tests/test/
+            build/libs/*.jar
+            build/native-validated-source.tar.gz
+            build/native-manifest.json
+          retention-days: 14
