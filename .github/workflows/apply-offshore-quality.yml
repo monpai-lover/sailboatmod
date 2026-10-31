@@ -24,14 +24,15 @@ jobs:
       - name: Verify exact reviewed source patch
         run: |
           python3 - <<'PY'
-          import pathlib,base64,gzip,hashlib,json,subprocess
+          import pathlib,base64,gzip,hashlib,json,subprocess,re
           payload=gzip.decompress(base64.b64decode(''.join(pathlib.Path('tools/postprocess-update/part%d.txt'%i).read_text() for i in range(5))))
           assert hashlib.sha256(payload).hexdigest()=='0027dcbdf5b89199b9a39f324b27a64089b068729fbedd83b95637b783a1bca1'
           data=json.loads(payload)
           for name,digest in data['expected'].items():
               p=pathlib.Path(name)
               assert (hashlib.sha256(p.read_bytes()).hexdigest() if p.exists() else None)==digest, 'Concurrent source change: '+name
-          pathlib.Path('/tmp/offshore.patch').write_text(data['patch'])
+          patch=re.sub(r'(diff --git [^\n]+\n)(--- /dev/null\n)',r'\1new file mode 100644\n\2',data['patch'])
+          pathlib.Path('/tmp/offshore.patch').write_text(patch)
           pathlib.Path('/tmp/offshore-files.json').write_text(json.dumps(list(data['expected'])))
           subprocess.run(['git','apply','--check','/tmp/offshore.patch'],check=True)
           subprocess.run(['git','apply','/tmp/offshore.patch'],check=True)
