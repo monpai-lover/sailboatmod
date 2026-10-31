@@ -2,6 +2,10 @@ package com.monpai.sailboatmod.route.water;
 
 import net.minecraft.SharedConstants;
 import net.minecraft.server.Bootstrap;
+import net.minecraft.core.HolderLookup;
+import net.minecraft.world.level.LevelHeightAccessor;
+import net.minecraft.world.level.NoiseColumn;
+import net.minecraft.world.level.levelgen.RandomState;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.Timeout;
 import org.junit.jupiter.api.condition.EnabledIfSystemProperty;
@@ -40,6 +44,25 @@ class TellusNativeDataProbeTest {
             System.out.println("TELLUS_NATIVE "+point[0]+","+point[1]+" "+value+" ms="+millis);
             assertNotNull(value);
             assertEquals(Boolean.TRUE,value.getClass().getMethod("landMaskKnown").invoke(value),"native data not ready, must not count a synthetic fallback as real-data success");
+        }
+        Object lookup=Class.forName("net.minecraft.data.registries.VanillaRegistries").getMethod("createLookup").invoke(null);
+        Class<?> generatorType=Class.forName("com.yucareux.tellus.worldgen.EarthChunkGenerator");
+        Object generator=generatorType.getMethod("create",HolderLookup.Provider.class,type).invoke(null,lookup,settings);
+        int min=(int)generatorType.getMethod("getMinY").invoke(generator);
+        int height=(int)generatorType.getMethod("getGenDepth").invoke(generator);
+        int sea=(int)generatorType.getMethod("getSeaLevel").invoke(generator);
+        LevelHeightAccessor accessor=LevelHeightAccessor.create(min,height);
+        Method column=generatorType.getMethod("getBaseColumn",int.class,int.class,LevelHeightAccessor.class,RandomState.class);
+        StringBuilder detail=new StringBuilder("generatorSeaLevel="+sea+" minY="+min+" height="+height+"\nx,z,topY,water,block,millis\n");
+        for(int[] point:points) {
+            long start=System.nanoTime();
+            NoiseColumn value=(NoiseColumn)column.invoke(generator,point[0],point[1],accessor,null);
+            int y=min+height-1;
+            while(y>=min&&value.getBlock(y).isAir())y--;
+            boolean water=y>=min&&WaterSurfaceRules.isNavigableSurface(value.getBlock(y));
+            detail.append(point[0]).append(',').append(point[1]).append(',').append(y).append(',').append(water).append(',').append(value.getBlock(y)).append(',').append((System.nanoTime()-start)/1_000_000.0).append('\n');
+            Files.writeString(out.resolve("native-columns.csv"),detail);
+            System.out.println("TELLUS_COLUMN "+point[0]+","+point[1]+" top="+y+" water="+water+" sea="+sea);
         }
     }
 }
