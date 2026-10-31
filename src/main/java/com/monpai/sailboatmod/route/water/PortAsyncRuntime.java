@@ -40,8 +40,25 @@ public final class PortAsyncRuntime {
     public static <T> CompletableFuture<T> worker(MinecraftServer server, Supplier<T> work) {
         State s;try{s=state(server);}catch(RejectedExecutionException stopped){return CompletableFuture.failedFuture(stopped);}
         if (s.closed) return CompletableFuture.failedFuture(new CancellationException("Server stopping"));
-        try { return CompletableFuture.supplyAsync(work, s.workers); }
-        catch (RejectedExecutionException full) { return CompletableFuture.failedFuture(full); }
+        CompletableFuture<T> result = new CompletableFuture<>();
+        FutureTask<Void> task = new FutureTask<>(() -> {
+            if (!result.isDone() && !s.closed) {
+                try { result.complete(work.get()); }
+                catch (Throwable error) { result.completeExceptionally(error); }
+            }
+            return null;
+        });
+        s.pending.add(result);
+        result.whenComplete((value, failure) -> {
+            s.pending.remove(result);
+            if (result.isCancelled()) {
+                task.cancel(true); // unlike supplyAsync, cancellation reaches the running IO thread
+                s.workers.remove(task);
+            }
+        });
+        try { s.workers.execute(task); }
+        catch (RejectedExecutionException full) { result.completeExceptionally(full); }
+        return result;
     }
     public static <T> CompletableFuture<T> onMain(MinecraftServer server, Supplier<T> work) {
         State s;try{s=state(server);}catch(RejectedExecutionException stopped){return CompletableFuture.failedFuture(stopped);}

@@ -5,6 +5,7 @@ import net.minecraft.core.BlockPos;
 import org.slf4j.Logger;
 
 import java.util.ArrayList;
+import java.util.ArrayDeque;
 import java.util.Collections;
 import java.util.HashMap;
 import java.util.HashSet;
@@ -173,7 +174,27 @@ public final class WaterRoutePathfinder {
     public int forwardExpansions() { return forwardExpansions; }
     public int backwardExpansions() { return backwardExpansions; }
 
-    /** chunkBudget 参数保留以兼容调用方,但噪声采样零区块加载,已忽略。 */
+    public int pendingEdges() { return pendingEdges(forward) + pendingEdges(backward); }
+
+    private static int pendingEdges(Search search) {
+        int edges = 0;
+        for (Deferred deferred : search.deferred) edges += Integer.bitCount(deferred.mask);
+        return edges;
+    }
+
+    /** Retry a bounded number of pending edges, not the already completed node expansion. */
+    private void retryDeferred(Search self, BlockPos target, int limit) {
+        int count = Math.min(limit, self.deferred.size());
+        for (int i = 0; i < count; i++) {
+            WaterRouteCancellation.check();
+            Deferred deferred = self.deferred.removeFirst();
+            if (self.best.get(key(deferred.node.pos)) != deferred.node) continue;
+            int mask = expandEdges(self, deferred.node, target, deferred.mask);
+            if (mask != 0) self.deferred.addLast(new Deferred(deferred.node, mask));
+        }
+    }
+
+    /** chunkBudget remains for callers; sampling never requests world generation here. */
     public Status step(int maxNodeExpansions, int chunkBudget) {
         if (status == Status.WAITING) {
             status = Status.RUNNING;
@@ -184,27 +205,26 @@ public final class WaterRoutePathfinder {
             return status;
         }
         int budget = Math.max(1, maxNodeExpansions);
+        // A cold edge must not prevent the other seven edges or the opposite frontier from running.
+        // Retain just its direction bit; successful work and node/fairness counters are never rolled back.
+        retryDeferred(forward, goal, Math.max(1, budget / 8));
+        retryDeferred(backward, start, Math.max(1, budget / 8));
         for (int i = 0; i < budget; i++) {
             WaterRouteCancellation.check();
-            if (expandedNodes >= policy.maxExpandedNodes()) {
-                fail(WaterRouteFailureReason.NODE_BUDGET_EXCEEDED);
-                return status;
-            }
-            if (forward.open.isEmpty() && backward.open.isEmpty()) {
-                fail(WaterRouteFailureReason.NO_WATER_PATH);
-                return status;
-            }
             discardStale(forward);
             discardStale(backward);
             if (forward.open.isEmpty() && backward.open.isEmpty()) {
-                fail(WaterRouteFailureReason.NO_WATER_PATH);
+                if (pendingEdges() > 0) status = Status.WAITING;
+                else fail(WaterRouteFailureReason.NO_WATER_PATH);
+                return status;
+            }
+            if (expandedNodes >= policy.maxExpandedNodes()) {
+                fail(WaterRouteFailureReason.NODE_BUDGET_EXCEEDED);
                 return status;
             }
             // Prefer lower f, but guarantee service to both nonempty frontiers.
             double fF = forward.open.isEmpty() ? Double.MAX_VALUE : forward.open.peek().f();
             double fB = backward.open.isEmpty() ? Double.MAX_VALUE : backward.open.peek().f();
-            boolean previousDirection = lastDirection;
-            int previousRun = directionRun;
             boolean expandForward = fF <= fB;
             if (!forward.open.isEmpty() && !backward.open.isEmpty()
                     && directionRun >= MAX_CONSECUTIVE_EXPANSIONS && expandForward == lastDirection) {
@@ -214,12 +234,6 @@ public final class WaterRoutePathfinder {
             else { lastDirection = expandForward; directionRun = 1; }
             if (expandStep(expandForward)) {
                 return status; // 相遇 → complete 已设状态
-            }
-            if (status == Status.WAITING) {
-                // A suspended node is not an expansion and must not consume the fairness quantum.
-                lastDirection = previousDirection;
-                directionRun = previousRun;
-                return status;
             }
             if (expandedNodes - lastLoggedAt >= LOG_EVERY_NODES) {
                 lastLoggedAt = expandedNodes;
@@ -232,6 +246,9 @@ public final class WaterRoutePathfinder {
                         forward.open.size(), backward.open.size(), fToGoal, bToStart);
             }
         }
+        // Yield between bounded slices while downloads are outstanding, but the next slice is free
+        // to advance every ready direction. WAITING no longer means a global search barrier.
+        if (pendingEdges() > 0) status = Status.WAITING;
         return status;
     }
 
@@ -268,61 +285,53 @@ public final class WaterRoutePathfinder {
             // current 已 closed(确实处理过),邻居照常入 open,直到出现真正逐格连续的合法相遇才收敛。
         }
 
-        int[] dx = {0, step, 0, -step, step, step, -step, -step};
-        int[] dz = {step, 0, -step, 0, step, -step, step, -step};
-        for (int i = 0; i < dx.length; i++) {
-            int nx = current.pos.getX() + dx[i];
-            int nz = current.pos.getZ() + dz[i];
-            if (!withinSearchRadius(nx, nz)) {
-                continue;
-            }
-            WaterColumn column = world.sample(nx, nz, policy);
-            if (column == null && waitForUnknown) {
-                pauseAt(self, current, curKey);
-                return false;
-            }
-            if (column == null || !column.passable() || column.surfacePos() == null) {
-                continue;
-            }
-            BlockPos npos = column.surfacePos();
-            if (self.closed.contains(key(npos))) {
-                continue;
-            }
-            if (!segmentPassable(current.pos, npos)) {
-                if (pendingTerrain) { pauseAt(self, current, curKey); return false; }
-                continue;
-            }
-            if (dx[i] != 0 && dz[i] != 0 && !diagonalCorridorPassable(current.pos, nx, nz)) {
-                if (pendingTerrain) { pauseAt(self, current, curKey); return false; }
-                continue;
-            }
-            double edge = (dx[i] != 0 && dz[i] != 0) ? step * 1.4142135623730951D : step;
-            // 2026-06 软代价按步长归一化(修 refine 比 coarse 还差):extraCost(贴岸/占地软惩罚)原来每步加一个固定量,
-            // 不随 step 缩放 → refine(step8)在同一窄道扩展步数是 coarse(step24)的 3 倍 → 累积软代价 ~3 倍 → A* 误判
-            // 窄道「贵 3 倍」宁可绕远,结果 refine 比 coarse 更差。修法:每步软代价 = extraCost × step / NORMALIZE_STEP,
-            // 这样跨同样格数累积的总软代价与 step 无关(coarse 步少但每步重、refine 步多但每步轻,总和相等)。
-            // NORMALIZE_STEP=8(refine 步长)使 refine 权重不变、coarse 跟着加重到一致。([[water_route_real_root_autopilot]] 相关)
-            double normalizedExtra = column.extraCost() * step / (double) NORMALIZE_STEP;
-            double g = current.gCost + edge + normalizedExtra;
-            long nkey = key(npos);
-            Node prev = self.best.get(nkey);
-            if (prev != null && prev.gCost <= g) {
-                continue;
-            }
-            Node next = new Node(npos, g, heuristic(npos, target), current);
-            self.best.put(nkey, next);
-            self.open.add(next);
-        }
+        int mask = expandEdges(self, current, target, 0xFF);
+        if (mask != 0) self.deferred.addLast(new Deferred(current, mask));
         return false;
     }
 
-    private void pauseAt(Search self, Node current, long currentKey) {
-        self.closed.remove(currentKey);
-        self.open.add(current);
-        if (self == forward) forwardExpansions--; else backwardExpansions--;
-        expandedNodes--; // Waiting for an unknown edge is not a completed expansion or a repeated budget charge.
-        pendingTerrain = true;
-        status = Status.WAITING;
+    private int expandEdges(Search self, Node current, BlockPos target, int mask) {
+        int[] dx = {0, 1, 0, -1, 1, 1, -1, -1};
+        int[] dz = {1, 0, -1, 0, 1, -1, 1, -1};
+        int unresolved = 0;
+        // Global 128-block guidance misses the Dardanelles entirely. Refine only blocked coastal
+        // edges, not the whole Aegean. All steps divide the same grid, so both fronts can still meet.
+        int minimumHop = waitForUnknown && edgeSampleSpacing > 1 && step >= 32 ? 4 : step;
+        for (int i = 0; i < dx.length; i++) {
+            if ((mask & (1 << i)) == 0) continue;
+            for (int hop = step; hop >= minimumHop; hop /= 2) {
+                WaterRouteCancellation.check();
+                int baseX = minimumHop == step ? current.pos.getX() : (int) Math.round(current.pos.getX() / (double) hop) * hop;
+                int baseZ = minimumHop == step ? current.pos.getZ() : (int) Math.round(current.pos.getZ() / (double) hop) * hop;
+                int nx = baseX + dx[i] * hop;
+                int nz = baseZ + dz[i] * hop;
+                double edge = Math.hypot((double) nx - current.pos.getX(), (double) nz - current.pos.getZ());
+                if (edge == 0 || edge > MAX_LEGAL_HOP) continue;
+                if (!withinSearchRadius(nx, nz)) continue;
+                pendingTerrain = false;
+                WaterColumn column = world.sample(nx, nz, policy);
+                if (column == null && waitForUnknown) { unresolved |= 1 << i; break; }
+                if (column == null || !column.passable() || column.surfacePos() == null) continue;
+                BlockPos npos = column.surfacePos();
+                if (!segmentPassable(current.pos, npos)
+                        || (dx[i] != 0 && dz[i] != 0 && !diagonalCorridorPassable(current.pos, nx, nz))) {
+                    if (pendingTerrain) { unresolved |= 1 << i; break; }
+                    continue;
+                }
+                if (!self.closed.contains(key(npos))) {
+                    double g = current.gCost + edge + column.extraCost() * hop / (double) NORMALIZE_STEP;
+                    long nkey = key(npos);
+                    Node previous = self.best.get(nkey);
+                    if (previous == null || previous.gCost > g) {
+                        Node next = new Node(npos, g, heuristic(npos, target), current);
+                        self.best.put(nkey, next);
+                        self.open.add(next);
+                    }
+                }
+                break; // widest known-safe edge in this direction; unknown never means land
+            }
+        }
+        return unresolved;
     }
 
     /**
@@ -368,9 +377,8 @@ public final class WaterRoutePathfinder {
         path.addAll(gridChain);
         // 首尾补回真实泊位坐标(搜索走 snap 网格,首尾可能偏真实泊位几格;补上让船精确停靠)。
         // Y 沿用路径首/尾航点(海平面),start/goal 的 Y 即泊位 Y,二者一致。
-        int surfaceY = path.isEmpty() ? start.getY() : path.get(0).getY();
-        BlockPos realStart = new BlockPos(start.getX(), surfaceY, start.getZ());
-        BlockPos realGoal = new BlockPos(goal.getX(), surfaceY, goal.getZ());
+        BlockPos realStart = start;
+        BlockPos realGoal = goal;
         if (!path.isEmpty() && !path.get(0).equals(realStart)) {
             path.add(0, realStart);
         }
@@ -459,11 +467,10 @@ public final class WaterRoutePathfinder {
             BlockPos previous = out.get(out.size() - 1);
             BlockPos current = input.get(i);
             BlockPos next = input.get(i + 1);
-            int dx1 = Integer.compare(current.getX() - previous.getX(), 0);
-            int dz1 = Integer.compare(current.getZ() - previous.getZ(), 0);
-            int dx2 = Integer.compare(next.getX() - current.getX(), 0);
-            int dz2 = Integer.compare(next.getZ() - current.getZ(), 0);
-            if (dx1 != dx2 || dz1 != dz2) {
+            long dx1 = (long) current.getX() - previous.getX(), dz1 = (long) current.getZ() - previous.getZ();
+            long dx2 = (long) next.getX() - current.getX(), dz2 = (long) next.getZ() - current.getZ();
+            if (dx1 * dz2 != dz1 * dx2 || dx1 * dx2 + dz1 * dz2 <= 0
+                    || previous.getY() != current.getY() || current.getY() != next.getY()) {
                 out.add(current);
             }
         }
@@ -536,11 +543,14 @@ public final class WaterRoutePathfinder {
         WAITING
     }
 
+    private record Deferred(Node node, int mask) { }
+
     /** 一侧搜索状态(前向或后向)。 */
     private static final class Search {
         private final PriorityQueue<Node> open = new PriorityQueue<>();
         private final Map<Long, Node> best = new HashMap<>();
         private final Set<Long> closed = new HashSet<>();
+        private final ArrayDeque<Deferred> deferred = new ArrayDeque<>();
     }
 
     private static final class Node implements Comparable<Node> {

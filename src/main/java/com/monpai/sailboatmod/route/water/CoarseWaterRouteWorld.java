@@ -56,12 +56,12 @@ public final class CoarseWaterRouteWorld implements WaterRouteWorld {
         if (result.status() == NbtChunkWaterReader.ReadStatus.READY) {
             int index = (z & 15) * 16 + (x & 15);
             return result.columns().water()[index]
-                    ? WaterColumn.passable(new BlockPos(x, seaLevel, z), 0)
+                    ? WaterColumn.passable(new BlockPos(x, result.columns().surfaceY()[index] + 1, z), 0)
                     : WaterColumn.blocked();
         }
         if (predicted == null) return null;
         return predicted.sample(x, z, Math.max(2, policy.stepSize())).map(surface -> surface.water()
-                ? WaterColumn.passable(new BlockPos(x, seaLevel, z), 0)
+                ? WaterColumn.passable(new BlockPos(x, surface.surfaceY(), z), 0)
                 : WaterColumn.blocked()).orElse(null);
     }
     @Override public boolean canLoadMoreChunks(int requested) { return false; }

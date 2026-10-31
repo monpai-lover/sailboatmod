@@ -479,67 +479,73 @@ public final class WaterAutoRouteService {
         WaterRouteWorld detailed = RealBlockWaterWorld.streaming(map, seaY, boatHalfWidth, source, target);
         com.monpai.sailboatmod.route.terrain.TerrainSurfaceSampler surface = level == null ? null
                 : com.monpai.sailboatmod.route.terrain.TellusSurfaceSamplers.forLevel(level).orElse(null);
-        WaterRouteWorld coarse;
-        if (surface != null) {
-            com.monpai.sailboatmod.route.terrain.TerrainSurfaceSampler nativeSurface = surface;
-            coarse = CoarseWaterRouteWorld.realFirst((cx, cz) -> portSnapshots.containsKey(net.minecraft.world.level.ChunkPos.asLong(cx, cz))
-                            ? NbtChunkWaterReader.ReadResult.ready(portSnapshots.get(net.minecraft.world.level.ChunkPos.asLong(cx, cz)))
-                            : NbtChunkWaterReader.readForRouting(level, cx, cz, 200),
-                    (x, z, spacing) -> {
-                        WaterRouteCancellation.check();
-                        if (predictor != null) {
-                            var ready = predictor.gate().request(Math.floorDiv(x, 16), Math.floorDiv(z, 16));
-                            if (!ready.isDone() || ready.isCompletedExceptionally() || ready.isCancelled()) return java.util.Optional.empty();
-                        }
-                        return nativeSurface.sample(x, z, spacing);
-                    }, seaY);
-        } else if (predictor != null) {
-            // Also supports injected predictors and existing NBT worlds without a cheap native surface API.
-            coarse = RealBlockWaterWorld.streaming(map, seaY, 0, source, target);
-        } else {
-            coarse = CoarseWaterRouteWorld.realFirst((cx, cz) -> portSnapshots.containsKey(net.minecraft.world.level.ChunkPos.asLong(cx, cz))
-                            ? NbtChunkWaterReader.ReadResult.ready(portSnapshots.get(net.minecraft.world.level.ChunkPos.asLong(cx, cz)))
-                            : NbtChunkWaterReader.readForRouting(level, cx, cz, 200), null, seaY);
-        }
-        HierarchicalWaterRoutePlanner planner = new HierarchicalWaterRoutePlanner(coarse, detailed, source, target,
-                WaterRoutePolicy.nbtRefine(), raw -> finishDetailedSegment(map, raw, seaY, boatHalfWidth));
-        int previousCompleted = -1;
-        long nextProgress = 0;
-        LOGGER.info("[WaterPath] 地形分层规划: coarse={} detail=FULL_NBT/GENERATOR 严格船宽=2×2 距离={}格",
-                surface != null ? "TELLUS_NATIVE_LOD" : "REAL_FIRST_COLUMNS",
-                Math.round(Math.hypot((double) target.getX() - source.getX(), (double) target.getZ() - source.getZ())));
-        HierarchicalWaterRoutePlanner.Status previousStatus = null;
-        while (true) {
-            WaterRouteCancellation.check();
-            HierarchicalWaterRoutePlanner.Status status = planner.step(64);
-            HierarchicalWaterRoutePlanner.Progress progress = planner.progress();
-            if (progress.completedSegments() != previousCompleted || status != previousStatus || System.nanoTime() >= nextProgress) {
-                int percent = progress.totalSegments() == 0 ? 5 : 10 + 80 * progress.completedSegments() / progress.totalSegments();
-                String stage = status == HierarchicalWaterRoutePlanner.Status.WAITING ? "等待地形"
-                        : progress.totalSegments() == 0 ? (surface != null ? "Tellus LOD粗寻" : "真实地形粗寻")
-                        : "分段精寻 " + progress.completedSegments() + "/" + progress.totalSegments();
-                stage += " · step=" + planner.currentStepSize() + " · 节点=" + progress.expandedNodes();
-                bar.update(percent, stage);
-                nextProgress = System.nanoTime() + 500_000_000L;
-                previousCompleted = progress.completedSegments();
-                previousStatus = status;
+        // All production data fetches retain their futures across A* slices. No read or native
+        // sampling (including prefetch startup) runs on the route's polling/search thread.
+        try (RouteTerrainSource terrain = level == null ? null : new RouteTerrainSource(level, predictor,
+                () -> com.monpai.sailboatmod.route.terrain.TellusSurfaceSamplers.forLevel(level).orElse(null))) {
+            if (terrain != null) map.withAsyncTerrain(terrain);
+            WaterRouteWorld coarse;
+            if (surface != null) {
+                coarse = CoarseWaterRouteWorld.realFirst((cx, cz) -> portSnapshots.containsKey(net.minecraft.world.level.ChunkPos.asLong(cx, cz))
+                                ? NbtChunkWaterReader.ReadResult.ready(portSnapshots.get(net.minecraft.world.level.ChunkPos.asLong(cx, cz)))
+                                : (terrain == null ? NbtChunkWaterReader.readForRouting(level, cx, cz, 200) : terrain.read(cx, cz)),
+                        (x, z, spacing) -> terrain == null ? surface.sample(x, z, spacing)
+                                : terrain.surface(x, z, spacing), seaY);
+            } else if (predictor != null) {
+                // Also supports injected predictors and existing NBT worlds without a cheap native surface API.
+                coarse = RealBlockWaterWorld.streaming(map, seaY, 0, source, target);
+            } else {
+                coarse = CoarseWaterRouteWorld.realFirst((cx, cz) -> portSnapshots.containsKey(net.minecraft.world.level.ChunkPos.asLong(cx, cz))
+                                ? NbtChunkWaterReader.ReadResult.ready(portSnapshots.get(net.minecraft.world.level.ChunkPos.asLong(cx, cz)))
+                                : (terrain == null ? NbtChunkWaterReader.readForRouting(level, cx, cz, 200) : terrain.read(cx, cz)), null, seaY);
             }
-            if (status == HierarchicalWaterRoutePlanner.Status.SUCCESS) {
-                List<BlockPos> path = planner.path();
-                metasOut.set(buildMetas(path, null, path, -1, path.size()));
-                map.logLayerStats("远航分段");
-                return WaterRouteResult.success(path);
+            HierarchicalWaterRoutePlanner planner = new HierarchicalWaterRoutePlanner(coarse, detailed, source, target,
+                    WaterRoutePolicy.nbtRefine(), raw -> finishDetailedSegment(map, raw, seaY, boatHalfWidth));
+            int previousCompleted = -1;
+            long nextProgress = 0, nextDiagnostic = 0;
+            LOGGER.info("[WaterPath] 地形分层规划: coarse={} detail=FULL_NBT/GENERATOR 严格船宽=2×2 距离={}格",
+                    surface != null ? "TELLUS_NATIVE_LOD" : "REAL_FIRST_COLUMNS",
+                    Math.round(Math.hypot((double) target.getX() - source.getX(), (double) target.getZ() - source.getZ())));
+            HierarchicalWaterRoutePlanner.Status previousStatus = null;
+            while (true) {
+                WaterRouteCancellation.check();
+                HierarchicalWaterRoutePlanner.Status status = planner.step(64);
+                HierarchicalWaterRoutePlanner.Progress progress = planner.progress();
+                if (progress.completedSegments() != previousCompleted || status != previousStatus || System.nanoTime() >= nextProgress) {
+                    int percent = progress.totalSegments() == 0 ? 5 : 10 + 80 * progress.completedSegments() / progress.totalSegments();
+                    String stage = status == HierarchicalWaterRoutePlanner.Status.WAITING ? "等待地形"
+                            : progress.totalSegments() == 0 ? (surface != null ? "Tellus LOD粗寻" : "真实地形粗寻")
+                            : "分段精寻 " + progress.completedSegments() + "/" + progress.totalSegments();
+                    stage += " · step=" + planner.currentStepSize() + " · 节点=" + progress.expandedNodes();
+                    bar.update(percent, stage);
+                    nextProgress = System.nanoTime() + 500_000_000L;
+                    previousCompleted = progress.completedSegments();
+                    previousStatus = status;
+                }
+                if (status == HierarchicalWaterRoutePlanner.Status.SUCCESS) {
+                    List<BlockPos> path = planner.path();
+                    metasOut.set(buildMetas(path, null, path, -1, path.size()));
+                    map.logLayerStats("远航分段");
+                    return WaterRouteResult.success(path);
+                }
+                if (status == HierarchicalWaterRoutePlanner.Status.FAILED) {
+                    if (terrain != null) LOGGER.warn("[WaterPath] 地形异步层统计 {}", terrain.diagnostic());
+                    map.logLayerStats(planner.isCoarseStage() ? "精寻水图(粗寻尚未完成)" : "分层精寻失败");
+                    LOGGER.warn("[WaterPath] 分层规划停止 reason={} step={} 节点={} 已完成段={}/{}",
+                            planner.failureReason(), planner.currentStepSize(), progress.expandedNodes(),
+                            progress.completedSegments(), progress.totalSegments());
+                    return WaterRouteResult.failure(planner.failureReason());
+                }
+                if (status == HierarchicalWaterRoutePlanner.Status.CANCELLED) return WaterRouteResult.failure(WaterRouteFailureReason.CANCELLED);
+                if (terrain != null && System.nanoTime() >= nextDiagnostic) {
+                    LOGGER.info("[WaterPath] 地形异步状态 stage={} step={} nodes={} pendingEdges={} {}",
+                            planner.isCoarseStage() ? "LOD" : "DETAIL", planner.currentStepSize(),
+                            progress.expandedNodes(), planner.pendingEdges(), terrain.diagnostic());
+                    nextDiagnostic = System.nanoTime() + 10_000_000_000L;
+                }
+                if (status == HierarchicalWaterRoutePlanner.Status.WAITING) java.util.concurrent.locks.LockSupport.parkNanos(10_000_000L);
             }
-            if (status == HierarchicalWaterRoutePlanner.Status.FAILED) {
-                map.logLayerStats(planner.isCoarseStage() ? "分层粗寻失败" : "分层精寻失败");
-                LOGGER.warn("[WaterPath] 分层规划停止 reason={} step={} 节点={} 已完成段={}/{}",
-                        planner.failureReason(), planner.currentStepSize(), progress.expandedNodes(),
-                        progress.completedSegments(), progress.totalSegments());
-                return WaterRouteResult.failure(planner.failureReason());
-            }
-            if (status == HierarchicalWaterRoutePlanner.Status.CANCELLED) return WaterRouteResult.failure(WaterRouteFailureReason.CANCELLED);
-            if (status == HierarchicalWaterRoutePlanner.Status.WAITING) java.util.concurrent.locks.LockSupport.parkNanos(10_000_000L);
-        }
+        } // cancel outstanding request-owned futures on success, failure or cancellation
     }
 
     static boolean useHierarchicalTerrain(boolean tellusPrediction, double distance) {

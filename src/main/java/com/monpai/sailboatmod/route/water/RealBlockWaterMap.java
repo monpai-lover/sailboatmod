@@ -62,6 +62,13 @@ public final class RealBlockWaterMap {
     private volatile com.monpai.sailboatmod.route.terrain.TerrainPredictor predictor;
     private volatile com.monpai.sailboatmod.route.terrain.PredictionBudget predictionBudget;
     private boolean retryUnknownPrediction;
+    private RouteTerrainSource asyncTerrain;
+
+    RealBlockWaterMap withAsyncTerrain(RouteTerrainSource source) {
+        this.asyncTerrain = source;
+        return this;
+    }
+
     private final ConcurrentHashMap<Long, Boolean> absentSavedChunks = new ConcurrentHashMap<>();
     private final ConcurrentHashMap<Long, Long> retryAfter = new ConcurrentHashMap<>();
     private final ConcurrentHashMap<Long, ChunkWater> pinnedSnapshots = new ConcurrentHashMap<>();
@@ -442,7 +449,8 @@ public final class RealBlockWaterMap {
         terrainMisses.incrementAndGet();
         if (System.nanoTime() < retryAfter.getOrDefault(k, 0L)) return null;
         if (!absentSavedChunks.containsKey(k)) {
-            var stored = NbtChunkWaterReader.readForRouting(level, cx, cz, 200L);
+            var stored = asyncTerrain == null ? NbtChunkWaterReader.readForRouting(level, cx, cz, 200L)
+                    : asyncTerrain.read(cx, cz);
             if (stored.status() == NbtChunkWaterReader.ReadStatus.READY) {
                 ChunkWater water = toChunkWater(stored.columns());
                 cache.put(k, water);
@@ -457,14 +465,17 @@ public final class RealBlockWaterMap {
         }
         var p = predictor;
         if (p == null) return pending(k);
-        var gate = p.gate().request(cx, cz);
-        if (!gate.isDone() || gate.isCompletedExceptionally() || gate.isCancelled()) {
-            predictTimeout.incrementAndGet();
-            return pending(k);
+        com.monpai.sailboatmod.route.terrain.Prediction prediction;
+        if (asyncTerrain != null) {
+            prediction = asyncTerrain.predict(cx, cz);
+        } else {
+            var gate = p.gate().request(cx, cz);
+            if (!gate.isDone() || gate.isCompletedExceptionally() || gate.isCancelled()) {
+                predictTimeout.incrementAndGet();
+                return pending(k);
+            }
+            prediction = p.predictChunk(cx, cz, 0L);
         }
-        // Ready data stays usable even after an earlier stage consumed its wait allowance.
-        // Per-stage waiting/search deadlines are enforced by HierarchicalWaterRoutePlanner.
-        var prediction = p.predictChunk(cx, cz, 0L);
         if (prediction.status() != com.monpai.sailboatmod.route.terrain.Prediction.Status.READY) {
             if (prediction.status() == com.monpai.sailboatmod.route.terrain.Prediction.Status.NOT_READY)
                 predictTimeout.incrementAndGet();
@@ -503,7 +514,7 @@ public final class RealBlockWaterMap {
             if (height != null && height != water.surfaceY[index]) return WaterColumn.blocked();
             height = water.surfaceY[index];
         }
-        return unknown ? null : WaterColumn.passable(new BlockPos(x, seaLevel, z), 0.0D);
+        return unknown ? null : WaterColumn.passable(new BlockPos(x, height + 1, z), 0.0D);
     }
 
     /** 预测后备:READY → 填预测列返回 true;NOT_READY/FAILED → 计数,返回 false(调用方填全陆)。无预测器 → false。 */

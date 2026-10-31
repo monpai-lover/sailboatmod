@@ -90,7 +90,6 @@ public final class HierarchicalWaterRoutePlanner {
         if (current == WaterRoutePathfinder.Status.SUCCESS) {
             if (coarse) {
                 List<BlockPos> guidance = new ArrayList<>(search.path());
-                removeSnappedEndpoints(guidance);
                 splitGuidance(guidance);
                 coarse = false;
             } else {
@@ -143,6 +142,7 @@ public final class HierarchicalWaterRoutePlanner {
     public Progress progress() { return new Progress(status, completedSegments, segments.size(), expandedNodes); }
     public WaterRouteFailureReason failureReason() { return failure; }
     public int currentStepSize() { return coarse ? coarsePolicy.stepSize() : detailStep; }
+    public int pendingEdges() { return search == null ? 0 : search.pendingEdges(); }
     public boolean isCoarseStage() { return coarse; }
 
     private WaterRoutePolicy detailWithStep(int step) {
@@ -166,13 +166,6 @@ public final class HierarchicalWaterRoutePlanner {
         failure = reason;
         search = null;
         accumulated.clear();
-    }
-
-    private void removeSnappedEndpoints(List<BlockPos> guidance) {
-        if (guidance.size() > 2 && !start.equals(coarseWorld.snap(start, coarsePolicy))
-                && guidance.get(1).equals(coarseWorld.snap(start, coarsePolicy))) guidance.remove(1);
-        if (guidance.size() > 2 && !goal.equals(coarseWorld.snap(goal, coarsePolicy))
-                && guidance.get(guidance.size() - 2).equals(coarseWorld.snap(goal, coarsePolicy))) guidance.remove(guidance.size() - 2);
     }
 
     private void splitGuidance(List<BlockPos> guidance) {
@@ -216,18 +209,13 @@ public final class HierarchicalWaterRoutePlanner {
         };
         private boolean unknown;
         private TrackingWorld(WaterRouteWorld delegate, BlockPos start, BlockPos goal) { this.delegate = delegate; this.start = start; this.goal = goal; }
-        private BlockPos snap(BlockPos p, WaterRoutePolicy policy) {
-            int step = policy.stepSize();
-            return new BlockPos(Math.floorDiv(p.getX(), step) * step, p.getY(), Math.floorDiv(p.getZ(), step) * step);
-        }
         @Override public WaterColumn sample(int x, int z, WaterRoutePolicy policy) {
-            BlockPos endpoint = start != null && snap(start, policy).getX() == x && snap(start, policy).getZ() == z ? start
-                    : goal != null && snap(goal, policy).getX() == x && snap(goal, policy).getZ() == z ? goal : null;
-            int sampleX = endpoint == null ? x : endpoint.getX(), sampleZ = endpoint == null ? z : endpoint.getZ();
-            long sampleKey = ((long) sampleX << 32) | (sampleZ & 0xFFFFFFFFL);
+            // Actual grid points must be sampled at their own coordinates. Relabelling a
+            // harbour's water as an offshore snapped cell could manufacture a route through land.
+            long sampleKey = ((long) x << 32) | (z & 0xFFFFFFFFL);
             WaterColumn column = start == null ? null : readySamples.get(sampleKey);
             if (column == null) {
-                column = delegate.sample(sampleX, sampleZ, policy);
+                column = delegate.sample(x, z, policy);
                 if (start != null && column != null) readySamples.put(sampleKey, column);
             }
             if (column == null) { unknown = true; return null; }

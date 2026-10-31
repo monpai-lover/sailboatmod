@@ -74,8 +74,15 @@ class HierarchicalWaterRoutePlannerTest {
         for (int i = 0; i < 100 && status == HierarchicalWaterRoutePlanner.Status.RUNNING; i++) status = planner.step(16);
         assertEquals(HierarchicalWaterRoutePlanner.Status.WAITING, status);
         int before = planner.progress().expandedNodes();
-        for (int i = 0; i < 8; i++) assertEquals(HierarchicalWaterRoutePlanner.Status.WAITING, planner.step(16));
-        assertEquals(before, planner.progress().expandedNodes(), "waiting must retain the frontier instead of redoing all known nodes");
+        // Pending edges now allow unrelated known nodes to advance. They must never consume
+        // more than the slice budget, and unresolved water cannot produce a saved route.
+        for (int i = 0; i < 8; i++) {
+            int previous = planner.progress().expandedNodes();
+            assertNotEquals(HierarchicalWaterRoutePlanner.Status.SUCCESS, planner.step(16));
+            assertTrue(planner.progress().expandedNodes() - previous <= 16);
+            assertTrue(planner.path().isEmpty());
+        }
+        assertTrue(planner.progress().expandedNodes() >= before);
         world.pendingBand = false;
         assertEquals(HierarchicalWaterRoutePlanner.Status.SUCCESS, complete(planner));
     }
@@ -99,7 +106,7 @@ class HierarchicalWaterRoutePlannerTest {
 
     private static HierarchicalWaterRoutePlanner.Status complete(HierarchicalWaterRoutePlanner planner) {
         HierarchicalWaterRoutePlanner.Status status = HierarchicalWaterRoutePlanner.Status.RUNNING;
-        for (int i = 0; i < 30_000 && status == HierarchicalWaterRoutePlanner.Status.RUNNING; i++) status = planner.step(64);
+        for (int i = 0; i < 30_000 && (status == HierarchicalWaterRoutePlanner.Status.RUNNING || status == HierarchicalWaterRoutePlanner.Status.WAITING); i++) status = planner.step(64);
         return status;
     }
 
