@@ -1,0 +1,100 @@
+name: Validate destination route network and voyage tracking
+on:
+  push:
+    branches: [feat/destination-route-network]
+    paths: ['tools/destination-update/**', '.github/workflows/destination-network.yml']
+  workflow_dispatch:
+permissions:
+  contents: write
+concurrency:
+  group: destination-network-${{ github.ref }}
+  cancel-in-progress: true
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          lfs: true
+          fetch-depth: 2
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
+      - name: Check and stage exact reviewed source changes
+        run: |
+          python3 - <<'PY'
+          import base64,lzma,hashlib,json,pathlib
+          payload=lzma.decompress(base64.b64decode(''.join(pathlib.Path('tools/destination-update/part%02d.txt'%i).read_text() for i in range(20))))
+          assert hashlib.sha256(payload).hexdigest()=='b0314ad92098808fe0185e86bfed6aca2b06004ddab6e5b4669a0d07190dac04', 'Transport checksum mismatch'
+          files=json.loads(payload)
+          outputs={}
+          for name,item in files.items():
+              p=pathlib.Path(name)
+              assert not p.is_absolute() and '..' not in p.parts
+              assert name.startswith(('src/','docs/handoff/','tools/tellus-native/'))
+              old=p.read_bytes() if p.exists() else None
+              assert (hashlib.sha256(old).hexdigest() if old is not None else None)==item['base'], 'Concurrent source change: '+name
+              lines=(old or b'').decode().splitlines(keepends=True)
+              for a,b,replacement in reversed(item['edits']):
+                  lines[a:b]=[replacement]
+              result=''.join(lines).encode()
+              assert hashlib.sha256(result).hexdigest()==item['result'], 'Result mismatch: '+name
+              outputs[p]=result
+          for p,result in outputs.items():
+              p.parent.mkdir(parents=True,exist_ok=True);p.write_bytes(result)
+          pathlib.Path('/tmp/destination-files.json').write_text(json.dumps(list(files)))
+          print('Verified exact source edits:',len(files))
+          PY
+      - name: Compile, test routing and navigation, build both artifacts
+        run: |
+          chmod +x gradlew
+          ./gradlew --no-daemon -PneoForge.disableRecompilation=true -PfixIndex=destination_network '-Dorg.gradle.jvmargs=-Xmx3G -Dfile.encoding=UTF-8' test --tests '*route.water.*' --tests '*route.terrain.*' --tests '*WaterPolylineFollowerTest' --tests '*ShippingTraceRecordTest' --tests '*ChatFlag*Test' --tests '*NationOfficeTitleTest' --tests '*FlagPreviewLayoutTest' jar marketWebJar
+          cp -r build/test-results/test build/offline-test-results
+      - name: Prepare pinned native Tellus runtime
+        run: |
+          mkdir -p build/native-runtime build/native-evidence
+          python3 - <<'PY'
+          import pathlib,zipfile,hashlib
+          p=pathlib.Path('libs/compile-only/Tellus-neoforge-1.21.1-0.8.3.jar')
+          pathlib.Path('build/native-evidence/tellus-sha256.txt').write_text(hashlib.sha256(p.read_bytes()).hexdigest()+'\n')
+          with zipfile.ZipFile(p) as z:
+              for n in z.namelist():
+                  if n.startswith('META-INF/jarjar/') and n.endswith('.jar'):
+                      pathlib.Path('build/native-runtime',pathlib.Path(n).name).write_bytes(z.read(n))
+          PY
+      - name: Actual Tellus long routes, saved terrain, postprocessing and reversed subroute reuse
+        run: |
+          ./gradlew --no-daemon -I tools/tellus-native/native.init.gradle -PneoForge.disableRecompilation=true '-Dorg.gradle.jvmargs=-Xmx2G -Dfile.encoding=UTF-8' test --tests '*TellusNativeRoutesTest' --rerun-tasks
+      - name: Publish tested sources without overwriting concurrent edits
+        run: |
+          git fetch origin feat/destination-route-network
+          test "$(git rev-parse FETCH_HEAD)" = "${{ github.sha }}"
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          python3 - <<'PY'
+          import pathlib,json,subprocess
+          subprocess.run(['git','add','--',*json.loads(pathlib.Path('/tmp/destination-files.json').read_text())],check=True)
+          PY
+          git commit -m 'feat: reusable water network, destination dispatch and monotonic voyage following'
+          git push origin HEAD:feat/destination-route-network
+      - name: Archive exact source and evidence
+        if: always()
+        run: |
+          mkdir -p build/native-evidence
+          git rev-parse HEAD > build/native-evidence/commit.txt
+          sha256sum build/libs/*.jar > build/native-evidence/jar-sha256.txt || true
+          tar czf build/verified-source.tar.gz src tools docs build.gradle gradle.properties settings.gradle
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: destination-network-${{ github.run_id }}
+          path: |
+            build/libs/*.jar
+            build/native-evidence/
+            build/route-regression/
+            build/offline-test-results/
+            build/test-results/test/
+            build/verified-source.tar.gz
+          retention-days: 14
