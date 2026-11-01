@@ -44,8 +44,20 @@ jobs:
           for name,data in files.items():
               p=pathlib.Path(name);p.parent.mkdir(parents=True,exist_ok=True);p.write_bytes(data)
           pathlib.Path('/tmp/harbor-files.json').write_text(json.dumps(list(files)))
-          pathlib.Path('/tmp/harbor-tests.gradle').write_text("allprojects { afterEvaluate { if (plugins.hasPlugin('java')) { tasks.named('test', Test) { maxHeapSize = '3G'; filter { excludeTestsMatching '*TellusTaipeiAmsterdamBenchmark' }; testLogging { events 'failed', 'skipped'; showStandardStreams = true } } } }\n")
           PY
+          cat > /tmp/harbor-tests.gradle <<'GRADLE'
+          allprojects {
+            afterEvaluate {
+              if (plugins.hasPlugin('java')) {
+                tasks.named('test', Test) {
+                  maxHeapSize = '3G'
+                  filter { excludeTestsMatching '*TellusTaipeiAmsterdamBenchmark' }
+                  testLogging { events 'failed', 'skipped'; showStandardStreams = true }
+                }
+              }
+            }
+          }
+          GRADLE
           git diff --check
       - name: Full compile, focused new cases and existing road and water regressions, both jars
         run: |
