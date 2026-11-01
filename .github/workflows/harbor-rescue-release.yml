@@ -40,6 +40,15 @@ jobs:
                   data=''.join(lines).encode()
                   assert hashlib.sha256(data).hexdigest()==after, 'Transfer mismatch: '+name
                   files[name]=data
+          for name,before,after,changes in json.loads(pathlib.Path('tools/harbor-rescue-update/followup.json').read_text()):
+              assert name in files and hashlib.sha256(files[name]).hexdigest()==before
+              lines=files[name].decode().splitlines(keepends=True)
+              for start,end,text in reversed(changes):
+                  assert 0<=start<=end<=len(lines)
+                  lines[start:end]=text.splitlines(keepends=True)
+              data=''.join(lines).encode()
+              assert hashlib.sha256(data).hexdigest()==after
+              files[name]=data
           assert len(files)==16
           for name,data in files.items():
               p=pathlib.Path(name);p.parent.mkdir(parents=True,exist_ok=True);p.write_bytes(data)
