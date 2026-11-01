@@ -1,0 +1,105 @@
+--- a/src/main/java/com/monpai/sailboatmod/route/WaterPolylineFollower.java
++++ b/src/main/java/com/monpai/sailboatmod/route/WaterPolylineFollower.java
+@@ -34,8 +34,9 @@
+                 Projection p=project(boat,route.get(index-1),target);
+                 passed=p.t>=1.0&&p.lateral<=corridor;
+                 Projection n=project(boat,target,next);
+-                // A safely rounded corner can enter the next leg without touching the vertex.
+-                passed|=p.t>=.85&&n.t>0&&n.t<=1&&n.lateral<=corridor&&horizontal(boat,target)<=8;
++                // Rejoin the immediate next leg even after a long overshoot. Only the short
++                // boat-to-projected-forward connection is skipped, and it is live-checked below.
++                passed|=p.t>=.85&&n.t>0&&n.t<=1&&n.lateral<=corridor;
+             }
+             if(!reached&&!passed)break;
+             Projection n=project(boat,target,next);double len=horizontal(target,next);
+--- a/src/test/java/com/monpai/sailboatmod/route/WaterPolylineFollowerTest.java
++++ b/src/test/java/com/monpai/sailboatmod/route/WaterPolylineFollowerTest.java
+@@ -16,6 +16,14 @@
+     @Test void projectionProgressMeasuresDistanceNotNumberOfVertices(){assertEquals(.75,WaterPolylineFollower.progress(List.of(p(0,0),p(10,0),p(100,0)),2,p(75,0)),1e-9);}
+     @Test void hairpinDoesNotJumpToNearbyLaterParallelLeg(){var path=List.of(p(0,0),p(100,0),p(100,4),p(0,4));assertEquals(1,WaterPolylineFollower.advance(path,1,p(49,0),p(50,3),1,3,(a,b)->true));}
+     @Test void roundedCornerCanEnterNextSegmentWithoutTouchingVertex(){var path=List.of(p(0,0),p(10,0),p(10,20));assertEquals(2,WaterPolylineFollower.advance(path,1,p(9,0),p(10,2),.5,3,(a,b)->true));}
++    @Test void alreadyOnNextLegDoesNotOrbitBackToDistantMissedCorner(){
++        var path=List.of(p(0,0),p(10,0),p(10,100));
++        assertEquals(2,WaterPolylineFollower.advance(path,1,p(10,39),p(10,40),1,3,(a,b)->WaterPolylineFollower.horizontal(a,b)<=5));
++    }
++    @Test void distantNextLegRejoinStillRequiresWaterConnection(){
++        var path=List.of(p(0,0),p(10,0),p(10,100));
++        assertEquals(1,WaterPolylineFollower.advance(path,1,p(10,39),p(10,40),1,3,(a,b)->false));
++    }
+     @Test void turningBoatModelCompletesPolylineWithMonotonicIndex(){
+         var path=List.of(p(0,0),p(40,0),p(40,40),p(80,40),p(100,70));Vec3 boat=p(0,0),last=boat;double yaw=0;int index=0;
+         for(int tick=0;tick<10000;tick++){
+--- a/src/test/java/com/monpai/sailboatmod/route/water/RouteTaskRecoveryWiringTest.java
++++ b/src/test/java/com/monpai/sailboatmod/route/water/RouteTaskRecoveryWiringTest.java
+@@ -22,7 +22,7 @@
+         assertFalse(p.contains("getChunk"));assertFalse(p.contains(".join("));
+     }
+     @Test void taskPacketsAreRegisteredAndProtocolIsBumped()throws Exception{
+-        String p=src("network/ModNetwork.java");assertTrue(p.contains("PROTOCOL_VERSION = \"19\""));
++        String p=src("network/ModNetwork.java");assertTrue(p.contains("PROTOCOL_VERSION = \"20\""));
+         assertTrue(p.contains("RequestRouteTasksPacket.class"));assertTrue(p.contains("SyncRouteTasksPacket.class"));
+     }
+ }
+--- a/src/main/java/com/monpai/sailboatmod/route/water/WaterDestinationService.java
++++ b/src/main/java/com/monpai/sailboatmod/route/water/WaterDestinationService.java
+@@ -17,9 +17,10 @@
+     private record Key(String dimension,BlockPos from,BlockPos to) {}
+     private static final class Job {
+         final ServerLevel level; final Key key; final UUID ticket=UUID.randomUUID(); final long started=System.nanoTime();
+-        WaterRouteTask task; boolean finished; long retryAfter;
++        WaterRouteTask task; boolean finished,released; long retryAfter;
+         Job(ServerLevel level,Key key){this.level=level;this.key=key;}
+         void release(){
++            if(released)return;released=true;
+             level.getChunkSource().removeRegionTicket(TICKET,new net.minecraft.world.level.ChunkPos(key.from),0,ticket);
+             level.getChunkSource().removeRegionTicket(TICKET,new net.minecraft.world.level.ChunkPos(key.to),0,ticket);
+         }
+@@ -44,11 +45,16 @@
+         Job job=new Job(level,key);jobs.put(key,job);
+         level.getChunkSource().addRegionTicket(TICKET,new net.minecraft.world.level.ChunkPos(key.from),0,job.ticket);
+         level.getChunkSource().addRegionTicket(TICKET,new net.minecraft.world.level.ChunkPos(key.to),0,job.ticket);
++        try {
+         var submitted=WaterAutoRouteService.submitDestinationRoute(level,source,target,null,result->{
+             job.finished=true;job.retryAfter=System.nanoTime()+60_000_000_000L;job.release();
+         });
+         if(!submitted.successful()){job.finished=true;job.retryAfter=now+10_000_000_000L;job.release();}
+         else job.task=WaterRouteTaskService.global().find(key.dimension+"|"+key.from.asLong()+"|"+key.to.asLong());
++        } catch(RuntimeException failure) {
++            job.finished=true;job.retryAfter=now+60_000_000_000L;job.release();
++            com.mojang.logging.LogUtils.getLogger().warn("[WaterPath] 自动目的地任务准备失败 {}",key,failure);
++        }
+         return -1;
+     }
+     public static boolean pending(ServerLevel level,BlockPos from,BlockPos to){
+--- a/src/main/java/com/monpai/sailboatmod/network/packet/DepartForDestinationPacket.java
++++ b/src/main/java/com/monpai/sailboatmod/network/packet/DepartForDestinationPacket.java
+@@ -39,6 +39,7 @@
+                 var destination=PortDockSnapshot.loaded(level,p.target);
+                 if(error!=null||PortDockSnapshot.loaded(level,p.source)!=dock||!PortDockSnapshot.isPort(destination)
+                         ||!dock.canPlanDestination(boat,player)) {session.end(0,RouteWorkProgressPacket.FAILED,"码头或船只状态已改变");return;}
++                try {
+                 var result=WaterAutoRouteService.submitDestinationRoute(level,dock,destination,player,planned->{
+                     if(session.closed||player.isRemoved()||player.level()!=level||!planned.successful())return;
+                     if(!dock.canPlanDestination(boat,player)||dock.isRemoved()||destination.isRemoved()
+@@ -52,6 +53,10 @@
+                     player.sendSystemMessage(Component.literal(started?"已出发前往 "+destination.getDockName():"未发船：请检查船只、租金或货物状态"));
+                 });
+                 if(!result.successful())session.end(0,RouteWorkProgressPacket.FAILED,WaterAutoRouteService.messageFor(result.reason()).getString());
++                } catch(RuntimeException failure) {
++                    session.end(0,RouteWorkProgressPacket.FAILED,"目的地任务准备失败，未发船");
++                    com.mojang.logging.LogUtils.getLogger().warn("[WaterPath] 玩家目的地任务准备失败 {}",p.request,failure);
++                }
+             }));
+         });context.get().setPacketHandled(true);
+     }
+--- a/docs/handoff/DESTINATION_WATER_NETWORK.md
++++ b/docs/handoff/DESTINATION_WATER_NETWORK.md
+@@ -18,7 +18,7 @@
+ - Bounded arc-length lookahead follows the polyline; live checks reject shortcutting land. Sharp heading errors/corners reduce speed. Per boat live-cell checks cached per tick, capped512 unique cells; no chunk loading in this check.
+ - Passenger/server-authority policy retained; no client route steering. Actual passenger/vehicle packet and physics behavior still require game acceptance testing.
+ - Trace geometry follows the boat's active route including docking/rescue/splices, not an obsolete initial route; up to65536 points instead of2048. New oversized boat itineraries are rejected rather than displaying a truncated path. Actual tracked position remains distinct from the planned path and updates at the existing2s cadence.
+-- All boats' individual cargo-order traces receive identical geometry/position updates. Trace schema and HTTP endpoints unchanged; marketweb addon not rebuilt by these changes.
++- All boats' individual cargo-order traces receive identical geometry/position updates. Trace schema and HTTP endpoints unchanged; marketweb sources are unchanged; its artifact is also compiled as a compatibility check.
+ 
+ ## Search and safety
+ - Includes the previously local adaptive progress budget; genuine progress buys bounded extra budget, not repetitive requests.

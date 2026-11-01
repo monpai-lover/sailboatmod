@@ -25,7 +25,7 @@ jobs:
       - name: Check and stage exact reviewed source changes
         run: |
           python3 - <<'PY'
-          import base64,lzma,hashlib,json,pathlib
+          import base64,lzma,hashlib,json,pathlib,subprocess
           payload=lzma.decompress(base64.b64decode(''.join(pathlib.Path('tools/destination-update/part%02d.txt'%i).read_text() for i in range(20))))
           assert hashlib.sha256(payload).hexdigest()=='b0314ad92098808fe0185e86bfed6aca2b06004ddab6e5b4669a0d07190dac04', 'Transport checksum mismatch'
           files=json.loads(payload)
@@ -44,13 +44,20 @@ jobs:
               outputs[p]=result
           for p,result in outputs.items():
               p.parent.mkdir(parents=True,exist_ok=True);p.write_bytes(result)
-          pathlib.Path('/tmp/destination-files.json').write_text(json.dumps(list(files)))
-          print('Verified exact source edits:',len(files))
+          followup=pathlib.Path('tools/destination-update/followup.patch')
+          assert hashlib.sha256(followup.read_bytes()).hexdigest()=='c2da9ecf01f0e9253df8178c14cb3640c09178ca1594579347edcd97f5d0b738'
+          subprocess.run(['git','apply','--check',str(followup)],check=True)
+          subprocess.run(['git','apply',str(followup)],check=True)
+          names=set(files)
+          for line in followup.read_text().splitlines():
+              if line.startswith('+++ b/'): names.add(line[6:])
+          pathlib.Path('/tmp/destination-files.json').write_text(json.dumps(sorted(names)))
+          print('Verified exact source edits:',len(names))
           PY
       - name: Compile, test routing and navigation, build both artifacts
         run: |
           chmod +x gradlew
-          ./gradlew --no-daemon -PneoForge.disableRecompilation=true -PfixIndex=destination_network '-Dorg.gradle.jvmargs=-Xmx3G -Dfile.encoding=UTF-8' test --tests '*route.water.*' --tests '*route.terrain.*' --tests '*WaterPolylineFollowerTest' --tests '*ShippingTraceRecordTest' --tests '*ChatFlag*Test' --tests '*NationOfficeTitleTest' --tests '*FlagPreviewLayoutTest' jar marketWebJar
+          ./gradlew --no-daemon -PneoForge.disableRecompilation=true -PfixIndex=destination_network '-Dorg.gradle.jvmargs=-Xmx3G -Dfile.encoding=UTF-8' test --tests '*route.water.*' --tests '*route.terrain.*' --tests '*WaterPolylineFollowerTest' --tests '*ShippingTrace*Test' --tests '*entity.*' --tests '*AutopilotRouteWindowTest' --tests '*PhysicalMarketDispatchTest' --tests '*PickupLockTest' --tests '*SailboatControlInputPacketTest' --tests '*ChatFlag*Test' --tests '*NationOfficeTitleTest' --tests '*FlagPreviewLayoutTest' jar marketWebJar
           cp -r build/test-results/test build/offline-test-results
       - name: Prepare pinned native Tellus runtime
         run: |
