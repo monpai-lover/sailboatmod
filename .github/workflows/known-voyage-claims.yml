@@ -35,6 +35,17 @@ jobs:
           PY
           git apply --check build/verification/changes.patch
           git apply build/verification/changes.patch
+          python3 - <<'PY'
+          from pathlib import Path
+          p=Path('src/main/java/com/monpai/sailboatmod/block/entity/DockBlockEntity.java')
+          text=p.read_text(); anchor='import net.minecraft.core.BlockPos;'
+          assert anchor in text
+          if 'import net.minecraft.server.level.ServerLevel;' not in text:
+              p.write_text(text.replace(anchor,anchor+'\nimport net.minecraft.server.level.ServerLevel;'))
+          PY
+          for patch in tools/known-voyage-claims/fixes/*.patch; do
+            if [ -f "$patch" ]; then git apply --check "$patch"; git apply "$patch"; fi
+          done
           git diff --check
       - name: Full NeoForge compilation, regression suite and both JARs
         run: |
