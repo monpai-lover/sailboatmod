@@ -1,10 +1,11 @@
-name: Verify harbor connectors, local rescue and helm seating
+name: Harbor connectors, local rescue and helm regression
 on:
   push:
     branches: [fix/autoroute-candidates-flag-preview]
-    paths: ['tools/harbor-rescue-update/**', '.github/workflows/harbor-rescue-release.yml']
+    paths: ['src/main/java/com/monpai/sailboatmod/route/water/**', 'src/main/java/com/monpai/sailboatmod/entity/Sailboat*.java', 'src/main/java/com/monpai/sailboatmod/entity/AutopilotRerouteRequests.java', 'src/main/java/com/monpai/sailboatmod/client/renderer/SailboatEntityRenderer.java', 'src/test/java/com/monpai/sailboatmod/route/water/**', 'src/test/java/com/monpai/sailboatmod/entity/*Rescue*Test.java']
+  workflow_dispatch:
 permissions:
-  contents: write
+  contents: read
 concurrency:
   group: harbor-rescue-${{ github.ref }}
   cancel-in-progress: true
@@ -16,44 +17,12 @@ jobs:
       - uses: actions/checkout@v4
         with:
           lfs: true
-          fetch-depth: 2
       - uses: actions/setup-java@v4
         with:
           distribution: temurin
           java-version: '21'
-      - name: Apply reviewed plaintext changes with exact before and after hashes
+      - name: Complete compilation, targeted road/navigation/rescue/seat tests and packaging
         run: |
-          python3 - <<'PY'
-          import pathlib,json,hashlib
-          files={}
-          for part in sorted(pathlib.Path('tools/harbor-rescue-update').glob('part-*.json')):
-              for name,before,after,changes in json.loads(part.read_text()):
-                  p=pathlib.Path(name)
-                  assert name.startswith('src/') and '..' not in p.parts and not p.is_absolute()
-                  assert name not in files
-                  old=p.read_bytes() if p.exists() else None
-                  assert (hashlib.sha256(old).hexdigest() if old is not None else None)==before, 'Concurrent change: '+name
-                  lines=(old or b'').decode().splitlines(keepends=True)
-                  for start,end,text in reversed(changes):
-                      assert 0<=start<=end<=len(lines)
-                      lines[start:end]=text.splitlines(keepends=True)
-                  data=''.join(lines).encode()
-                  assert hashlib.sha256(data).hexdigest()==after, 'Transfer mismatch: '+name
-                  files[name]=data
-          for name,before,after,changes in json.loads(pathlib.Path('tools/harbor-rescue-update/followup.json').read_text()):
-              assert name in files and hashlib.sha256(files[name]).hexdigest()==before
-              lines=files[name].decode().splitlines(keepends=True)
-              for start,end,text in reversed(changes):
-                  assert 0<=start<=end<=len(lines)
-                  lines[start:end]=text.splitlines(keepends=True)
-              data=''.join(lines).encode()
-              assert hashlib.sha256(data).hexdigest()==after
-              files[name]=data
-          assert len(files)==16
-          for name,data in files.items():
-              p=pathlib.Path(name);p.parent.mkdir(parents=True,exist_ok=True);p.write_bytes(data)
-          pathlib.Path('/tmp/harbor-files.json').write_text(json.dumps(list(files)))
-          PY
           cat > /tmp/harbor-tests.gradle <<'GRADLE'
           allprojects {
             afterEvaluate {
@@ -67,9 +36,6 @@ jobs:
             }
           }
           GRADLE
-          git diff --check
-      - name: Full compile, focused new cases and existing road and water regressions, both jars
-        run: |
           chmod +x gradlew
           ./gradlew --no-daemon -I /tmp/harbor-tests.gradle -PneoForge.disableRecompilation=true -PfixIndex=harbor_rescue_helm '-Dorg.gradle.jvmargs=-Xmx2G -Dfile.encoding=UTF-8' test --tests '*road.*' --tests '*roadplanner.*' --tests '*route.water.*' --tests '*route.terrain.*' --tests '*WaterPolylineFollowerTest' --tests '*ShippingTraceRecordTest' --tests '*Autopilot*Test' --tests '*SailboatHelmAndRescueTest' --tests '*LookaheadGuardWiringContractTest' --tests '*ChatFlag*Test' --tests '*NationOfficeTitleTest' --tests '*FlagPreviewLayoutTest' jar marketWebJar
           cp -r build/test-results/test build/offline-test-results
@@ -87,27 +53,14 @@ jobs:
                   if n.startswith('META-INF/jarjar/') and n.endswith('.jar'):
                       pathlib.Path('build/native-runtime',pathlib.Path(n).name).write_bytes(z.read(n))
           PY
-      - name: Actual Tellus terrain long routes and reverse reuse
+      - name: Actual Tellus terrain long routes and reverse reuse compatibility
         run: |
           ./gradlew --no-daemon -I tools/tellus-native/native.init.gradle -PneoForge.disableRecompilation=true '-Dorg.gradle.jvmargs=-Xmx2G -Dfile.encoding=UTF-8' test --tests '*TellusNativeRoutesTest' --rerun-tasks
-      - name: Publish tested changes only on unchanged branch
-        run: |
-          git fetch origin fix/autoroute-candidates-flag-preview
-          test "$(git rev-parse FETCH_HEAD)" = "${{ github.sha }}"
-          git config user.name 'github-actions[bot]'
-          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
-          python3 - <<'PY'
-          import subprocess,json,pathlib
-          subprocess.run(['git','add','--',*json.loads(pathlib.Path('/tmp/harbor-files.json').read_text())],check=True)
-          PY
-          git commit -m 'fix: strictly repair harbour connectors, rejoin local voyages and align helm seating' -m 'Replace invalid-input postprocessing fallback with bounded real-water detours. Share strict local rescue, retain the voyage suffix, stop failed rescues, honour cancellation, remove tick-thread NBT search, and align the driver with the rendered helm.'
-          git push origin HEAD:fix/autoroute-candidates-flag-preview
       - name: Archive exact source, reports and artifact identity
         if: always()
         run: |
           mkdir -p build/native-evidence
           git rev-parse HEAD > build/native-evidence/commit.txt
-          git diff --stat > build/native-evidence/uncommitted-stat.txt
           sha256sum build/libs/*.jar > build/native-evidence/jar-sha256.txt || true
           tar czf build/verified-source.tar.gz src tools docs build.gradle gradle.properties settings.gradle
       - uses: actions/upload-artifact@v4
