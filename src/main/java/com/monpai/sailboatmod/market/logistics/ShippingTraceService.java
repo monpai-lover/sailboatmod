@@ -149,6 +149,15 @@ public final class ShippingTraceService {
         return out;
     }
 
+    /** Replace only the rendered voyage geometry; do not recreate IDs, ownership, cargo or history. */
+    public static void replaceRouteGeometry(net.minecraft.world.level.Level level,String traceId,List<Vec3> points,
+                                           int target,double progress) {
+        if(!(level instanceof ServerLevel)||traceId==null||traceId.isBlank()||points==null||points.size()<2)return;
+        var data=ShippingTraceSavedData.get(level);var trace=data.getTrace(traceId);
+        if(trace==null||!trace.dimensionId().equals(level.dimension().location().toString())||trace.waypoints().equals(points))return;
+        data.putTrace(trace.withRouteGeometry(points,target,progress,level.getGameTime()));
+    }
+
     public static MarketWebMapDtos.ShipmentTrace toDto(ShippingTraceRecord trace,
                                                        NationSavedData nationData,
                                                        MarketSavedData marketData,

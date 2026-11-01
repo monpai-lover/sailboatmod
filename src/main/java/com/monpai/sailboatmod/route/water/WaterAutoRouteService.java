@@ -277,13 +277,36 @@ public final class WaterAutoRouteService {
                 : WaterRouteResult.failure(WaterRouteFailureReason.ALREADY_PENDING);
     }
 
+    /** Destination jobs share the same verified network, solver, cancellation and final checks.
+     * This entry is called only after carrier/market authorization on the server thread.
+     */
+    public static WaterRouteResult<Void> submitDestinationRoute(ServerLevel level, DockBlockEntity source,
+            DockBlockEntity target, @Nullable ServerPlayer player,
+            java.util.function.Consumer<WaterRouteResult<RouteDefinition>> completion) {
+        if (level == null || !PortDockSnapshot.isPort(source) || !PortDockSnapshot.isPort(target))
+            return WaterRouteResult.failure(WaterRouteFailureReason.INVALID_TERMINAL_KIND);
+        return submitTellusAutoRoute(level, source, target, snapshot(source), snapshot(target), player, false, completion);
+    }
+
     /** Tellus: real-first berth validation (including unsaved edits), then full background routing. */
     private static WaterRouteResult<Void> submitTellusAutoRoute(ServerLevel level, DockBlockEntity source,
             DockBlockEntity target, DockSnapshot sourceSnapshot, DockSnapshot targetSnapshot,
             @Nullable ServerPlayer player) {
+        return submitTellusAutoRoute(level, source, target, sourceSnapshot, targetSnapshot, player, true, null);
+    }
+
+    private static WaterRouteResult<Void> submitTellusAutoRoute(ServerLevel level, DockBlockEntity source,
+            DockBlockEntity target, DockSnapshot sourceSnapshot, DockSnapshot targetSnapshot,
+            @Nullable ServerPlayer player, boolean requireManagement,
+            java.util.function.Consumer<WaterRouteResult<RouteDefinition>> completion) {
         WaterRouteResult<Void> permission = WaterRouteCandidateService.canListCandidate(level, source, target);
         if (!permission.successful()) return permission;
         var predictor = com.monpai.sailboatmod.route.terrain.TellusTerrain.forLevel(level).orElse(null);
+        // The main thread snapshots immutable geometry, never builds or searches the graph.
+        WaterRouteNetworkSavedData infrastructure = WaterRouteNetworkSavedData.get(level);
+        infrastructure.importDock(source);
+        infrastructure.importDock(target);
+        List<WaterRouteNetwork.Route> network = infrastructure.snapshot();
         var sourceZone = PortTerrainProbe.zone(sourceSnapshot.zone());
         var targetZone = PortTerrainProbe.zone(targetSnapshot.zone());
         var probe = PortTerrainProbe.capture(level, List.of(sourceZone, targetZone), predictor);
@@ -310,6 +333,10 @@ public final class WaterAutoRouteService {
                 if (start.usable() && end.usable()) {
                     BlockPos a = new BlockPos(start.berth().x(), start.berth().y(), start.berth().z());
                     BlockPos b = new BlockPos(end.berth().x(), end.berth().y(), end.berth().z());
+                    WaterRouteResult<List<BlockPos>> reused = tryReuseNetwork(level, a, b, seaY,
+                            Math.max(1, policy.boatHalfWidth()), policy, metas, bar, predictor, probe.realSnapshots(), network);
+                    if (reused != null && reused.successful()) return reused;
+                    WaterRouteCancellation.check();
                     return runSingleSegmentNbt(level, a, b, seaY, Math.max(1, policy.boatHalfWidth()),
                             policy, metas, bar, predictor,
                             com.monpai.sailboatmod.route.terrain.PredictionBudget.sixtySeconds(), probe.realSnapshots());
@@ -323,15 +350,17 @@ public final class WaterAutoRouteService {
                 targetSnapshot.pos(), sourceSnapshot.pos(), targetSnapshot.pos(), playerName(player), policy, search, result -> {
             // Do not publish a late result after a dock/zone/ownership change.
             WaterRouteResult<List<BlockPos>> accepted = result;
-            if (result.successful() && ((player != null && !source.canManageDock(player)) || source.isRemoved() || target.isRemoved()
+            if (result.successful() && ((requireManagement && player != null && !source.canManageDock(player)) || source.isRemoved() || target.isRemoved()
                     || !snapshot(source).equals(sourceSnapshot) || !snapshot(target).equals(targetSnapshot)
                     || !WaterRouteCandidateService.canListCandidate(level, source, target).successful())) {
                 accepted = WaterRouteResult.failure(WaterRouteFailureReason.TERRAIN_NOT_READY);
             }
             if (accepted.successful()) bar.done();
             else bar.fail(accepted.reason() == WaterRouteFailureReason.TERRAIN_NOT_READY ? "地形待验证" : "航线未建立");
-            applyCompletedRoute(level, source, target, sourceSnapshot, targetSnapshot, sourceTown, targetTown,
+            RouteDefinition created = applyCompletedRoute(level, source, target, sourceSnapshot, targetSnapshot, sourceTown, targetTown,
                     accepted, metas.get(), player);
+            if (completion != null) completion.accept(created != null ? WaterRouteResult.success(created)
+                    : WaterRouteResult.failure(accepted.successful() ? WaterRouteFailureReason.NO_WATER_PATH : accepted.reason()));
         });
         WaterRouteResult<WaterRouteTask> submitted = WaterRouteTaskService.global().submit(task);
         if (!submitted.successful()) return WaterRouteResult.failure(submitted.reason());
@@ -356,6 +385,70 @@ public final class WaterAutoRouteService {
     // 阶段一粗寻渐进 step 梯度:大 step 快(路宽时几十节点出走向),失败逐级缩小直到踩进 1-8 格窄海峡。
     // 4 是最小档(踩 4-8 格海峡);更小(1-3 格)海峡极罕见且船未必过得去,不再降以免节点爆炸。
     public static final int[] COARSE_STEP_LADDER = {24, 12, 8, 4};
+
+    /** Reuse geometry, not a dock's selected route index. Gaps still run the real solver.
+     * A rejected cache never publishes a route; the caller falls back to ordinary planning.
+     */
+    private static WaterRouteResult<List<BlockPos>> tryReuseNetwork(ServerLevel level, BlockPos source, BlockPos target,
+            int seaY, int halfWidth, WaterRoutePolicy policy,
+            java.util.concurrent.atomic.AtomicReference<List<WaypointMeta>> metas, WaterRouteProgressBar bar,
+            @Nullable com.monpai.sailboatmod.route.terrain.TerrainPredictor predictor,
+            java.util.Map<Long,NbtChunkWaterReader.ChunkColumns> snapshots, List<WaterRouteNetwork.Route> network) {
+        var planned=WaterRouteNetwork.plan(network,new Vec3(source.getX()+.5,source.getY(),source.getZ()+.5),
+                new Vec3(target.getX()+.5,target.getY(),target.getZ()+.5));
+        if(planned.isEmpty())return null;
+        var plan=planned.get();
+        bar.update(3,"复用航路 "+Math.round(plan.reusedLength())+"格 · 待补算 "+Math.round(plan.newLength())+"格");
+        LOGGER.info("[WaterPath] 航路网络复用 routes={} reused={} gaps={} legs={}",plan.routeIds().size(),
+                Math.round(plan.reusedLength()),Math.round(plan.newLength()),plan.legs().size());
+        RealBlockWaterMap map=new RealBlockWaterMap(level,seaY).enableOnDemand().retryUnknownPrediction()
+                .withPredictor(predictor,com.monpai.sailboatmod.route.terrain.PredictionBudget.sixtySeconds());
+        snapshots.forEach((k,v)->map.seedChunk(net.minecraft.world.level.ChunkPos.getX(k),net.minecraft.world.level.ChunkPos.getZ(k),v));
+        try(RouteTerrainSource terrain=new RouteTerrainSource(level,predictor,
+                ()->com.monpai.sailboatmod.route.terrain.TellusSurfaceSamplers.forLevel(level).orElse(null))) {
+            map.withAsyncTerrain(terrain);
+            List<BlockPos> joined=new ArrayList<>();int completed=0;
+            for(var leg:plan.legs()) {
+                WaterRouteCancellation.check();
+                List<BlockPos> points=new ArrayList<>();
+                for(Vec3 v:leg.points()) {BlockPos b=blockPos(v);if(points.isEmpty()||!points.getLast().equals(b))points.add(b);}
+                if(points.size()<2) {if(!points.isEmpty()&&joined.isEmpty())joined.add(points.getFirst());continue;}
+                if(leg.reused()) {
+                    // Check every existing edge against this world now. Retain completed edge results
+                    // while cold neighbours are loading, rather than serially restarting at edge zero.
+                    boolean[] checked=new boolean[points.size()-1];int remaining=checked.length;
+                    long deadline=System.nanoTime()+60_000_000_000L;
+                    while(remaining>0 && System.nanoTime()<deadline) {
+                        WaterRouteCancellation.check();int probes=0;
+                        for(int i=0;i<checked.length&&probes<128;i++)if(!checked[i]) {
+                            probes++;int before=map.terrainMisses();boolean clear=map.segmentHullClear(points.get(i),points.get(i+1),halfWidth);
+                            if(map.terrainMisses()!=before)continue;
+                            if(!clear) {LOGGER.info("[WaterPath] 缓存航段已改变，退回完整规划");return null;}
+                            checked[i]=true;remaining--;
+                        }
+                        if(remaining>0)terrain.awaitProgress(20);
+                    }
+                    if(remaining>0)return null;
+                } else {
+                    var fresh=runSingleSegmentNbt(level,points.getFirst(),points.getLast(),seaY,halfWidth,policy,
+                            new java.util.concurrent.atomic.AtomicReference<>(List.of()),bar,predictor,
+                            com.monpai.sailboatmod.route.terrain.PredictionBudget.sixtySeconds(),snapshots);
+                    if(!fresh.successful())return null;
+                    points=new ArrayList<>(fresh.value());
+                }
+                if(!joined.isEmpty()&&!joined.getLast().equals(points.getFirst()))return null;
+                HierarchicalWaterRoutePlanner.appendCompacted(joined,points);
+                bar.update(5+80*++completed/plan.legs().size(),"航路复用 / 补段 "+completed+"/"+plan.legs().size());
+            }
+            if(joined.size()<2||!joined.getFirst().equals(source)||!joined.getLast().equals(target))return null;
+            WaterRoutePostProcessor.Result finished;
+            try { finished=finishWholeRoute(map,joined,halfWidth,terrain::awaitProgress,bar::update); }
+            catch (IllegalArgumentException invalidCachedGeometry) { return null; }
+            if(finished==null||finished.path().size()<2)return null;
+            List<BlockPos> result=finished.path();metas.set(buildMetas(result,null,result,-1,result.size()));
+            return WaterRouteResult.success(result);
+        }
+    }
 
     private static WaterRouteResult<List<BlockPos>> runSingleSegmentNbt(
             ServerLevel level, BlockPos sourceBerth, BlockPos targetBerth, int seaY, int boatHalfWidth,
@@ -517,7 +610,7 @@ public final class WaterAutoRouteService {
                             : progress.totalSegments() == 0 ? (surface != null ? "Tellus LOD粗寻" : "真实地形粗寻")
                             : "分段精寻 " + progress.completedSegments() + "/" + progress.totalSegments();
                     stage += " · step=" + planner.currentStepSize() + " · 节点=" + progress.expandedNodes();
-                    bar.update(percent, stage);
+                    bar.update(percent, HierarchicalWaterRoutePlanner.withBudget(stage, planner));
                     nextProgress = System.nanoTime() + 500_000_000L;
                     previousCompleted = progress.completedSegments();
                     previousStatus = status;
@@ -721,7 +814,7 @@ public final class WaterAutoRouteService {
         return pf;
     }
 
-    private static void applyCompletedRoute(ServerLevel level,
+    private static RouteDefinition applyCompletedRoute(ServerLevel level,
                                             DockBlockEntity source,
                                             DockBlockEntity target,
                                             DockSnapshot sourceSnapshot,
@@ -735,7 +828,7 @@ public final class WaterAutoRouteService {
             if (player != null) {
                 player.sendSystemMessage(messageFor(result.reason()));
             }
-            return;
+            return null;
         }
         // 2026-06:smooth+verify 已移到后台 Supplier(消除主线程卡服),result.value() 即最终航点。
         // 这里只剩 setRoutes + 发消息(轻,主线程安全)。
@@ -745,7 +838,7 @@ public final class WaterAutoRouteService {
             if (player != null) {
                 player.sendSystemMessage(messageFor(WaterRouteFailureReason.NO_WATER_PATH));
             }
-            return;
+            return null;
         }
         RouteDefinition route = routeDefinitionFromPath(
                 sourceSnapshot,
@@ -760,6 +853,7 @@ public final class WaterAutoRouteService {
         List<RouteDefinition> routes = upsertAutoRoute(source.getRoutesForMap(), route);
         int selectedIndex = Math.max(0, routes.indexOf(route));
         source.setRoutes(routes, selectedIndex);
+        WaterRouteNetworkSavedData.get(level).register(sourceSnapshot.pos(), targetSnapshot.pos(), route);
 
         // 2026-06:航线也存到目的地码头,且是反向(B→A)——这样从目的地出发能直接用回程线路。
         // 反向 = 航点倒序 + metas 倒序(与航点对齐) + 起终 dock/town 对调。
@@ -787,6 +881,7 @@ public final class WaterAutoRouteService {
                     target.getDockName(),
                     Integer.toString((int) Math.round(route.routeLengthMeters()))));
         }
+        return route;
     }
 
     /**

@@ -313,6 +313,11 @@ public class SailboatEntity extends Boat implements GeoEntity, MenuProvider, Tra
     private static final int POST_ARRIVAL_FORCED_HOLD_TICKS = 100;
     private int postArrivalForcedHoldTicks = 0;
     private int autopilotTargetIndex = 0;
+    private Vec3 lastAutopilotTrackingPosition;
+    private double autopilotSafeSpeedCap = Double.POSITIVE_INFINITY;
+    private boolean autopilotAimBlocked;
+    private long followerCellTick=Long.MIN_VALUE;
+    private final java.util.Map<BlockPos,Boolean> followerCells=new java.util.HashMap<>();
     private String autopilotRouteName = "";
     private BlockPos routeDockPos = null;
     @Nullable
@@ -347,7 +352,7 @@ public class SailboatEntity extends Boat implements GeoEntity, MenuProvider, Tra
     private double autopilotShipmentDistanceMeters = 0.0D;
     private boolean autopilotAllowNonOrderAutoReturn = false;
     private boolean autopilotAllowNonOrderAutoUnload = true;
-    private static final int TRACE_LIVE_SYNC_INTERVAL_TICKS = 40; // 2s @20tps
+    private static final int TRACE_LIVE_SYNC_INTERVAL_TICKS = 10; // 0.5s @20tps, keeps web map closer to actual motion/reroutes
     private int traceLiveSyncTicks = 0;
     private boolean autopilotReturnTrip = false;
     private final List<ShipmentManifestEntry> autopilotShipmentManifest = new ArrayList<>();
@@ -581,7 +586,13 @@ public class SailboatEntity extends Boat implements GeoEntity, MenuProvider, Tra
                     : autopilotShipmentShippingOrderId;
             int routeSize = autopilotRoute.size();
             int completed = routeSize <= 0 ? 0 : Mth.clamp(autopilotTargetIndex, 0, routeSize - 1);
-            double progress = routeSize <= 0 ? 0.0D : (double) completed / routeSize;
+            double progress = com.monpai.sailboatmod.route.WaterPolylineFollower.progress(autopilotRoute,autopilotTargetIndex,position());
+            com.monpai.sailboatmod.market.logistics.ShippingTraceService.replaceRouteGeometry(level(),traceId,autopilotRoute,completed,progress);
+            for(var entry:autopilotShipmentManifest)if(!entry.shippingOrderId().isBlank()&&!entry.shippingOrderId().equals(traceId)) {
+                com.monpai.sailboatmod.market.logistics.ShippingTraceService.replaceRouteGeometry(level(),entry.shippingOrderId(),autopilotRoute,completed,progress);
+                com.monpai.sailboatmod.market.logistics.ShippingTraceService.updateLivePositionProgressAndSpeed(
+                        level(),entry.shippingOrderId(),getX(),getZ(),completed,progress,getDeltaMovement().horizontalDistance());
+            }
             double speedPerTick = getDeltaMovement().horizontalDistance();
             com.monpai.sailboatmod.market.logistics.ShippingTraceService.updateLivePositionProgressAndSpeed(
                     level(), traceId, getX(), getZ(), completed, progress, speedPerTick);
@@ -780,6 +791,9 @@ public class SailboatEntity extends Boat implements GeoEntity, MenuProvider, Tra
                     double rotMag = Math.abs(rotationSpeed) / MAX_ROT_SPEED;
                     speed *= Mth.lerp(Mth.clamp(rotMag, 0.0D, 1.0D), 1.0D, TURN_SPEED_LOSS_MAX);
                 }
+
+                if(autopilotControl&&autopilotUnstickTicks<=0&&Double.isFinite(autopilotSafeSpeedCap))
+                    speed=Math.copySign(Math.min(Math.abs(speed),autopilotSafeSpeedCap),speed);
 
                 // ---------- (D) 航向滑后于船头（重船感：方向带惯性追船头。autopilot 直通）----------
                 // 速度大小=speed(已含动能保留+掉速)，方向用低通从上一 tick 速度方向滑向船头方向。
@@ -1406,6 +1420,7 @@ public class SailboatEntity extends Boat implements GeoEntity, MenuProvider, Tra
         routeCatalog.addAll(RouteNbtUtil.readRoutes(tag, "RouteCatalog"));
         selectedRouteIndex = routeCatalog.isEmpty() ? 0 : Mth.clamp(tag.getInt("SelectedRouteIndex"), 0, routeCatalog.size() - 1);
         routeDockPos = tag.contains("RouteDockPos") ? BlockPos.of(tag.getLong("RouteDockPos")) : null;
+        lastAutopilotTrackingPosition=null;
         autopilotRoute.clear();
         AutopilotRouteWindow.State restoredRoute = AutopilotRouteWindow.load(tag);
         autopilotRoute.addAll(restoredRoute.route());
@@ -1834,6 +1849,8 @@ public class SailboatEntity extends Boat implements GeoEntity, MenuProvider, Tra
         dockHoldYaw = Float.NaN;
         autopilotDockingSpot = null;
         autopilotDepartureOrigin = position();
+        lastAutopilotTrackingPosition = position();
+        autopilotSafeSpeedCap=Double.POSITIVE_INFINITY;autopilotAimBlocked=false;
         if (routeCatalog.isEmpty()) {
             stopAutopilot();
             return false;
@@ -1844,9 +1861,10 @@ public class SailboatEntity extends Boat implements GeoEntity, MenuProvider, Tra
             stopAutopilot();
             return false;
         }
+        lastAutopilotTrackingPosition=null;
         autopilotRoute.clear();
         autopilotRoute.addAll(AutopilotRouteWindow.complete(route.waypoints()));
-        if (autopilotRoute.size() < 2) {
+        if (autopilotRoute.size() < 2 || autopilotRoute.size() > 65_536) {
             stopAutopilot();
             return false;
         }
@@ -1939,6 +1957,7 @@ public class SailboatEntity extends Boat implements GeoEntity, MenuProvider, Tra
             rollbackMarketShipment();
         }
         entityData.set(DATA_AUTOPILOT_ACTIVE, false);
+        lastAutopilotTrackingPosition=null;
         autopilotRoute.clear();
         autopilotTargetIndex = 0;
         autopilotRouteName = getSelectedRouteName();
@@ -2153,114 +2172,50 @@ public class SailboatEntity extends Boat implements GeoEntity, MenuProvider, Tra
      * @param finalTarget 是否终点航段(终点精确瞄 target,不做前视延伸)
      */
     private HeadingSolution solveHeading(Vec3 target, boolean finalTarget) {
-        double boatX = getX();
-        double boatZ = getZ();
-        double aimX;
-        double aimZ;
-        if (finalTarget) {
-            // 终点:精确瞄 dock approach,不延伸(否则会越过终点)。
-            aimX = target.x;
-            aimZ = target.z;
-        } else {
-            // 段起点 prev:idx>0 用上一节点;idx==0(离港)用船当前位置,连线即"船位→target"。
-            int idx = Mth.clamp(autopilotTargetIndex, 0, autopilotRoute.size() - 1);
-            Vec3 prev = idx > 0 ? autopilotRoute.get(idx - 1) : new Vec3(boatX, getY(), boatZ);
-            double segX = target.x - prev.x;
-            double segZ = target.z - prev.z;
-            double segLenSq = segX * segX + segZ * segZ;
-            // 船位投影到 prev→target 的沿线参数 along(可 <0 或 >1)。
-            double along = segLenSq > 1.0E-6D
-                    ? ((boatX - prev.x) * segX + (boatZ - prev.z) * segZ) / segLenSq
-                    : 0.0D;
-            along = Mth.clamp(along, 0.0D, 1.0D);
-            double segLen = Math.sqrt(segLenSq);
-            // 随速自适应前视距离(格):低速短(贴线精确),高速长(巡航平滑)。
-            double speed = getDeltaMovement().horizontalDistance();
-            double lookahead = Mth.clamp(
-                    AUTOPILOT_LOOKAHEAD_BASE + speed * AUTOPILOT_LOOKAHEAD_SPEED_GAIN,
-                    AUTOPILOT_LOOKAHEAD_MIN, AUTOPILOT_LOOKAHEAD_MAX);
-            // 沿线推进距离 = 当前投影点到段终点的剩余 + lookahead;若超出本段,溢出量延伸到下一段。
-            double alongDist = along * segLen;
-            double advance = alongDist + lookahead;
-            if (advance <= segLen || segLen < 1.0E-6D) {
-                // 前视点仍在本段内。
-                double t = segLen > 1.0E-6D ? advance / segLen : 1.0D;
-                aimX = prev.x + segX * t;
-                aimZ = prev.z + segZ * t;
-            } else {
-                // 溢出到后续段:逐段消耗 overflow,最多借 2 段,避免极短段前视点不够。
-                double overflow = advance - segLen;
-                aimX = target.x;
-                aimZ = target.z;
-                int cursor = idx;
-                int borrowed = 0;
-                while (overflow > 0.0D && borrowed < 2 && cursor + 1 < autopilotRoute.size()) {
-                    Vec3 a = autopilotRoute.get(cursor);
-                    Vec3 b = autopilotRoute.get(cursor + 1);
-                    double nx = b.x - a.x;
-                    double nz = b.z - a.z;
-                    double nLen = Math.sqrt(nx * nx + nz * nz);
-                    if (nLen < 1.0E-6D) {
-                        cursor++;
-                        borrowed++;
-                        continue;
-                    }
-                    if (overflow <= nLen) {
-                        double t = overflow / nLen;
-                        aimX = a.x + nx * t;
-                        aimZ = a.z + nz * t;
-                        overflow = 0.0D;
-                    } else {
-                        aimX = b.x;
-                        aimZ = b.z;
-                        overflow -= nLen;
-                    }
-                    cursor++;
-                    borrowed++;
+        int index=Math.clamp(autopilotTargetIndex,0,autopilotRoute.size()-1);
+        // Once docking chooses a berth, it is part of this voyage's exact geometry too.
+        if(finalTarget) {
+            Vec3 berth=com.monpai.sailboatmod.route.WaterPolylineFollower.dockingTarget(autopilotRoute.get(index),target);
+            if(!autopilotRoute.get(index).equals(berth))autopilotRoute.set(index,berth);
+        }
+        double speed=getDeltaMovement().horizontalDistance();
+        var aim=com.monpai.sailboatmod.route.WaterPolylineFollower.aim(autopilotRoute,index,position(),
+                Math.clamp(4+speed*14,3,12),this::liveAutopilotConnectionClear);
+        autopilotAimBlocked=aim.blocked();
+        double dx=aim.point().x-getX(),dz=aim.point().z-getZ();
+        float desiredYaw=aim.blocked()?getYRot():(float)(Mth.atan2(-dx,dz)*180/Math.PI);
+        float error=Mth.wrapDegrees(desiredYaw-getYRot());
+        autopilotSafeSpeedCap=com.monpai.sailboatmod.route.WaterPolylineFollower.speedCap(aim,error,DEPLOYED_MAX_FORWARD_BLOCKS_PER_TICK);
+        float yawStep=Mth.clamp(error,-AUTOPILOT_MAX_TURN_DEGREES_PER_TICK,AUTOPILOT_MAX_TURN_DEGREES_PER_TICK);
+        return new HeadingSolution(desiredYaw,error,yawStep,Mth.clamp(error/40,-1,1),Math.abs(error),Math.abs(error)>1.5);
+    }
+
+    /** Bounded, loaded-only near-field connection test. Never loads/generates terrain on a tick.
+     * Route water height is the air/water interface; solid waterlogged blocks are not boat clearance.
+     */
+    private boolean liveAutopilotConnectionClear(Vec3 from,Vec3 to) {
+        double distance=com.monpai.sailboatmod.route.WaterPolylineFollower.horizontal(from,to);
+        if(distance>32||!(level() instanceof ServerLevel serverLevel))return false;
+        if (followerCellTick != level().getGameTime()) { followerCellTick=level().getGameTime();followerCells.clear(); }
+        int samples=Math.max(1,(int)Math.ceil(distance*4)),surface=(int)Math.floor(to.y)-1;
+        for(int i=0;i<=samples;i++) {
+            int x=Mth.floor(from.x+(to.x-from.x)*i/samples),z=Mth.floor(from.z+(to.z-from.z)*i/samples);
+            for(int dz=0;dz<2;dz++)for(int dx=0;dx<2;dx++) {
+                BlockPos pos=new BlockPos(x+dx,surface,z+dz);
+                Boolean known=followerCells.get(pos);
+                if (known != null) { if(!known)return false;continue; }
+                // Never make an unbounded entity tick even with hundreds of tiny waypoints.
+                if(followerCells.size()>=512)return false;
+                var chunk=serverLevel.getChunkSource().getChunkNow((x+dx)>>4,(z+dz)>>4);
+                boolean clear=chunk!=null&&com.monpai.sailboatmod.route.water.WaterSurfaceRules.isNavigableSurface(chunk.getBlockState(pos));
+                if(clear)for(int y=surface;y<=surface+2;y++) {
+                    BlockPos at=pos.atY(y);
+                    if(!chunk.getBlockState(at).getCollisionShape(level(),at).isEmpty()){clear=false;break;}
                 }
-            }
-            // 横向硬回正:船离连线超 deadband → desiredYaw 朝连线方向额外偏置,加快回线(前视点已带部分回正,这里增强)。
-            double lateralX = (boatX - prev.x) - segX * along;
-            double lateralZ = (boatZ - prev.z) - segZ * along;
-            double lateralDist = Math.sqrt(lateralX * lateralX + lateralZ * lateralZ);
-            if (lateralDist > AUTOPILOT_LATERAL_DEADBAND && segLenSq > 1.0E-6D) {
-                // 连线上离船最近点 P,把瞄点朝 P 方向小幅拉(偏置角随偏差增大、封顶)。
-                double biasMag = Math.min(
-                        Math.toDegrees(Math.atan((lateralDist - AUTOPILOT_LATERAL_DEADBAND) * AUTOPILOT_LATERAL_GAIN)),
-                        AUTOPILOT_LATERAL_MAX_DEGREES);
-                // 朝连线投影点 P 的方向(把船拉回线)。
-                double px = prev.x + segX * along;
-                double pz = prev.z + segZ * along;
-                double toPathX = px - boatX;
-                double toPathZ = pz - boatZ;
-                double toPathLen = Math.sqrt(toPathX * toPathX + toPathZ * toPathZ);
-                if (toPathLen > 1.0E-6D) {
-                    float yawToAim = (float) (Mth.atan2(-(aimX - boatX), aimZ - boatZ) * (180.0D / Math.PI));
-                    float yawToPath = (float) (Mth.atan2(-toPathX, toPathZ) * (180.0D / Math.PI));
-                    float bias = Mth.wrapDegrees(yawToPath - yawToAim);
-                    float applied = Mth.clamp(bias, -(float) biasMag, (float) biasMag);
-                    float biasedYaw = yawToAim + applied;
-                    double rad = biasedYaw * (Math.PI / 180.0D);
-                    // 用偏置后的航向重设一个虚拟瞄点(只为算 desiredYaw,距离任意取 1)。
-                    aimX = boatX - Math.sin(rad);
-                    aimZ = boatZ + Math.cos(rad);
-                }
+                followerCells.put(pos,clear);if(!clear)return false;
             }
         }
-        double adx = aimX - boatX;
-        double adz = aimZ - boatZ;
-        float desiredYaw = (float) (Mth.atan2(-adx, adz) * (180.0D / Math.PI));
-        // 防偏离#3 前馈:非终点段且前方有下一段时,把 desiredYaw 朝「下一段方向」提前偏置(按前方转角×GAIN,封顶),
-        // 船没到弯就开始转 → 过弯不外切贴岸。偏置仍并入 yawError→yawStep 的统一 MAX_TURN 封顶,不会失控。
-        if (!finalTarget) {
-            desiredYaw += feedForwardBias(target);
-        }
-        float yawError = Mth.wrapDegrees(desiredYaw - getYRot());
-        float yawStep = Mth.clamp(yawError, -AUTOPILOT_MAX_TURN_DEGREES_PER_TICK, AUTOPILOT_MAX_TURN_DEGREES_PER_TICK);
-        float turnInput = Mth.clamp(yawError / 40.0F, -1.0F, 1.0F);
-        boolean wantsTurn = Math.abs(yawError) > 1.5F;
-        float absYawError = Math.abs(yawError);
-        return new HeadingSolution(desiredYaw, yawError, yawStep, turnInput, absYawError, wantsTurn);
+        return true;
     }
 
     /**
@@ -2313,10 +2268,6 @@ public class SailboatEntity extends Boat implements GeoEntity, MenuProvider, Tra
             // 仅在最后 SWING_TICKS 内才摆舵;之前纯直退(yaw 不动)保证后退方向稳定、能挤出卡点。
             if (autopilotUnstickTicks <= AUTOPILOT_UNSTICK_SWING_TICKS) {
                 float unstickYaw = AUTOPILOT_UNSTICK_YAW_STEP * autopilotUnstickYawDir;
-                float nextYaw = getYRot() + unstickYaw;
-                setYRot(nextYaw);
-                setYHeadRot(nextYaw);
-                setYBodyRot(nextYaw);
                 return new AutopilotCommand(true, true, autopilotUnstickYawDir, unstickYaw, EngineGear.HALF_ASTERN);
             }
             return new AutopilotCommand(true, false, 0.0F, 0.0F, EngineGear.HALF_ASTERN); // 纯直退,不转
@@ -2337,6 +2288,11 @@ public class SailboatEntity extends Boat implements GeoEntity, MenuProvider, Tra
         } else {
             autopilotInDestZoneTicks = 0; // 出 zone 清零(防擦边累积)
         }
+        int oldTarget=autopilotTargetIndex;
+        autopilotTargetIndex=com.monpai.sailboatmod.route.WaterPolylineFollower.advance(autopilotRoute,autopilotTargetIndex,
+                lastAutopilotTrackingPosition,position(),1.25,3.0,this::liveAutopilotConnectionClear);
+        lastAutopilotTrackingPosition=position();
+        if(oldTarget!=autopilotTargetIndex){autopilotNoProgressTicks=0;autopilotLastTargetDistance=Double.NaN;}
         Vec3 target = autopilotRoute.get(autopilotTargetIndex);
         boolean finalTarget = autopilotTargetIndex >= autopilotRoute.size() - 1;
         if (finalTarget) {
@@ -2350,38 +2306,8 @@ public class SailboatEntity extends Boat implements GeoEntity, MenuProvider, Tra
         double dz = target.z - getZ();
         double dist = Math.sqrt(dx * dx + dz * dz);
 
-        int captureGuard = 0;
-        while (captureGuard < 3) {
-            double arrivalRadius = autopilotTargetIndex == 0
-                    ? Math.max(AUTOPILOT_ARRIVAL_RADIUS, AUTOPILOT_START_WAYPOINT_CAPTURE_RADIUS)
-                    : AUTOPILOT_ARRIVAL_RADIUS;
-            finalTarget = autopilotTargetIndex >= autopilotRoute.size() - 1;
-            boolean reachedWaypoint = dist <= arrivalRadius;
-            boolean passedWaypoint = !finalTarget && hasClearlyPassedCurrentWaypoint(target, dist);
-            if (!reachedWaypoint && !passedWaypoint) {
-                break;
-            }
-            if (finalTarget) {
-                finishAutopilotAndUnloadAtDestination();
-                return AutopilotCommand.inactive();
-            }
-            if (!advanceAutopilotTargetOrStop()) {
-                return AutopilotCommand.inactive();
-            }
-            target = autopilotRoute.get(autopilotTargetIndex);
-            if (autopilotTargetIndex >= autopilotRoute.size() - 1) {
-                Vec3 approach = computeDockApproachPoint(getAutopilotDestinationDock());
-                if (approach == null) {
-                    return AutopilotCommand.inactive();
-                }
-                target = approach;
-            }
-            dx = target.x - getX();
-            dz = target.z - getZ();
-            dist = Math.sqrt(dx * dx + dz * dz);
-            autopilotNoProgressTicks = 0;
-            autopilotLastTargetDistance = dist;
-            captureGuard++;
+        if(finalTarget&&dist<=AUTOPILOT_ARRIVAL_RADIUS) {
+            finishAutopilotAndUnloadAtDestination();return AutopilotCommand.inactive();
         }
 
         HeadingSolution heading = solveHeading(target, finalTarget);
@@ -2422,25 +2348,9 @@ public class SailboatEntity extends Boat implements GeoEntity, MenuProvider, Tra
             return new AutopilotCommand(true, false, 0.0F, 0.0F, EngineGear.STOP);
         }
 
-        if (autopilotNoProgressTicks >= AUTOPILOT_NO_PROGRESS_TICKS_LIMIT
-                && dist <= AUTOPILOT_STALL_SKIP_RADIUS
-                && autopilotTargetIndex < autopilotRoute.size() - 1) {
-            if (!advanceAutopilotTargetOrStop()) {
-                return AutopilotCommand.inactive();
-            }
-            target = autopilotRoute.get(autopilotTargetIndex);
-            finalTarget = autopilotTargetIndex >= autopilotRoute.size() - 1;
-            dx = target.x - getX();
-            dz = target.z - getZ();
-            dist = Math.sqrt(dx * dx + dz * dz);
-
-            HeadingSolution reHeading = solveHeading(target, finalTarget);
-            yawStep = reHeading.yawStep();
-            turnInput = reHeading.turnInput();
-            wantsTurn = reHeading.wantsTurn();
-            absYawError = reHeading.absYawError();
-            autopilotNoProgressTicks = 0;
-            autopilotLastTargetDistance = dist;
+        if(!finalTarget&&autopilotNoProgressTicks>=AUTOPILOT_NO_PROGRESS_TICKS_LIMIT) {
+            tryRerouteToNextNavigableWaypointAsync();
+            return new AutopilotCommand(true,false,0,0,EngineGear.STOP);
         }
 
         // 终点停滞兜底：已在终点航段、长时间无进展且已进入/贴近目的 zone → 视为到站，触发卸货+停止+标记完成。
@@ -2457,7 +2367,8 @@ public class SailboatEntity extends Boat implements GeoEntity, MenuProvider, Tra
         if (autopilotGearHoldTicks > 0) {
             autopilotGearHoldTicks--;
         }
-        EngineGear desiredGear = selectAutopilotGear(finalTarget, dist, stopRadius, absYawError, slowdownRadius);
+        EngineGear desiredGear = autopilotAimBlocked ? EngineGear.STOP
+                : selectAutopilotGear(finalTarget, dist, stopRadius, absYawError, slowdownRadius);
         return new AutopilotCommand(true, wantsTurn, turnInput, yawStep, desiredGear);
     }
 
@@ -2513,12 +2424,9 @@ public class SailboatEntity extends Boat implements GeoEntity, MenuProvider, Tra
             tryRerouteToNextNavigableWaypointAsync();
             return;
         }
-        // 早期:轻量切到下一个航点,跳过当前卡点(通常是穿陆误判的航点),不动整条航线。
-        if (advanceAutopilotTargetOrStop()) {
-            LOGGER.info("[Rescue] 第 {} 轮:切到下一航点 #{} 跳过卡点", autopilotUnstickAttempts, autopilotTargetIndex);
-            autopilotNoProgressTicks = 0;
-            autopilotLastTargetDistance = Double.NaN;
-        }
+        // Never skip an unverified corner merely because the boat has stalled.
+        // The regular projection tracker already advances geometrically passed points.
+        tryRerouteToNextNavigableWaypointAsync();
     }
 
     /**
@@ -2750,6 +2658,10 @@ public class SailboatEntity extends Boat implements GeoEntity, MenuProvider, Tra
         if (!(level() instanceof ServerLevel server)) {
             return;
         }
+        if (com.monpai.sailboatmod.route.terrain.TellusWorlds.isTellusLevel(server)) {
+            tryRerouteAndResumeAsync();
+            return;
+        }
         if (rerouteRequests.isInFlight()) {
             return; // 后台已有一次自救在跑,别重复提交
         }
@@ -2846,6 +2758,7 @@ public class SailboatEntity extends Boat implements GeoEntity, MenuProvider, Tra
      * 中 goal 之后的原航线节点,使船绕开卡点后<b>回到原线</b>继续。重置索引/卡住状态并恢复航行。
      */
     private void applyNextWaypointReroute(List<BlockPos> rescueSeg, List<Vec3> remaining, int goalRemainingIdx) {
+        lastAutopilotTrackingPosition=null;
         autopilotRoute.clear();
         for (BlockPos p : rescueSeg) {
             autopilotRoute.add(new Vec3(p.getX() + 0.5D, p.getY(), p.getZ() + 0.5D));
@@ -2873,6 +2786,7 @@ public class SailboatEntity extends Boat implements GeoEntity, MenuProvider, Tra
 
     /** 用自救航点列表替换当前 autopilotRoute,重置索引/卡住状态并恢复航行。 */
     private void applyRescueRoute(List<BlockPos> path) {
+        lastAutopilotTrackingPosition=null;
         autopilotRoute.clear();
         for (BlockPos p : path) {
             autopilotRoute.add(new Vec3(p.getX() + 0.5D, p.getY(), p.getZ() + 0.5D));
@@ -4224,7 +4138,8 @@ public class SailboatEntity extends Boat implements GeoEntity, MenuProvider, Tra
         public void applySplice(com.monpai.sailboatmod.route.water.lookahead.RouteSplicer.Spliced spliced) {
             AutopilotRouteWindow.State patched = AutopilotRouteWindow.apply(autopilotRoute,
                     AutopilotRouteWindow.around(autopilotRoute, autopilotTargetIndex), spliced);
-            autopilotRoute.clear();
+            lastAutopilotTrackingPosition=null;
+        autopilotRoute.clear();
             autopilotRoute.addAll(patched.route());
             autopilotTargetIndex = patched.targetIndex();
             autopilotNoProgressTicks = 0;

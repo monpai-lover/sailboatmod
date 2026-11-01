@@ -86,6 +86,8 @@ public final class WaterRouteTaskService {
         return true;
     }
 
+    public WaterRouteTask find(String key) { return pendingTasks.get(key); }
+
     public int pendingCount() {
         return pendingTasks.size();
     }

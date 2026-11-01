@@ -42,6 +42,11 @@ class WaterRoutePostProcessorTest {
     @Test void twoWideRightAngleRetainsNecessaryCorner(){Wet wet=(x,z)->(x>=0&&x<=51&&z>=3&&z<=4)||(x>=50&&x<=51&&z>=3&&z<=100);var r=run(wet,p(0,3),p(50,3),p(50,99));assertTrue(r.after().maxTurnDegrees()>=89);}
     @Test void negativeCoordinatesRetainExactSafeWater(){var r=run((x,z)->z==-3||z==-2,p(0,-3),p(-100,-3),p(-7000,-3));assertEquals(7000,r.after().length(),1e-6);}
     @Test void shoreHuggingLineMovesOffshoreButDockEndsStayFixed(){var r=run((x,z)->z>=0,p(0,0),p(200,0));assertTrue(r.moved()>0);assertTrue(r.path().stream().mapToInt(BlockPos::getZ).max().orElseThrow()>=8);assertTrue(r.after().length()<=220);}
+    @Test void finalPruningDoesNotUndoOffshoreRelocation() {
+        var r=run((x,z)->z>=0,p(0,0),p(512,0));
+        assertTrue(r.path().stream().anyMatch(v->v.getZ()>=10), "final chord must preserve offshore interior");
+        assertTrue(r.after().length()<=512*1.02+4, "offshore target is not permission for excessive detours");
+    }
     @Test void shiftingCannotJumpOverThinParallelBank(){Wet wet=(x,z)->(z>=0&&z<=3)||z>=8;var r=run(wet,p(0,0),p(200,0));assertTrue(r.path().stream().allMatch(v->v.getZ()<=2));}
     @Test void heightDiscontinuityRejected(){assertThrows(IllegalArgumentException.class,()->WaterRoutePostProcessor.optimize((x,z)->WaterColumn.passable(new BlockPos(x,x<50?65:66,z),0),List.of(p(0,0),p(100,0)),null,null,WaterRoutePostProcessor.Options.defaults()));}
     @Test void actualStartAndGoalAreNotReassignedToNearestWater(){assertThrows(IllegalArgumentException.class,()->run((x,z)->x>0,p(0,0),p(100,0)));}
@@ -50,7 +55,7 @@ class WaterRoutePostProcessorTest {
     @Test void permanentlyUnknownInputRejected(){assertThrows(IllegalArgumentException.class,()->WaterRoutePostProcessor.optimize((x,z)->null,List.of(p(0,0),p(30,0)),null,null,WaterRoutePostProcessor.Options.defaults()));}
     @Test void cancellationIsNeverConvertedToSafeFallback(){assertThrows(CancellationException.class,()->WaterRouteCancellation.run(()->true,()->run((x,z)->true,p(0,0),p(100,0))));}
     @Test void tinyBudgetDoesNotClaimInputWasValidated(){assertThrows(IllegalArgumentException.class,()->WaterRoutePostProcessor.optimize(hull((x,z)->true),List.of(p(0,0),p(100,0)),null,null,new WaterRoutePostProcessor.Options(8,24,1000,1)));}
-    @Test void optionalBudgetKeepsCertifiedPath(){var input=List.of(p(0,0),p(20,20),p(40,0));var r=WaterRoutePostProcessor.optimize(hull((x,z)->true),input,null,null,new WaterRoutePostProcessor.Options(8,24,1000,200));assertTrue(r.budgetLimited());assertEquals(input.getFirst(),r.path().getFirst());check(r.path(),(x,z)->true);}
+    @Test void optionalBudgetKeepsCertifiedPath(){var input=List.of(p(0,0),p(40,40),p(80,0));var r=WaterRoutePostProcessor.optimize(hull((x,z)->true),input,null,null,new WaterRoutePostProcessor.Options(8,24,1000,330));assertTrue(r.budgetLimited());assertEquals(input.getFirst(),r.path().getFirst());check(r.path(),(x,z)->true);}
     @Test void invalidArgumentsRejected(){assertThrows(IllegalArgumentException.class,()->new WaterRoutePostProcessor.Options(17,24,100,10));assertThrows(IllegalArgumentException.class,()->run((x,z)->true,p(0,0)));}
     @Test void exactCompactionKeepsObliqueCorners(){assertEquals(3,WaterRoutePostProcessor.compact(List.of(p(0,0),p(10,1),p(20,5))).size());}
     @Test void outputIsImmutable(){var r=run((x,z)->true,p(0,0),p(100,0));assertThrows(UnsupportedOperationException.class,()->r.path().clear());}
@@ -81,4 +86,11 @@ class WaterRoutePostProcessorTest {
         },List.of(p(0,0),p(32,0)),millis->ready[0]=true,null,WaterRoutePostProcessor.Options.defaults()));
     }
     @Test void finalStageIsWiredAfterStitchingAndBeforeMetadata()throws Exception{String s=Files.readString(Path.of("src/main/java/com/monpai/sailboatmod/route/water/WaterAutoRouteService.java"));int a=s.indexOf("path = finishWholeRoute(map, planner.path()");assertTrue(a>0);assertTrue(s.indexOf("metasOut.set(buildMetas(path",a)>a);assertTrue(s.contains("terrain == null ? null : terrain::awaitProgress"));}
+    @Test void cheapInitialPruningDoesNotSpendBudgetScoringEveryOffshoreRing() {
+        var input=List.of(p(0,0),p(100,100),p(200,0),p(300,100),p(400,0));
+        var r=WaterRoutePostProcessor.optimize(hull((x,z)->true),input,null,null,
+                new WaterRoutePostProcessor.Options(12,32,2000,2000));
+        assertEquals(400,r.after().length(),1e-6);
+        assertEquals(input.getFirst(),r.path().getFirst());assertEquals(input.getLast(),r.path().getLast());
+    }
 }

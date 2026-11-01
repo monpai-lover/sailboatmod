@@ -49,6 +49,10 @@ public class AutoRouteDockSelectionScreen extends ThemedScreen {
 
 
 
+    private java.util.UUID destinationVessel;
+    private int destinationCargoIndex=-1;
+    public void forDeparture(java.util.UUID vessel,int cargoIndex){destinationVessel=vessel;destinationCargoIndex=cargoIndex;}
+
     public AutoRouteDockSelectionScreen(BlockPos sourceDockPos, TransportTerminalKind terminalKind, List<AvailableDockEntry> docks) {
         super(Component.translatable(baseKey(terminalKind) + ".title"));
         this.sourceDockPos = sourceDockPos;
@@ -64,7 +68,7 @@ public class AutoRouteDockSelectionScreen extends ThemedScreen {
     @Override
     protected UIElement buildBody() {
         UIElement body = Ui.column();
-        body.addChild(Ui.paragraph(autoRouteText("subtitle"), "sm-muted"));
+        body.addChild(Ui.paragraph(destinationVessel==null?autoRouteText("subtitle"):Component.literal("自动复用已有航段，只补算缺口；路线准备好后发船。"), "sm-muted"));
 
         dockList = Ui.scroller();
         dockList.layout(l -> l.height(150).flexGrow(0));
@@ -85,7 +89,7 @@ public class AutoRouteDockSelectionScreen extends ThemedScreen {
             }
         }
 
-        createButton = Ui.button(autoRouteText("create"), Ui.Tone.PRIMARY, this::createRoute);
+        createButton = Ui.button(destinationVessel==null?autoRouteText("create"):Component.literal("出发到此目的地"), Ui.Tone.PRIMARY, this::createRoute);
         UIElement actions = Ui.row();
         actions.layout(l -> l.widthPercent(100).minWidth(0).gapAll(Ui.GAP_S)
                 .flexWrap(dev.vfyjxf.taffy.style.FlexWrap.WRAP).flexShrink(0));
@@ -171,7 +175,9 @@ public class AutoRouteDockSelectionScreen extends ThemedScreen {
             listRequest=java.util.UUID.randomUUID();
             routeRequest=java.util.UUID.randomUUID();building=true;progressStarted=ticks();
             progressPercent=0;progressState=0;progressStage="排队 / 异步载入码头";
-            ModNetwork.CHANNEL.sendToServer(new CreateAutoRoutePacket(sourceDockPos,docks.get(selectedIndex).pos(),selectedMode,routeRequest));
+            if(destinationVessel==null)ModNetwork.CHANNEL.sendToServer(new CreateAutoRoutePacket(sourceDockPos,docks.get(selectedIndex).pos(),selectedMode,routeRequest));
+            else ModNetwork.CHANNEL.sendToServer(new com.monpai.sailboatmod.network.packet.DepartForDestinationPacket(
+                    sourceDockPos,docks.get(selectedIndex).pos(),destinationVessel,destinationCargoIndex,routeRequest));
             refreshProgress();refresh();
             return;
         }

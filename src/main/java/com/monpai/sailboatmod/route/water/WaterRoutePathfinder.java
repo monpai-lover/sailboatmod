@@ -48,6 +48,11 @@ public final class WaterRoutePathfinder {
     /** 合法 step 边最长是对角 step·√2;×1.2 余量容首尾 snap 微偏。超此即拼接出现空隙=假相遇。 */
     private static final double LEGAL_HOP_FACTOR = 1.4142135623730951D * 1.2D;
 
+    @FunctionalInterface
+    interface ExpansionObserver {
+        WaterRouteFailureReason expanded(boolean forward, BlockPos position);
+    }
+    private final ExpansionObserver expansionObserver;
     private final WaterRouteWorld world;
     private final BlockPos start;
     private final BlockPos goal;
@@ -61,6 +66,7 @@ public final class WaterRoutePathfinder {
 
     private final Search forward;
     private final Search backward;
+    private BlockPos forwardRoot, backwardRoot;
 
     private final List<BlockPos> path = new ArrayList<>();
     private Status status = Status.RUNNING;
@@ -68,16 +74,22 @@ public final class WaterRoutePathfinder {
     private int expandedNodes;
 
     public WaterRoutePathfinder(WaterRouteWorld world, BlockPos start, BlockPos goal, WaterRoutePolicy policy) {
-        this(world, start, goal, policy, 2, false);
+        this(world, start, goal, policy, 2, false, null);
     }
 
     /** Coarse guidance may sample longer edges sparsely; detailed planners retain the two-block default. */
     WaterRoutePathfinder(WaterRouteWorld world, BlockPos start, BlockPos goal, WaterRoutePolicy policy, int edgeSampleSpacing) {
-        this(world, start, goal, policy, edgeSampleSpacing, true);
+        this(world, start, goal, policy, edgeSampleSpacing, true, null);
+    }
+
+    WaterRoutePathfinder(WaterRouteWorld world, BlockPos start, BlockPos goal, WaterRoutePolicy policy,
+                        int edgeSampleSpacing, ExpansionObserver observer) {
+        this(world, start, goal, policy, edgeSampleSpacing, true, observer);
     }
 
     private WaterRoutePathfinder(WaterRouteWorld world, BlockPos start, BlockPos goal, WaterRoutePolicy policy,
-                                  int edgeSampleSpacing, boolean waitForUnknown) {
+                                  int edgeSampleSpacing, boolean waitForUnknown, ExpansionObserver observer) {
+        this.expansionObserver = observer;
         this.world = world;
         this.start = start;
         this.goal = goal;
@@ -128,6 +140,7 @@ public final class WaterRoutePathfinder {
         }
         BlockPos s = startColumn.surfacePos();
         BlockPos g = goalColumn.surfacePos();
+        forwardRoot=s; backwardRoot=g;
         Node startNode = new Node(s, 0.0D, heuristic(s, g), null);
         Node goalNode = new Node(g, 0.0D, heuristic(g, s), null);
         forward.open.add(startNode);
@@ -302,22 +315,19 @@ public final class WaterRoutePathfinder {
         }
         expandedNodes++;
         if (isForward) forwardExpansions++; else backwardExpansions++;
-
-        // 相遇检测:<b>必须对侧已 closed(确定最优到达)该格</b>才拼接,不能只看 best 里生成过。
-        // 根因([[water_route_real_root_autopilot]] 的真正下游 bug):best 里有「仅 open 待扩展」的陈旧节点,
-        // 其 parent 是 PriorityQueue 懒删除/覆盖遗留的 stale 链——后向早期把远处格临时挂在「goal 一跳可达」的
-        // 松估算子树上(parent 指 goal 邻域)。前向撞上这种节点误判相遇,meet 回溯一跳从相遇点跳回 goal 邻域
-        // (实测 1664 格),拼出带空隙的假成功路径 → 空隙经 PathSmoother 加密成直线穿陆。
-        // closed 节点在扩展那刻 parent 已定型、链合法连续到源点 → 只认 closed 从根上消除 stale 跳格。
-        // 网格已 snap 对齐(seed),双向必能在同一水格 closed-closed 真实碰头;凑不齐则正常失败交上层放宽走廊。
-        if (other.closed.contains(curKey)) {
-            Node otherNode = other.best.get(curKey);
-            if (otherNode != null && meet(isForward, current, otherNode)) {
-                return true; // 合法相遇(拼接后连续性校验通过)
-            }
-            // 假相遇被拒(拼接出现异常大跳)→ 不 return,把 current 当普通节点继续扩展邻居,让 A* 继续搜索。
-            // current 已 closed(确实处理过),邻居照常入 open,直到出现真正逐格连续的合法相遇才收敛。
+        // Count only expanded, rooted nodes. Polling a deferred edge or sampling a
+        // tantalising point across an island cannot buy more search time.
+        if (expansionObserver != null) {
+            WaterRouteFailureReason expired = expansionObserver.expanded(isForward, current.pos);
+            if (expired != WaterRouteFailureReason.NONE) { fail(expired); return true; }
         }
+
+        // Each best node has an immutable rooted parent chain; its incoming edge was
+        // fully sampled before insertion. Waiting for BOTH sides to close this same
+        // cell needlessly expands extra terrain. Root/continuity checks still reject
+        // stale, disconnected or malformed chains; no unchecked bridge is introduced.
+        Node otherNode=other.best.get(curKey);
+        if(otherNode!=null&&meet(isForward,current,otherNode))return true;
 
         int mask = expandEdges(self, current, target, 0xFF);
         if (mask != 0) defer(self, current, mask);
@@ -429,13 +439,20 @@ public final class WaterRoutePathfinder {
 
         // 纯网格链(不含首尾泊位回贴):前向 start→meet + 后向 meet.parent→goal。
         List<BlockPos> gridChain = new ArrayList<>();
-        for (Node n = fwdMeet; n != null; n = n.parent) {
-            gridChain.add(n.pos);
+        java.util.Set<Node> seen=java.util.Collections.newSetFromMap(new java.util.IdentityHashMap<>());
+        Node root=null;
+        for(Node n=fwdMeet;n!=null;n=n.parent){
+            if(!seen.add(n)||gridChain.size()>policy.maxExpandedNodes()+2)return false;
+            gridChain.add(n.pos);root=n;
         }
-        Collections.reverse(gridChain); // start → meet
-        for (Node n = bwdMeet.parent; n != null; n = n.parent) {
-            gridChain.add(n.pos); // meet → goal
+        if(root==null||!root.pos.equals(forwardRoot))return false;
+        Collections.reverse(gridChain);
+        seen.clear();root=null;
+        for(Node n=bwdMeet;n!=null;n=n.parent){
+            if(!seen.add(n)||gridChain.size()>2L*policy.maxExpandedNodes()+4)return false;
+            if(n!=bwdMeet)gridChain.add(n.pos);root=n;
         }
+        if(root==null||!root.pos.equals(backwardRoot))return false;
 
         // 逐格连续性校验:相邻航点最大间距。合法 step 边最长是对角 step·√2;给 1.2 余量容首尾 snap 微偏。
         double maxHop = 0.0D;
@@ -450,7 +467,7 @@ public final class WaterRoutePathfinder {
         }
         if (maxHop > MAX_LEGAL_HOP) {
             // 假相遇:相遇点两侧链没真正逐格接上(stale parent 跳格)。拒绝拼接,继续搜索。
-            LOGGER.warn("[WaterPath] 假相遇已拒绝 meet={} 最大跳={}格({}→{}) 对侧closed=true 继续搜索",
+            LOGGER.warn("[WaterPath] 假相遇已拒绝 meet={} 最大跳={}格({}→{}) 父链不连续 继续搜索",
                     currentSide.pos, (int) maxHop, worstA, worstB);
             return false;
         }
