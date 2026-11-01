@@ -46,6 +46,7 @@ public class NationSavedData extends SavedData {
     private final Map<String, NationInviteRecord> invites = new LinkedHashMap<>();
     private final Map<String, NationJoinRequestRecord> joinRequests = new LinkedHashMap<>();
     private final Map<String, NationClaimRecord> claims = new LinkedHashMap<>();
+    private final java.util.Set<String> monsterSpawnDenied = java.util.concurrent.ConcurrentHashMap.newKeySet();
     private final Map<String, NationWarRecord> wars = new LinkedHashMap<>();
     private final Map<String, NationFlagRecord> flags = new LinkedHashMap<>();
     private final Map<String, NationDiplomacyRecord> diplomacy = new LinkedHashMap<>();
@@ -147,6 +148,8 @@ public class NationSavedData extends SavedData {
                 String key = claimKey(claim.dimensionId(), claim.chunkX(), claim.chunkZ());
                 if (!key.isBlank()) {
                     data.claims.put(key, claim);
+                    if (!claim.mobSpawningAllowed()) data.monsterSpawnDenied.add(key);
+                    else data.monsterSpawnDenied.remove(key);
                 }
             }
         }
@@ -565,6 +568,7 @@ public class NationSavedData extends SavedData {
         }
         for (String key : claimKeys) {
             claims.remove(key);
+            monsterSpawnDenied.remove(key);
             changed = true;
         }
 
@@ -669,6 +673,7 @@ public class NationSavedData extends SavedData {
         }
         for (String key : claimKeys) {
             claims.remove(key);
+            monsterSpawnDenied.remove(key);
             changed = true;
         }
         List<String> requestKeys = new ArrayList<>();
@@ -1163,6 +1168,11 @@ public class NationSavedData extends SavedData {
         }
     }
 
+    /** Safe for generator worker threads: never loads chunks or reads the mutable claims map. */
+    public boolean allowsMonsterSpawning(String dimensionId, int chunkX, int chunkZ) {
+        return !monsterSpawnDenied.contains(claimKey(dimensionId, chunkX, chunkZ));
+    }
+
     public NationClaimRecord getClaim(String dimensionId, int chunkX, int chunkZ) {
         String key = claimKey(dimensionId, chunkX, chunkZ);
         return key.isBlank() ? null : claims.get(key);
@@ -1181,12 +1191,15 @@ public class NationSavedData extends SavedData {
             return;
         }
         claims.put(key, claim);
+        if (claim.mobSpawningAllowed()) monsterSpawnDenied.remove(key);
+        else monsterSpawnDenied.add(key);
         setDirty();
     }
 
     public void removeClaim(String dimensionId, int chunkX, int chunkZ) {
         String key = claimKey(dimensionId, chunkX, chunkZ);
         if (!key.isBlank() && claims.remove(key) != null) {
+            monsterSpawnDenied.remove(key);
             setDirty();
         }
     }
@@ -1207,6 +1220,7 @@ public class NationSavedData extends SavedData {
         }
         for (String key : claimKeys) {
             claims.remove(key);
+            monsterSpawnDenied.remove(key);
         }
         setDirty();
     }
@@ -1227,6 +1241,7 @@ public class NationSavedData extends SavedData {
         }
         for (String key : claimKeys) {
             claims.remove(key);
+            monsterSpawnDenied.remove(key);
         }
         setDirty();
     }

@@ -315,7 +315,7 @@ public final class TownService {
                     existingClaim.redstoneAccessLevel(),
                     existingClaim.entityUseAccessLevel(),
                     existingClaim.entityDamageAccessLevel(),
-                    existingClaim.claimedAt()
+                    existingClaim.claimedAt(), existingClaim.claimSource(), existingClaim.mobSpawningAllowed()
             ));
         }
 
@@ -1367,7 +1367,7 @@ public final class TownService {
                 claim.containerAccessLevel(), claim.redstoneAccessLevel(),
                 claim.entityUseAccessLevel(), claim.entityDamageAccessLevel(),
                 claim.claimedAt(),
-                claim.claimSource()
+                claim.claimSource(), claim.mobSpawningAllowed()
         );
     }
 

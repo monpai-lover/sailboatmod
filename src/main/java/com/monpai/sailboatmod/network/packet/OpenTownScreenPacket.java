@@ -100,6 +100,7 @@ public class OpenTownScreenPacket {
             PacketStringCodec.writeUtfSafe(buffer, claim.redstoneAccessLevel(), 16);
             PacketStringCodec.writeUtfSafe(buffer, claim.entityUseAccessLevel(), 16);
             PacketStringCodec.writeUtfSafe(buffer, claim.entityDamageAccessLevel(), 16);
+            buffer.writeBoolean(claim.mobSpawningAllowed());
         }
         PacketStringCodec.writeUtfSafe(buffer, data.cultureId(), 32);
         buffer.writeVarInt(data.cultureDistribution().size());
@@ -210,7 +211,8 @@ public class OpenTownScreenPacket {
                     buffer.readUtf(16),
                     buffer.readUtf(16),
                     buffer.readUtf(16),
-                    buffer.readUtf(16)
+                    buffer.readUtf(16),
+                    buffer.readBoolean()
             ));
         }
         String cultureId = buffer.readUtf(32);

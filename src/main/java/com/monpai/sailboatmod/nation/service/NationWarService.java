@@ -670,7 +670,7 @@ public final class NationWarService {
                     claim.breakAccessLevel(), claim.placeAccessLevel(),
                     claim.useAccessLevel(), claim.containerAccessLevel(),
                     claim.redstoneAccessLevel(), claim.entityUseAccessLevel(),
-                    claim.entityDamageAccessLevel(), System.currentTimeMillis()));
+                    claim.entityDamageAccessLevel(), System.currentTimeMillis(), claim.claimSource(), claim.mobSpawningAllowed()));
             ceded++;
         }
     }

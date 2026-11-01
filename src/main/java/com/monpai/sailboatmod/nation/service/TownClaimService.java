@@ -231,8 +231,11 @@ public final class TownClaimService {
             return NationResult.failure(Component.translatable("command.sailboatmod.nation.town.no_permission"));
         }
 
+        boolean spawnAction = "mob_spawn".equalsIgnoreCase(actionId == null ? "" : actionId.trim());
+        if (spawnAction && !"true".equals(levelId) && !"false".equals(levelId))
+            return NationResult.failure(Component.translatable("command.sailboatmod.nation.claimperm.level_invalid", levelId));
         NationClaimAccessLevel accessLevel = NationClaimAccessLevel.fromId(levelId);
-        if (accessLevel == null) {
+        if (!spawnAction && accessLevel == null) {
             return NationResult.failure(Component.translatable("command.sailboatmod.nation.claimperm.level_invalid", levelId));
         }
 
@@ -248,12 +251,15 @@ public final class TownClaimService {
         }
 
         for (NationClaimRecord claim : ownedClaims) {
-            NationClaimRecord updated = claim.withPermission(action, accessLevel);
+            NationClaimRecord updated = spawnAction ? claim.withMobSpawningAllowed(Boolean.parseBoolean(levelId))
+                    : claim.withPermission(action, accessLevel);
             if (updated == claim) {
                 return NationResult.failure(Component.translatable("command.sailboatmod.nation.claimperm.action_invalid", actionId));
             }
             data.putClaim(updated);
         }
+        if (spawnAction) return NationResult.success(Component.translatable("command.sailboatmod.nation.claimperm.mob_spawn_success",
+                Component.translatable("screen.sailboatmod.nation.access." + levelId)));
         return NationResult.success(Component.translatable(
                 "command.sailboatmod.nation.claimperm.success",
                 Component.translatable("command.sailboatmod.nation.claimperm.action." + action),

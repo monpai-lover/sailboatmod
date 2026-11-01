@@ -87,7 +87,7 @@ public class NationHomeScreen extends ThemedScreen implements RoadPlannerTileSyn
     private static final String CONFIRM_DECLARE_WAR = "declare-war";
     private static final String CONFIRM_DIP_WAR = "dip-war";
     private static final String CONFIRM_UNCLAIM = "unclaim";
-    private static final String[] PERMISSION_ACTIONS = {"break", "place", "use", "container", "redstone", "entity_use", "entity_damage"};
+    private static final String[] PERMISSION_ACTIONS = {"break", "place", "use", "container", "redstone", "entity_use", "entity_damage", "mob_spawn"};
 
     private NationOverviewData data;
     private Page currentPage = Page.OVERVIEW;
@@ -459,6 +459,7 @@ public class NationHomeScreen extends ThemedScreen implements RoadPlannerTileSyn
         permissionChunk = Ui.clippedText("");
         permissionOwner = Ui.clippedText("", "sm-muted");
         claimsPermView.addChildren(Ui.muted(Component.translatable("screen.sailboatmod.nation.claims.perms_title")), grid,
+                Ui.paragraph(Component.translatable("screen.sailboatmod.nation.claims.mob_spawn_hint"), "sm-muted"),
                 Ui.divider(), permissionChunk, permissionOwner);
         page.addChildren(claimsTabs.element(), claimsMapView, claimsPermView);
         return page;
@@ -1023,6 +1024,7 @@ public class NationHomeScreen extends ThemedScreen implements RoadPlannerTileSyn
 
     private String selectedAccessLevel(String action) {
         return switch (action) {
+            case "mob_spawn" -> selectedClaim() == null ? "" : Boolean.toString(selectedClaim().mobSpawningAllowed());
             case "break" -> selectedBreakAccessLevel();
             case "place" -> selectedPlaceAccessLevel();
             case "use" -> selectedUseAccessLevel();
@@ -1993,7 +1995,8 @@ public class NationHomeScreen extends ThemedScreen implements RoadPlannerTileSyn
     }
 
     private void cycleClaimPermission(String actionId, String currentLevelId) {
-        NationClaimAccessLevel next = nextAccessLevel(currentLevelId);
+        String nextId = "mob_spawn".equals(actionId) ? Boolean.toString(!Boolean.parseBoolean(currentLevelId))
+                : nextAccessLevel(currentLevelId).id();
         if (hasAreaSelection()) {
             int minX = Math.min(this.areaCorner1X, this.areaCorner2X);
             int maxX = Math.max(this.areaCorner1X, this.areaCorner2X);
@@ -2001,14 +2004,14 @@ public class NationHomeScreen extends ThemedScreen implements RoadPlannerTileSyn
             int maxZ = Math.max(this.areaCorner1Z, this.areaCorner2Z);
             for (int az = minZ; az <= maxZ; az++) {
                 for (int ax = minX; ax <= maxX; ax++) {
-                    ModNetwork.CHANNEL.sendToServer(new SetClaimPermissionPacket(ax, az, actionId, next.id()));
+                    ModNetwork.CHANNEL.sendToServer(new SetClaimPermissionPacket(ax, az, actionId, nextId));
                 }
             }
             int count = (maxX - minX + 1) * (maxZ - minZ + 1);
-            this.statusLine = Component.translatable("screen.sailboatmod.nation.claims.updating_batch", count, actionName(actionId), accessName(next.id()));
+            this.statusLine = Component.translatable("screen.sailboatmod.nation.claims.updating_batch", count, actionName(actionId), accessName(nextId));
         } else {
-            ModNetwork.CHANNEL.sendToServer(new SetClaimPermissionPacket(this.selectedClaimChunkX, this.selectedClaimChunkZ, actionId, next.id()));
-            this.statusLine = Component.translatable("screen.sailboatmod.nation.claims.updating", actionName(actionId), accessName(next.id()));
+            ModNetwork.CHANNEL.sendToServer(new SetClaimPermissionPacket(this.selectedClaimChunkX, this.selectedClaimChunkZ, actionId, nextId));
+            this.statusLine = Component.translatable("screen.sailboatmod.nation.claims.updating", actionName(actionId), accessName(nextId));
         }
     }
 

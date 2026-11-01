@@ -27,6 +27,7 @@ import com.monpai.sailboatmod.registry.ModBlockEntities;
 import com.monpai.sailboatmod.route.RouteDefinition;
 import com.monpai.sailboatmod.route.RouteNbtUtil;
 import net.minecraft.core.BlockPos;
+import net.minecraft.server.level.ServerLevel;
 import net.minecraft.core.NonNullList;
 import net.minecraft.nbt.CompoundTag;
 import net.minecraft.nbt.ListTag;
@@ -131,8 +132,12 @@ public class DockBlockEntity extends BlockEntity implements MenuProvider {
     public void setRemoved() {
         if (level != null && !level.isClientSide) {
             unregisterFacility(level, worldPosition);
-            com.monpai.sailboatmod.market.terminal.TerminalNetworkSavedData.get(level)
-                    .removeEntry(level.dimension().location().toString(), worldPosition.asLong());
+            // Chunk unload removes the live object, not a known WATER port/network identity.
+            // Keep non-water terminal behaviour unchanged in this patch.
+            if (!com.monpai.sailboatmod.route.water.PortDockSnapshot.isPort(this))
+                com.monpai.sailboatmod.market.terminal.TerminalNetworkSavedData.get(level)
+                    .removeEntry(level.dimension().location().toString(),worldPosition.asLong());
+            // Actual water-port destruction removes metadata in DockBlock.onRemove.
         }
         super.setRemoved();
     }
@@ -199,8 +204,22 @@ public class DockBlockEntity extends BlockEntity implements MenuProvider {
         setChanged();
     }
 
+    private final java.util.LinkedHashMap<BlockPos, RouteDefinition> knownVoyageItineraries = new java.util.LinkedHashMap<>();
+    private long knownVoyageRevision = -1;
+    /** Runtime-only composites for market dispatch; never write them as newly created routes. */
+    public int installKnownVoyage(BlockPos target, RouteDefinition itinerary, long revision) {
+        if (knownVoyageRevision != revision) { knownVoyageItineraries.clear(); knownVoyageRevision=revision; }
+        if (itinerary==null) return -1;
+        if (!knownVoyageItineraries.containsKey(target) && knownVoyageItineraries.size()>=256) return -1;
+        knownVoyageItineraries.put(target.immutable(), itinerary.copy());
+        return routes.size()+new ArrayList<>(knownVoyageItineraries.keySet()).indexOf(target);
+    }
     protected List<RouteDefinition> availableRoutes() {
-        return routes.stream().map(RouteDefinition::copy).toList();
+        if (level instanceof ServerLevel server && knownVoyageRevision != com.monpai.sailboatmod.route.water.WaterRouteNetworkSavedData.get(server).revision())
+            knownVoyageItineraries.clear();
+        var available = new ArrayList<RouteDefinition>(routes);
+        available.addAll(knownVoyageItineraries.values());
+        return available.stream().map(RouteDefinition::copy).toList();
     }
 
     public String getDockName() {
@@ -404,7 +423,9 @@ public class DockBlockEntity extends BlockEntity implements MenuProvider {
             return false;
         }
         int idx = Mth.clamp(selectedRouteIndex, 0, routes.size() - 1);
-        routes.remove(idx);
+        RouteDefinition removed = routes.remove(idx);
+        if (level instanceof ServerLevel server)
+            com.monpai.sailboatmod.route.water.WaterRouteNetworkSavedData.get(server).invalidateGeometry(removed.waypoints());
         if (routes.isEmpty()) {
             selectedRouteIndex = 0;
         } else {
@@ -694,9 +715,13 @@ public class DockBlockEntity extends BlockEntity implements MenuProvider {
     }
 
     public boolean assignBoatToDestination(LogisticsCarrier boat, RouteDefinition itinerary, Player operator) {
+        return assignBoatToDestination(boat,itinerary,operator,nonOrderAutoReturnEnabled,nonOrderAutoUnloadEnabled);
+    }
+    public boolean assignBoatToDestination(LogisticsCarrier boat, RouteDefinition itinerary, Player operator,
+                                           boolean autoReturn, boolean autoUnload) {
         if (boat == null || itinerary == null) return false;
-        boat.setAllowNonOrderAutoReturn(nonOrderAutoReturnEnabled);
-        boat.setAllowNonOrderAutoUnload(nonOrderAutoUnloadEnabled);
+        boat.setAllowNonOrderAutoReturn(autoReturn);
+        boat.setAllowNonOrderAutoUnload(autoUnload);
         boolean started = assignBoatUsingItinerary(boat, List.of(itinerary.copy()), 0, true, operator, true);
         if (!started) { boat.setAllowNonOrderAutoReturn(false); boat.setAllowNonOrderAutoUnload(false); }
         return started;
@@ -723,6 +748,11 @@ public class DockBlockEntity extends BlockEntity implements MenuProvider {
             return false;
         }
         int safeRouteIndex = Mth.clamp(routeIndex, 0, availableRoutes.size() - 1);
+        if (autoStart && sailboat instanceof com.monpai.sailboatmod.entity.SailboatEntity ship) {
+            RouteDefinition departure=ship.prepareKnownDeparture(availableRoutes.get(safeRouteIndex));
+            if(departure==null)return false; // No fee/cargo mutation for an unsafe local entry.
+            availableRoutes=new ArrayList<>(availableRoutes);availableRoutes.set(safeRouteIndex,departure);
+        }
         if (operator != null && !isBoatOwnedBy(sailboat, operator) && !sailboat.isAvailableForRent()) {
             operator.displayClientMessage(Component.translatable("block.sailboatmod.dock.not_for_rent", sailboat.getTransportName()), true);
             return false;

@@ -40,12 +40,15 @@ class MarketLiveUpdatePacketTest {
     }
 
     @Test
-    void registeredLastAsAClientboundPayload() throws Exception {
+    void remainsClientboundBeforeAppendedNavigationPayloads() throws Exception {
         String network = Files.readString(Path.of("src/main/java/com/monpai/sailboatmod/network/ModNetwork.java")).replace("\r\n", "\n");
-        int at = network.lastIndexOf("CHANNEL.registerMessage(");
+        int payload = network.indexOf("MarketLiveUpdatePacket.class");
+        assertTrue(payload >= 0, "market live-update payload remains registered");
+        int at = network.lastIndexOf("CHANNEL.registerMessage(", payload);
+        assertTrue(network.indexOf("KnownVoyageMenuPacket.class") > payload, "navigation packets append without reordering market payload");
         String last = network.substring(at, network.indexOf(");", network.indexOf("Optional.of(", at)) + 2);
         assertTrue(last.contains("MarketLiveUpdatePacket.class") && last.contains("PLAY_TO_CLIENT"), last);
-        assertTrue(network.contains("PROTOCOL_VERSION = \"17\""), "the combined market and aircraft protocol must differ from either standalone protocol 16");
+        assertTrue(network.contains("PROTOCOL_VERSION = \"22\""), "the combined market and aircraft protocol must differ from either standalone protocol 16");
     }
 
     private static MarketOverviewData overview() {

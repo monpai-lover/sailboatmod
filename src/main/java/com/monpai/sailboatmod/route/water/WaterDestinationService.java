@@ -2,74 +2,57 @@ package com.monpai.sailboatmod.route.water;
 
 import com.monpai.sailboatmod.SailboatMod;
 import com.monpai.sailboatmod.block.entity.DockBlockEntity;
+import com.monpai.sailboatmod.route.RouteDefinition;
 import net.minecraft.core.BlockPos;
-import net.minecraft.server.MinecraftServer;
 import net.minecraft.server.level.ServerLevel;
 import net.neoforged.bus.api.SubscribeEvent;
 import net.neoforged.fml.common.EventBusSubscriber;
 import java.util.*;
 
-/** Destination-level single-flight jobs for automatic market dispatch. Cargo and payment
- * remain in the existing transactional dispatcher until a real route is available.
+/** Market dispatch reads the same saved graph as player dispatch. NEVER creates a missing route.
+ * Async work is graph traversal only. Pending graph views do not reserve cargo, money or world chunks.
  */
 @EventBusSubscriber(modid=SailboatMod.MODID)
 public final class WaterDestinationService {
-    private record Key(String dimension,BlockPos from,BlockPos to) {}
-    private static final class Job {
-        final ServerLevel level; final Key key; final UUID ticket=UUID.randomUUID(); final long started=System.nanoTime();
-        WaterRouteTask task; boolean finished,released; long retryAfter;
-        Job(ServerLevel level,Key key){this.level=level;this.key=key;}
-        void release(){
-            if(released)return;released=true;
-            level.getChunkSource().removeRegionTicket(TICKET,new net.minecraft.world.level.ChunkPos(key.from),0,ticket);
-            level.getChunkSource().removeRegionTicket(TICKET,new net.minecraft.world.level.ChunkPos(key.to),0,ticket);
-        }
+    private static final class View {
+        final KnownVoyageService.Catalog catalog; volatile boolean cancelled; boolean ready;
+        Map<BlockPos,KnownWaterRouteGraph.Itinerary> trips=Map.of();
+        View(KnownVoyageService.Catalog catalog){this.catalog=catalog;}
     }
-    private static final Map<MinecraftServer,Map<Key,Job>> JOBS=new WeakHashMap<>();
-    private static final net.minecraft.server.level.TicketType<UUID> TICKET=
-            net.minecraft.server.level.TicketType.create("sailboatmod_destination",UUID::compareTo);
-    private WaterDestinationService(){}
-    /** Returns an existing exact destination index, or -1 while a bounded background job prepares it. */
-    public static int ensureMarketRoute(ServerLevel level,DockBlockEntity source,DockBlockEntity target) {
-        if(!PortDockSnapshot.isPort(source)||!PortDockSnapshot.isPort(target)
-                ||source==target||!WaterRouteCandidateService.canListCandidate(level,source,target).successful())return -1;
-        int existing=source.findRouteIndexByDestinationDock(target.getBlockPos(),target.getDockName());
-        if(existing>=0)return existing;
-        Map<Key,Job> jobs=JOBS.computeIfAbsent(level.getServer(),s->new LinkedHashMap<>());
-        Key key=new Key(level.dimension().location().toString(),source.getBlockPos().immutable(),target.getBlockPos().immutable());
-        Job old=jobs.get(key);long now=System.nanoTime();
-        if(old!=null&&(!old.finished||now<old.retryAfter))return -1;
-        if(jobs.values().stream().filter(j->!j.finished).count()>=8)return -1;
-        jobs.entrySet().removeIf(e->e.getValue().finished&&now>=e.getValue().retryAfter);
-        if(jobs.size()>=64)return -1;
-        Job job=new Job(level,key);jobs.put(key,job);
-        level.getChunkSource().addRegionTicket(TICKET,new net.minecraft.world.level.ChunkPos(key.from),0,job.ticket);
-        level.getChunkSource().addRegionTicket(TICKET,new net.minecraft.world.level.ChunkPos(key.to),0,job.ticket);
-        try {
-        var submitted=WaterAutoRouteService.submitDestinationRoute(level,source,target,null,result->{
-            job.finished=true;job.retryAfter=System.nanoTime()+60_000_000_000L;job.release();
-        });
-        if(!submitted.successful()){job.finished=true;job.retryAfter=now+10_000_000_000L;job.release();}
-        else job.task=WaterRouteTaskService.global().find(key.dimension+"|"+key.from.asLong()+"|"+key.to.asLong());
-        } catch(RuntimeException failure) {
-            job.finished=true;job.retryAfter=now+60_000_000_000L;job.release();
-            com.mojang.logging.LogUtils.getLogger().warn("[WaterPath] 自动目的地任务准备失败 {}",key,failure);
+    private static final Map<ServerLevel,Map<BlockPos,View>> VIEWS=new WeakHashMap<>();
+    private WaterDestinationService() { }
+    public static RouteDefinition knownItinerary(ServerLevel level,DockBlockEntity source,BlockPos target) {
+        if(!PortDockSnapshot.isPort(source)||target.equals(source.getBlockPos()))return null;
+        var catalog=KnownVoyageService.catalog(level,source.getBlockPos(),null);
+        if(!catalog.ports().containsKey(target))return null;
+        var cache=VIEWS.computeIfAbsent(level,l->new LinkedHashMap<>());View view=cache.get(source.getBlockPos());
+        if(view==null||view.catalog.revision()!=catalog.revision()||!view.catalog.routes().equals(catalog.routes())) {
+            if(view!=null)view.cancelled=true;
+            if(cache.size()>=64&&!cache.containsKey(source.getBlockPos()))return null;
+            if(cache.values().stream().filter(v->!v.ready&&!v.cancelled).count()>=8)return null;
+            View requested=new View(catalog);cache.put(source.getBlockPos().immutable(),requested);
+            BlockPos origin=source.getBlockPos().immutable();
+            WaterRouteTaskExecutor.submit(()->WaterRouteCancellation.run(()->requested.cancelled,
+                    ()->KnownWaterRouteGraph.build(catalog.routes()).fromDock(origin)))
+                    .whenComplete((trips,error)->level.getServer().execute(()->{
+                        if(requested.cancelled)return;
+                        requested.trips=error==null?trips:Map.of();requested.ready=true;
+                    }));
+            return null;
         }
-        return -1;
+        if(!view.ready)return null;
+        var trip=view.trips.get(target);if(trip==null)return null;
+        return KnownVoyageService.definition(trip,source.getDockName(),catalog.ports().get(target).dockName());
+    }
+    public static int ensureMarketRoute(ServerLevel level,DockBlockEntity source,DockBlockEntity target) {
+        if(!PortDockSnapshot.isPort(target))return -1;
+        var itinerary=knownItinerary(level,source,target.getBlockPos());
+        return itinerary==null?-1:source.installKnownVoyage(target.getBlockPos(),itinerary,WaterRouteNetworkSavedData.get(level).revision());
     }
     public static boolean pending(ServerLevel level,BlockPos from,BlockPos to){
-        var jobs=JOBS.get(level.getServer());if(jobs==null)return false;
-        Job j=jobs.get(new Key(level.dimension().location().toString(),from,to));return j!=null&&!j.finished;
-    }
-    @SubscribeEvent public static void tick(net.neoforged.neoforge.event.tick.ServerTickEvent.Post event){
-        var jobs=JOBS.get(event.getServer());if(jobs==null)return;
-        long now=System.nanoTime();
-        for(Job j:jobs.values())if(!j.finished&&now-j.started>600_000_000_000L){
-            if(j.task!=null)j.task.cancel();j.finished=true;j.retryAfter=now+60_000_000_000L;j.release();
-        }
+        var views=VIEWS.get(level);var view=views==null?null:views.get(from);return view!=null&&!view.ready&&!view.cancelled;
     }
     @SubscribeEvent public static void stop(net.neoforged.neoforge.event.server.ServerStoppingEvent event){
-        var jobs=JOBS.remove(event.getServer());if(jobs==null)return;
-        for(Job j:jobs.values()){if(j.task!=null&&!j.finished)j.task.cancel();j.release();}
+        VIEWS.entrySet().removeIf(e->{if(e.getKey().getServer()!=event.getServer())return false;e.getValue().values().forEach(v->v.cancelled=true);return true;});
     }
 }

@@ -925,7 +925,10 @@ public final class WaterAutoRouteService {
         try (RouteTerrainSource terrain = level == null ? null : new RouteTerrainSource(level, predictor,
                 () -> com.monpai.sailboatmod.route.terrain.TellusSurfaceSamplers.forLevel(level).orElse(null))) {
             if (terrain != null) map.withAsyncTerrain(terrain);
-            return WaterRescuePlanner.plan(map, boat, route, targetIndex, terrain == null ? null : terrain::awaitProgress);
+            try {
+                LiveWaterSnapshots.seedNearby(level, map, boat, System.nanoTime()+3_000_000_000L);
+                return WaterRescuePlanner.plan(map, boat, route, targetIndex, terrain == null ? null : terrain::awaitProgress);
+            } catch (StrictWaterDetour.Failure failed) { return WaterRouteResult.failure(failed.reason()); }
         }
     }
 

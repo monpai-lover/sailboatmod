@@ -5974,7 +5974,7 @@ public final class StructureConstructionManager {
                 existingClaim.redstoneAccessLevel(),
                 existingClaim.entityUseAccessLevel(),
                 existingClaim.entityDamageAccessLevel(),
-                existingClaim.claimedAt()
+                existingClaim.claimedAt(), existingClaim.claimSource(), existingClaim.mobSpawningAllowed()
         ));
     }
 

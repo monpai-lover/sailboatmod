@@ -1487,7 +1487,7 @@
   "message.sailboatmod.auto_route.water.failed.already_pending": "这两个码头之间已有水上航线正在计算。",
   "message.sailboatmod.auto_route.water.failed.generic": "水上航线创建失败。",
   "entity.sailboatmod.autopilot.stuck": "卡住，请协助",
-  "message.sailboatmod.autopilot.stuck": "你的帆船在窄河道卡住了，坐标 (%1$s, %2$s, %3$s)，已暂停自动航行，请前往救援。",
+  "message.sailboatmod.autopilot.stuck": "帆船在 (%1$s, %2$s, %3$s) 无法安全继续，已暂停自动航行。请检查地形加载与导航状态；此提示不表示处于窄河道。",
   "message.sailboatmod.autopilot.arrived.broadcast": "载具已抵达 %1$s（用时 %2$s）。",
   "block.sailboatmod.post_station.no_target": "本驿站内没有可用的马车。",
   "block.sailboatmod.post_station.no_route": "本驿站没有可用路线。",
@@ -2084,5 +2084,18 @@
   "screen.sailboatmod.route_preference.optimal": "最优航线",
   "screen.sailboatmod.route_preference.reuse_first": "优先复用",
   "screen.sailboatmod.route_preference.optimal.desc": "完整重新规划最短且离岸的航线，不复用其他航线的航段。",
-  "screen.sailboatmod.route_preference.reuse_first.desc": "沿用已建航道，只补算缺口；更快，但可能比最优略远。"
+  "screen.sailboatmod.route_preference.reuse_first.desc": "沿用已建航道，只补算缺口；更快，但可能比最优略远。",
+  "screen.sailboatmod.route_status.turning": "转向中",
+  "screen.sailboatmod.route_status.waiting_terrain": "等待前方地形",
+  "screen.sailboatmod.route_status.waiting_departure": "等待出港",
+  "screen.sailboatmod.route_status.connecting": "接入航路中",
+  "screen.sailboatmod.route_status.recovering": "局部接驳中",
+  "screen.sailboatmod.route_status.blocked": "阻塞 / 待检查",
+  "screen.sailboatmod.nation.claims.button.mob_spawn": "允许刷怪: %s",
+  "screen.sailboatmod.nation.access.true": "允许",
+  "screen.sailboatmod.nation.access.false": "禁止",
+  "screen.sailboatmod.nation.claims.mob_spawn_hint": "关闭后禁止本区块的怪物自动生成（含刷怪笼、巡逻和袭击）。不清理已有生物，不影响动物、村民、刷怪蛋和命令。",
+  "screen.sailboatmod.nation.claims.action.mob_spawn": "允许刷怪",
+  "command.sailboatmod.nation.claimperm.action.mob_spawn": "允许刷怪",
+  "command.sailboatmod.nation.claimperm.mob_spawn_success": "领地区块刷怪权限已设为：%s。"
 }

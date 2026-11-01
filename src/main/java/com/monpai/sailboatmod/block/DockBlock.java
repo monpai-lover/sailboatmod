@@ -86,6 +86,10 @@ public class DockBlock extends BaseEntityBlock {
     public void onRemove(BlockState state, Level level, BlockPos pos, BlockState newState, boolean movedByPiston) {
         if (!state.is(newState.getBlock()) && !level.isClientSide) {
             BlueMapIntegration.removeDock(level, pos);
+            com.monpai.sailboatmod.market.terminal.TerminalNetworkSavedData.get(level)
+                    .removeEntry(level.dimension().location().toString(), pos.asLong());
+            if (level instanceof net.minecraft.server.level.ServerLevel server)
+                com.monpai.sailboatmod.route.water.WaterRouteNetworkSavedData.get(server).invalidateDock(pos);
             com.monpai.sailboatmod.map.route.StationMapRouteSavedData.get(level)
                     .remove(level.dimension().location().toString(), pos);
             // 真正破坏时(区块卸载不触发 onRemove)从持久清单移除该码头坐标。

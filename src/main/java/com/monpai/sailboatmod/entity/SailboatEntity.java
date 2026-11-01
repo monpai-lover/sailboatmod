@@ -316,6 +316,11 @@ public class SailboatEntity extends Boat implements GeoEntity, MenuProvider, Tra
     private Vec3 lastAutopilotTrackingPosition;
     private double autopilotSafeSpeedCap = Double.POSITIVE_INFINITY;
     private boolean autopilotAimBlocked;
+    private final com.monpai.sailboatmod.route.AutopilotRecoveryGuard recoveryGuard = new com.monpai.sailboatmod.route.AutopilotRecoveryGuard();
+    private boolean followerTerrainUnknown;
+    private long terrainHoldStarted = -1;
+    private static final EntityDataAccessor<Integer> DATA_NAVIGATION_PHASE =
+            SynchedEntityData.defineId(SailboatEntity.class, EntityDataSerializers.INT);
     private long followerCellTick=Long.MIN_VALUE;
     private final java.util.Map<BlockPos,Boolean> followerCells=new java.util.HashMap<>();
     private String autopilotRouteName = "";
@@ -449,6 +454,7 @@ public class SailboatEntity extends Boat implements GeoEntity, MenuProvider, Tra
         builder.define(DATA_SAIL_DEPLOYED, true);
         builder.define(DATA_HANDLING_PRESET, HandlingPreset.BALANCED.id);
         builder.define(DATA_ENGINE_GEAR, EngineGear.STOP.id);
+        builder.define(DATA_NAVIGATION_PHASE, 0);
         builder.define(DATA_AUTOPILOT_ACTIVE, false);
         builder.define(DATA_AUTOPILOT_PAUSED, false);
         builder.define(DATA_ROUTE_COUNT, 0);
@@ -1466,6 +1472,10 @@ public class SailboatEntity extends Boat implements GeoEntity, MenuProvider, Tra
         entityData.set(DATA_AUTOPILOT_PAUSED, tag.getBoolean("AutopilotPaused"));
         boolean autopilotActive = tag.getBoolean("AutopilotActive") && !autopilotRoute.isEmpty();
         entityData.set(DATA_AUTOPILOT_ACTIVE, autopilotActive);
+        entityData.set(DATA_NAVIGATION_PHASE, (autopilotActive
+                ? (tag.getBoolean("AutopilotPaused") ? com.monpai.sailboatmod.route.NavigationPhase.PAUSED
+                : com.monpai.sailboatmod.route.NavigationPhase.SAILING)
+                : com.monpai.sailboatmod.route.NavigationPhase.IDLE).ordinal());
         if (!autopilotActive) {
             clearAutopilotShipmentContext();
         }
@@ -1823,6 +1833,21 @@ public class SailboatEntity extends Boat implements GeoEntity, MenuProvider, Tra
         updateRouteSyncData();
     }
 
+    /** No A*: just a loaded, <=32-block departure segment to the saved berth. */
+    public RouteDefinition prepareKnownDeparture(RouteDefinition route) {
+        if (level().isClientSide || route==null || route.waypoints().size()<2) return null;
+        Vec3 entry=route.waypoints().getFirst();
+        Vec3 here=new Vec3(getX(),entry.y,getZ());
+        if (!liveAutopilotConnectionClear(here,entry)) return null;
+        var points=new ArrayList<Vec3>(); points.add(here);
+        for(Vec3 p:route.waypoints()) if(points.getLast().distanceToSqr(p)>1e-12)points.add(p);
+        return new RouteDefinition(route.name(),points,route.authorName(),route.authorUuid(),route.createdAtEpochMillis(),
+                com.monpai.sailboatmod.route.water.KnownWaterRouteGraph.length(points),route.startDockName(),route.endDockName());
+    }
+    public void setKnownDestination(BlockPos destination) {
+        if (!level().isClientSide && destination!=null) autopilotDestinationDockHintPos=destination.immutable();
+    }
+
     public boolean startAutopilot() {
         return startAutopilotInternal();
     }
@@ -1831,7 +1856,24 @@ public class SailboatEntity extends Boat implements GeoEntity, MenuProvider, Tra
         return startAutopilotInternal();
     }
 
-    private boolean startAutopilotInternal() {
+    private boolean startAutopilotInternal() { return startAutopilotInternal(false); }
+
+    /** Server-owned, already validated voyage. Never accepts client-supplied geometry. */
+    public boolean startKnownVoyageFromPosition(RouteDefinition route, BlockPos originDock, BlockPos destination,
+            ServerPlayer captain, boolean autoReturn, boolean autoUnload) {
+        if (level().isClientSide || captain == null || !isCaptain(captain) || isAutopilotActive()
+                || !getPendingShipmentManifest().isEmpty() || route.waypoints().size() < 2
+                || com.monpai.sailboatmod.route.WaterPolylineFollower.horizontal(position(), route.waypoints().getFirst()) > 1.5)
+            return false;
+        setRouteCatalog(List.of(route), 0, originDock);
+        setPendingShipper(captain.getName().getString());
+        setAllowNonOrderAutoReturn(autoReturn); setAllowNonOrderAutoUnload(autoUnload);
+        boolean started = startAutopilotInternal(true);
+        if (started) autopilotDestinationDockHintPos = destination.immutable();
+        return started;
+    }
+
+    private boolean startAutopilotInternal(boolean validatedPositionConnector) {
         if (level().isClientSide) {
             return false;
         }
@@ -1851,7 +1893,7 @@ public class SailboatEntity extends Boat implements GeoEntity, MenuProvider, Tra
         }
         selectedRouteIndex = Mth.clamp(selectedRouteIndex, 0, routeCatalog.size() - 1);
         RouteDefinition route = routeCatalog.get(selectedRouteIndex);
-        if (!isInsideRouteStartWaitingZone(route)) {
+        if (!validatedPositionConnector && !isInsideRouteStartWaitingZone(route)) {
             stopAutopilot();
             return false;
         }
@@ -1867,7 +1909,8 @@ public class SailboatEntity extends Boat implements GeoEntity, MenuProvider, Tra
             autopilotRouteName = "Route-" + (selectedRouteIndex + 1);
         }
         initializeAutopilotShipmentContext(route);
-        autopilotTargetIndex = determineInitialAutopilotTargetIndex();
+        autopilotTargetIndex = validatedPositionConnector ? 1 : determineInitialAutopilotTargetIndex();
+        recoveryGuard.reset(); terrainHoldStarted = -1;
         entityData.set(DATA_AUTOPILOT_ACTIVE, true);
         createLookaheadGuard();
         entityData.set(DATA_AUTOPILOT_PAUSED, false);
@@ -1875,6 +1918,7 @@ public class SailboatEntity extends Boat implements GeoEntity, MenuProvider, Tra
         autopilotLastTargetDistance = Double.NaN;
         autopilotGearHoldTicks = 0;
         updateRouteSyncData();
+        setNavigationPhase(com.monpai.sailboatmod.route.NavigationPhase.SAILING);
         forwardPressedLastTick = false;
         reversePressedLastTick = false;
         // webmap: 手动发车（无市场订单）建一条 manual 轨迹，供地图显示
@@ -1951,6 +1995,8 @@ public class SailboatEntity extends Boat implements GeoEntity, MenuProvider, Tra
             rollbackMarketShipment();
         }
         entityData.set(DATA_AUTOPILOT_ACTIVE, false);
+        setNavigationPhase(com.monpai.sailboatmod.route.NavigationPhase.IDLE);
+        recoveryGuard.reset(); terrainHoldStarted = -1;
         lastAutopilotTrackingPosition=null;
         autopilotRoute.clear();
         autopilotTargetIndex = 0;
@@ -1984,6 +2030,7 @@ public class SailboatEntity extends Boat implements GeoEntity, MenuProvider, Tra
         autopilotSafeSpeedCap = 0;
         entityData.set(DATA_AUTOPILOT_PAUSED, true);
         entityData.set(DATA_ENGINE_GEAR, EngineGear.STOP.id);
+        setNavigationPhase(com.monpai.sailboatmod.route.NavigationPhase.PAUSED);
     }
 
     public void resumeAutopilot() {
@@ -1995,6 +2042,11 @@ public class SailboatEntity extends Boat implements GeoEntity, MenuProvider, Tra
             return;
         }
         entityData.set(DATA_AUTOPILOT_PAUSED, false);
+        autopilotSafeSpeedCap = Double.POSITIVE_INFINITY; autopilotAimBlocked = false;
+        autopilotNoProgressTicks = 0; autopilotLastTargetDistance = Double.NaN;
+        lastAutopilotTrackingPosition = position(); recoveryGuard.reset(); terrainHoldStarted = -1;
+        if (lookaheadGuard != null) lookaheadGuard.reset();
+        setNavigationPhase(com.monpai.sailboatmod.route.NavigationPhase.SAILING);
         clearStuckTraceStatus(); // 玩家手动恢复被卡死暂停的船：webmap 状态从 STUCK 恢复 SAILING
     }
 
@@ -2194,7 +2246,7 @@ public class SailboatEntity extends Boat implements GeoEntity, MenuProvider, Tra
         double distance=com.monpai.sailboatmod.route.WaterPolylineFollower.horizontal(from,to);
         if(distance>32||!(level() instanceof ServerLevel serverLevel))return false;
         if (followerCellTick != level().getGameTime()) { followerCellTick=level().getGameTime();followerCells.clear(); }
-        int samples=Math.max(1,(int)Math.ceil(distance*4)),surface=(int)Math.floor(to.y)-1;
+        int samples=Math.max(1,(int)Math.ceil(distance*4)),surface=com.monpai.sailboatmod.route.AutopilotMotionPolicy.waterBlockY(to.y);
         for(int i=0;i<=samples;i++) {
             int x=Mth.floor(from.x+(to.x-from.x)*i/samples),z=Mth.floor(from.z+(to.z-from.z)*i/samples);
             for(int dz=0;dz<2;dz++)for(int dx=0;dx<2;dx++) {
@@ -2202,9 +2254,10 @@ public class SailboatEntity extends Boat implements GeoEntity, MenuProvider, Tra
                 Boolean known=followerCells.get(pos);
                 if (known != null) { if(!known)return false;continue; }
                 // Never make an unbounded entity tick even with hundreds of tiny waypoints.
-                if(followerCells.size()>=512)return false;
+                if(followerCells.size()>=512){followerTerrainUnknown=true;return false;}
                 var chunk=serverLevel.getChunkSource().getChunkNow((x+dx)>>4,(z+dz)>>4);
-                boolean clear=chunk!=null&&com.monpai.sailboatmod.route.water.WaterSurfaceRules.isNavigableSurface(chunk.getBlockState(pos));
+                if (chunk == null) { followerTerrainUnknown=true; return false; }
+                boolean clear=com.monpai.sailboatmod.route.water.WaterSurfaceRules.isNavigableSurface(chunk.getBlockState(pos));
                 if(clear)for(int y=surface;y<=surface+2;y++) {
                     BlockPos at=pos.atY(y);
                     if(!chunk.getBlockState(at).getCollisionShape(level(),at).isEmpty()){clear=false;break;}
@@ -2244,7 +2297,26 @@ public class SailboatEntity extends Boat implements GeoEntity, MenuProvider, Tra
         return Mth.clamp(bias, -AUTOPILOT_FEEDFORWARD_MAX_DEGREES, AUTOPILOT_FEEDFORWARD_MAX_DEGREES);
     }
 
+    public com.monpai.sailboatmod.route.NavigationPhase getNavigationPhase() {
+        if (!isAutopilotActive()) return com.monpai.sailboatmod.route.NavigationPhase.IDLE;
+        var phase = com.monpai.sailboatmod.route.NavigationPhase.of(entityData.get(DATA_NAVIGATION_PHASE));
+        if (isAutopilotPaused() && phase != com.monpai.sailboatmod.route.NavigationPhase.BLOCKED)
+            return com.monpai.sailboatmod.route.NavigationPhase.PAUSED;
+        return phase;
+    }
+
+    private void setNavigationPhase(com.monpai.sailboatmod.route.NavigationPhase phase) {
+        if (level().isClientSide || entityData.get(DATA_NAVIGATION_PHASE) == phase.ordinal()) return;
+        entityData.set(DATA_NAVIGATION_PHASE, phase.ordinal());
+        ShippingTraceService.updateStatus(level(), activeTraceId(), phase.traceStatus());
+        LOGGER.info("[Navigation] ship={} phase={} pos=({}, {}) target={} unknown={} collision={} speed={}",
+                getUUID(), phase, getX(), getZ(), autopilotTargetIndex, followerTerrainUnknown, horizontalCollision,
+                getDeltaMovement().horizontalDistance());
+    }
+
     protected AutopilotCommand computeAutopilotCommand() {
+        recoveryGuard.moved(getX(), getZ());
+        followerTerrainUnknown = false;
         if (!hasAutopilotRoute()) {
             stopAutopilot();
             return AutopilotCommand.inactive();
@@ -2254,6 +2326,7 @@ public class SailboatEntity extends Boat implements GeoEntity, MenuProvider, Tra
             return AutopilotCommand.inactive();
         }
         if (rerouteRequests.isInFlight()) {
+            setNavigationPhase(com.monpai.sailboatmod.route.NavigationPhase.RECOVERING);
             autopilotSafeSpeedCap = 0;
             autopilotNoProgressTicks = 0;
             return new AutopilotCommand(true, false, 0, 0, EngineGear.STOP);
@@ -2261,6 +2334,7 @@ public class SailboatEntity extends Boat implements GeoEntity, MenuProvider, Tra
         // 窄河道脱困：后退分两段——【前段纯直退不转船头】(后退方向=船头反向,转了就退不出,这是旧 bug 根因),
         // 后段(最后 AUTOPILOT_UNSTICK_SWING_TICKS tick)才小幅摆舵换个朝向,给下一轮换方向重试。
         if (autopilotUnstickTicks > 0) {
+            setNavigationPhase(com.monpai.sailboatmod.route.NavigationPhase.RECOVERING);
             autopilotUnstickTicks--;
             if (autopilotUnstickTicks == 0) {
                 endUnstickAttempt();
@@ -2276,6 +2350,7 @@ public class SailboatEntity extends Boat implements GeoEntity, MenuProvider, Tra
         }
         autopilotTargetIndex = Mth.clamp(autopilotTargetIndex, 0, autopilotRoute.size() - 1);
         if (lookaheadGuard != null && lookaheadGuard.shouldHold()) {
+            setNavigationPhase(com.monpai.sailboatmod.route.NavigationPhase.WAITING_TERRAIN);
             autopilotNoProgressTicks = 0; // 主动停船等前方绕行结果,不算卡住(不触发脱困)
             return new AutopilotCommand(true, false, 0.0F, 0.0F, EngineGear.STOP);
         }
@@ -2300,7 +2375,9 @@ public class SailboatEntity extends Boat implements GeoEntity, MenuProvider, Tra
         if (finalTarget) {
             Vec3 approach = computeDockApproachPoint(getAutopilotDestinationDock());
             if (approach == null) {
-                return AutopilotCommand.inactive();
+                autopilotSafeSpeedCap=0;
+                setNavigationPhase(com.monpai.sailboatmod.route.NavigationPhase.WAITING_TERRAIN);
+                return new AutopilotCommand(true,false,0,0,EngineGear.STOP);
             }
             target = approach;
         }
@@ -2313,12 +2390,28 @@ public class SailboatEntity extends Boat implements GeoEntity, MenuProvider, Tra
         }
 
         HeadingSolution heading = solveHeading(target, finalTarget);
+        if (autopilotAimBlocked && followerTerrainUnknown) {
+            // Missing loaded columns are not rocks and must not start a rescue storm.
+            // Existing rolling entity tickets continue loading the near field; no synchronous getChunk.
+            if (terrainHoldStarted < 0) terrainHoldStarted = level().getGameTime();
+            setNavigationPhase(com.monpai.sailboatmod.route.NavigationPhase.WAITING_TERRAIN);
+            autopilotNoProgressTicks = 0; autopilotLastTargetDistance = Double.NaN;
+            if (level().getGameTime() - terrainHoldStarted >= 1200) {
+                pauseAutopilot();
+                setNavigationPhase(com.monpai.sailboatmod.route.NavigationPhase.BLOCKED);
+                LOGGER.warn("[Navigation] ship={} nearby chunks still unavailable after 1200 ticks; paused, not classified as land", getUUID());
+            }
+            return new AutopilotCommand(true, false, 0, 0, EngineGear.STOP);
+        }
+        terrainHoldStarted = -1;
+
         float yawStep = heading.yawStep();
         float turnInput = heading.turnInput();
         boolean wantsTurn = heading.wantsTurn();
         float absYawError = heading.absYawError();
 
         if (shouldYieldForDeparture(target, dist)) {
+            setNavigationPhase(com.monpai.sailboatmod.route.NavigationPhase.WAITING_DEPARTURE);
             autopilotNoProgressTicks = 0;
             autopilotLastTargetDistance = dist;
             return new AutopilotCommand(true, false, 0.0F, 0.0F, EngineGear.STOP);
@@ -2371,6 +2464,9 @@ public class SailboatEntity extends Boat implements GeoEntity, MenuProvider, Tra
         }
         EngineGear desiredGear = autopilotAimBlocked ? EngineGear.STOP
                 : selectAutopilotGear(finalTarget, dist, stopRadius, absYawError, slowdownRadius);
+        setNavigationPhase(autopilotAimBlocked ? com.monpai.sailboatmod.route.NavigationPhase.BLOCKED
+                : absYawError > AUTOPILOT_TURN_IN_PLACE_DEGREES ? com.monpai.sailboatmod.route.NavigationPhase.TURNING
+                : com.monpai.sailboatmod.route.NavigationPhase.SAILING);
         return new AutopilotCommand(true, wantsTurn, turnInput, yawStep, desiredGear);
     }
 
@@ -2571,6 +2667,15 @@ public class SailboatEntity extends Boat implements GeoEntity, MenuProvider, Tra
      */
     private void tryLocalWaterRescueAsync() {
         if (!(level() instanceof ServerLevel server) || isAutopilotPaused() || rerouteRequests.isInFlight() || !hasAutopilotRoute()) return;
+        var recovery = recoveryGuard.request(level().getGameTime(), getX(), getZ());
+        if (recovery == com.monpai.sailboatmod.route.AutopilotRecoveryGuard.Decision.EXHAUSTED) {
+            LOGGER.warn("[Rescue] ship={} repeated geometric repairs produced no actual movement; paused", getUUID());
+            rerouteFailedFallback(); return;
+        }
+        if (recovery == com.monpai.sailboatmod.route.AutopilotRecoveryGuard.Decision.COOLDOWN) {
+            setNavigationPhase(com.monpai.sailboatmod.route.NavigationPhase.RECOVERING); return;
+        }
+        setNavigationPhase(com.monpai.sailboatmod.route.NavigationPhase.RECOVERING);
         final List<Vec3> original = List.copyOf(autopilotRoute);
         final int targetIndex = autopilotTargetIndex;
         final Vec3 capturedPosition = position();
@@ -2608,6 +2713,8 @@ public class SailboatEntity extends Boat implements GeoEntity, MenuProvider, Tra
                     autopilotSafeSpeedCap = Double.POSITIVE_INFINITY; autopilotAimBlocked = false;
                     traceLiveSyncTicks = TRACE_LIVE_SYNC_INTERVAL_TICKS;
                     resetUnstickState(); clearStuckTraceStatus();
+                    setNavigationPhase(com.monpai.sailboatmod.route.NavigationPhase.SAILING);
+                    // Do NOT reset recoveryGuard here: a new polyline is not physical progress.
                     LOGGER.info("[Rescue] 局部修复成功:新接驳={} 保留原航点={}", splice.detour().size(), original.size()-splice.tailIndex());
                 }));
     }
@@ -2740,6 +2847,7 @@ public class SailboatEntity extends Boat implements GeoEntity, MenuProvider, Tra
         beginStuckHelpNotice();
         markStuckTraceStatus();
         pauseAutopilot();
+        setNavigationPhase(com.monpai.sailboatmod.route.NavigationPhase.BLOCKED);
     }
 
     /** 用自救航点列表替换当前 autopilotRoute,重置索引/卡住状态并恢复航行。 */
@@ -2868,7 +2976,7 @@ public class SailboatEntity extends Boat implements GeoEntity, MenuProvider, Tra
                                              double slowdownRadius) {
         EngineGear current = getEngineGear();
         // ---- 即时响应(安全优先,不受迟滞/最短保持延迟):到站停 + 大角度 pivot 先转 ----
-        if (dist < stopRadius) {
+        if (com.monpai.sailboatmod.route.AutopilotMotionPolicy.shouldStopForArrival(finalTarget, dist, stopRadius)) {
             return commitAutopilotGear(EngineGear.STOP);
         }
         if (absYawError > AUTOPILOT_TURN_IN_PLACE_DEGREES) {
@@ -3280,9 +3388,12 @@ public class SailboatEntity extends Boat implements GeoEntity, MenuProvider, Tra
         if (autopilotRoute.isEmpty()) {
             return null;
         }
-        if (autopilotDestinationDockHintPos != null
-                && getTransportHub(autopilotDestinationDockHintPos) != null) {
-            return autopilotDestinationDockHintPos;
+        if (autopilotDestinationDockHintPos != null) {
+            if (getTransportHub(autopilotDestinationDockHintPos) != null) return autopilotDestinationDockHintPos;
+            var registered=com.monpai.sailboatmod.market.terminal.TerminalNetworkSavedData.get(level())
+                    .getEntry(level().dimension().location().toString(),autopilotDestinationDockHintPos.asLong());
+            if (registered!=null && registered.kind()==com.monpai.sailboatmod.market.terminal.TerminalNetworkSavedData.Kind.PORT)
+                return autopilotDestinationDockHintPos;
         }
         autopilotDestinationDockHintPos = null;
         Vec3 endPoint = autopilotRoute.get(autopilotRoute.size() - 1);
@@ -3817,13 +3928,15 @@ public class SailboatEntity extends Boat implements GeoEntity, MenuProvider, Tra
                 || nextDock instanceof PostStationBlockEntity) {
             return false;
         }
-        RouteDefinition leg = pickRouteToDock(here.getRoutesForMap(), nextPort);
+        RouteDefinition leg = com.monpai.sailboatmod.route.water.WaterDestinationService.knownItinerary((ServerLevel)level(),here,nextPort);
         if (leg != null) {
             beginWaterLeg(here, leg);
             return true;
         }
         // 无现成航线 → 异步生成去下一港的水路，停泊等待。
-        WaterAutoRouteService.submitAutoRoute((ServerLevel) level(), here, nextDock, null);
+        // No hidden route construction during logistics. Wait only for the known-graph view.
+        if (!com.monpai.sailboatmod.route.water.WaterDestinationService.pending((ServerLevel)level(),here.getBlockPos(),nextPort))
+            return false;
         awaitingNextLegPort = nextPort.immutable();
         awaitingNextLegFromDock = here.getBlockPos().immutable();
         awaitingNextLegTicks = WATER_LEG_GENERATION_TIMEOUT_TICKS;
@@ -3845,7 +3958,7 @@ public class SailboatEntity extends Boat implements GeoEntity, MenuProvider, Tra
             clearAwaitingWaterLeg();
             return;
         }
-        RouteDefinition leg = pickRouteToDock(here.getRoutesForMap(), awaitingNextLegPort);
+        RouteDefinition leg = com.monpai.sailboatmod.route.water.WaterDestinationService.knownItinerary((ServerLevel)level(),here,awaitingNextLegPort);
         if (leg == null) {
             return; // 继续等待生成完成
         }

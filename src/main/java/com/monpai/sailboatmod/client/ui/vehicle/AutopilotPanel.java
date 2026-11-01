@@ -44,7 +44,7 @@ public final class AutopilotPanel {
         UIElement head = Ui.row();
         head.layout(l -> l.gapAll(Ui.GAP_S));
         state = Ui.clippedText("");
-        state.layout(l -> l.width(58));
+        state.layout(l -> l.width(vehicle instanceof SailboatEntity ? 110 : 58));
         Label title = Ui.clippedText(Component.translatable("screen.sailboatmod.ui.autopilot"), "sm-title");
         title.layout(l -> l.width(0).flexGrow(1).minWidth(0));
         head.addChildren(Ui.icon(new ItemStack(Items.COMPASS), 12), title, state);
@@ -59,7 +59,11 @@ public final class AutopilotPanel {
 
         UIElement controls = Ui.row();
         controls.layout(l -> l.gapAll(Ui.GAP_S));
-        start = Ui.button(Component.translatable("screen.sailboatmod.route_start"), Ui.Tone.PRIMARY, () -> send(SailboatEntity.AutopilotControlAction.START));
+        start = Ui.button(vehicle instanceof SailboatEntity ? Component.literal("选择目的地")
+                : Component.translatable("screen.sailboatmod.route_start"), Ui.Tone.PRIMARY, () -> {
+            if(vehicle instanceof SailboatEntity ship) com.monpai.sailboatmod.client.screen.KnownDestinationScreen.openShip(ship);
+            else send(SailboatEntity.AutopilotControlAction.START);
+        });
         pause = Ui.button(Component.translatable("screen.sailboatmod.route_pause"), Ui.Tone.SECONDARY, () -> send(SailboatEntity.AutopilotControlAction.PAUSE));
         resume = Ui.button(Component.translatable("screen.sailboatmod.route_resume"), Ui.Tone.SECONDARY, () -> send(SailboatEntity.AutopilotControlAction.RESUME));
         stop = Ui.button(Component.translatable("screen.sailboatmod.route_stop"), Ui.Tone.DANGER, () -> send(SailboatEntity.AutopilotControlAction.STOP));
@@ -70,7 +74,8 @@ public final class AutopilotPanel {
             button.text.setOverflowVisible(false);
         }
         controls.addChildren(start, pause, resume, stop);
-        element.addChildren(head, routeRow, controls);
+        if(vehicle instanceof SailboatEntity) element.addChildren(head, controls);
+        else element.addChildren(head, routeRow, controls);
         refresh();
     }
 
@@ -83,9 +88,13 @@ public final class AutopilotPanel {
         boolean active = vehicle.isAutopilotActive();
         boolean paused = active && vehicle.isAutopilotPaused();
         String stateKey = !active ? "stopped" : paused ? "paused" : "running";
-        state.setValue(Component.translatable("screen.sailboatmod.route_status." + stateKey));
-        Ui.setClass(state, "sm-up", active && !paused);
-        Ui.setClass(state, "sm-warn", paused);
+        state.setValue(Component.translatable(vehicle instanceof SailboatEntity ship
+                ? ship.getNavigationPhase().translationKey() : "screen.sailboatmod.route_status." + stateKey));
+        boolean advancing=active&&!paused;
+        if(vehicle instanceof SailboatEntity ship) advancing=ship.getNavigationPhase()==com.monpai.sailboatmod.route.NavigationPhase.SAILING
+                ||ship.getNavigationPhase()==com.monpai.sailboatmod.route.NavigationPhase.TURNING;
+        Ui.setClass(state, "sm-up", advancing);
+        Ui.setClass(state, "sm-warn", active&&!advancing);
         Ui.setClass(state, "sm-muted", !active);
 
         int count = routeCount.getAsInt();

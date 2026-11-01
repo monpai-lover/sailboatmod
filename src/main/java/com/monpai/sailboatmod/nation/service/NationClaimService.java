@@ -140,7 +140,7 @@ public final class NationClaimService {
                     existingClaim.redstoneAccessLevel(),
                     existingClaim.entityUseAccessLevel(),
                     existingClaim.entityDamageAccessLevel(),
-                    existingClaim.claimedAt()
+                    existingClaim.claimedAt(), existingClaim.claimSource(), existingClaim.mobSpawningAllowed()
             ));
         }
         if (relocating) {
@@ -455,6 +455,15 @@ public final class NationClaimService {
         NationClaimRecord claim = data.getClaim(player.level(), chunkPos);
         if (claim == null || !member.nationId().equals(claim.nationId())) {
             return NationResult.failure(Component.translatable("command.sailboatmod.nation.claimperm.not_owned"));
+        }
+
+        if ("mob_spawn".equalsIgnoreCase(actionId == null ? "" : actionId.trim())) {
+            if (!"true".equals(levelId) && !"false".equals(levelId))
+                return NationResult.failure(Component.translatable("command.sailboatmod.nation.claimperm.level_invalid", levelId));
+            boolean allowed = Boolean.parseBoolean(levelId);
+            data.putClaim(claim.withMobSpawningAllowed(allowed));
+            return NationResult.success(Component.translatable("command.sailboatmod.nation.claimperm.mob_spawn_success",
+                    Component.translatable("screen.sailboatmod.nation.access." + levelId)));
         }
 
         NationClaimAccessLevel accessLevel = NationClaimAccessLevel.fromId(levelId);

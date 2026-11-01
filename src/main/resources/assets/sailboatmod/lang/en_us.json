@@ -1490,7 +1490,7 @@
   "message.sailboatmod.auto_route.water.failed.already_pending": "A water route between these docks is already being calculated.",
   "message.sailboatmod.auto_route.water.failed.generic": "Water route creation failed.",
   "entity.sailboatmod.autopilot.stuck": "Stuck — needs help",
-  "message.sailboatmod.autopilot.stuck": "Your sailboat is stuck in a narrow channel at (%1$s, %2$s, %3$s). Autopilot paused — please go rescue it.",
+  "message.sailboatmod.autopilot.stuck": "Your sailboat could not safely continue at (%1$s, %2$s, %3$s). Autopilot is paused. Check terrain readiness and navigation status; this does not identify the area as a narrow channel.",
   "message.sailboatmod.autopilot.arrived.broadcast": "Vehicle has arrived at %1$s (travel time %2$s).",
   "block.sailboatmod.post_station.no_target": "No available carriage was found inside this station.",
   "block.sailboatmod.post_station.no_route": "This station has no usable route.",
@@ -2084,5 +2084,18 @@
   "screen.sailboatmod.route_preference.optimal": "Optimal route",
   "screen.sailboatmod.route_preference.reuse_first": "Reuse first",
   "screen.sailboatmod.route_preference.optimal.desc": "Plans a fresh, shortest, offshore route without reusing other routes.",
-  "screen.sailboatmod.route_preference.reuse_first.desc": "Follows existing sea lanes and only plans the gaps: faster, may be slightly longer."
+  "screen.sailboatmod.route_preference.reuse_first.desc": "Follows existing sea lanes and only plans the gaps: faster, may be slightly longer.",
+  "screen.sailboatmod.route_status.turning": "Turning",
+  "screen.sailboatmod.route_status.waiting_terrain": "Waiting for terrain",
+  "screen.sailboatmod.route_status.waiting_departure": "Waiting to depart",
+  "screen.sailboatmod.route_status.connecting": "Joining route",
+  "screen.sailboatmod.route_status.recovering": "Reconnecting",
+  "screen.sailboatmod.route_status.blocked": "Blocked / needs attention",
+  "screen.sailboatmod.nation.claims.button.mob_spawn": "Monster spawning: %s",
+  "screen.sailboatmod.nation.access.true": "Allowed",
+  "screen.sailboatmod.nation.access.false": "Denied",
+  "screen.sailboatmod.nation.claims.mob_spawn_hint": "Disabling blocks automatic monster spawns here, including spawners, patrols and raids. Existing mobs, animals, villagers, spawn eggs and commands are unaffected.",
+  "screen.sailboatmod.nation.claims.action.mob_spawn": "Allow monster spawning",
+  "command.sailboatmod.nation.claimperm.action.mob_spawn": "Monster spawning",
+  "command.sailboatmod.nation.claimperm.mob_spawn_success": "Claim monster spawning set to: %s."
 }

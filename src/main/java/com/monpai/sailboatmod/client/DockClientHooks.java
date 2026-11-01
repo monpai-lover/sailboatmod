@@ -32,8 +32,8 @@ public final class DockClientHooks {
     }
 
     public static void beginDestination(BlockPos pos,java.util.UUID vessel,int cargoIndex) {
-        var screen=AutoRouteDockSelectionScreen.forDestination(pos,vessel,cargoIndex);
-        Minecraft.getInstance().setScreen(screen);screen.requestValidation();
+        var mc=Minecraft.getInstance();
+        mc.setScreen(new com.monpai.sailboatmod.client.screen.KnownDestinationScreen(mc.screen,pos,vessel,false,cargoIndex));
     }
     public static void beginAutoRoute(BlockPos pos,TransportTerminalKind kind) {
         var screen=new AutoRouteDockSelectionScreen(pos,kind,List.of());

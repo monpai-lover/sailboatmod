@@ -15,8 +15,19 @@ public record NationOverviewClaim(
         String containerAccessLevel,
         String redstoneAccessLevel,
         String entityUseAccessLevel,
-        String entityDamageAccessLevel
+        String entityDamageAccessLevel,
+        boolean mobSpawningAllowed
 ) {
+    public NationOverviewClaim(int chunkX, int chunkZ, String nationId, String nationName,
+            int primaryColorRgb, int secondaryColorRgb, String townId, String townName,
+            String breakAccessLevel, String placeAccessLevel, String useAccessLevel,
+            String containerAccessLevel, String redstoneAccessLevel, String entityUseAccessLevel,
+            String entityDamageAccessLevel) {
+        this(chunkX, chunkZ, nationId, nationName, primaryColorRgb, secondaryColorRgb, townId, townName,
+                breakAccessLevel, placeAccessLevel, useAccessLevel, containerAccessLevel,
+                redstoneAccessLevel, entityUseAccessLevel, entityDamageAccessLevel, true);
+    }
+
     public NationOverviewClaim {
         nationId = nationId == null ? "" : nationId.trim();
         nationName = nationName == null ? "" : nationName.trim();

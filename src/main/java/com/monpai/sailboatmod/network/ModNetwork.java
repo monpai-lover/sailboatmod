@@ -110,7 +110,7 @@ import net.neoforged.bus.api.IEventBus;
 import java.util.Optional;
 
 public final class ModNetwork {
-    private static final String PROTOCOL_VERSION = "21"; // 20 + route planning preference (optimal / reuse-first) on route and destination requests.
+    private static final String PROTOCOL_VERSION = "22"; // 22: known-network menu leases plus explicit server navigation phases.
     public static final PayloadChannel CHANNEL = new PayloadChannel(PROTOCOL_VERSION);
 
     private static int packetId = 0;
@@ -1023,6 +1023,16 @@ public final class ModNetwork {
                 com.monpai.sailboatmod.network.packet.SyncRouteTasksPacket::handle, Optional.of(NetworkDirection.PLAY_TO_CLIENT));
         CHANNEL.registerMessage(packetId++, DepartForDestinationPacket.class, DepartForDestinationPacket::encode,
                 DepartForDestinationPacket::decode, DepartForDestinationPacket::handle, Optional.of(NetworkDirection.PLAY_TO_SERVER));
+
+        CHANNEL.registerMessage(packetId++, com.monpai.sailboatmod.network.packet.KnownVoyageMenuPacket.class,
+                com.monpai.sailboatmod.network.packet.KnownVoyageMenuPacket::encode,
+                com.monpai.sailboatmod.network.packet.KnownVoyageMenuPacket::decode,
+                com.monpai.sailboatmod.network.packet.KnownVoyageMenuPacket::handle, Optional.of(NetworkDirection.PLAY_TO_SERVER));
+
+        CHANNEL.registerMessage(packetId++, com.monpai.sailboatmod.network.packet.KnownDestinationsPacket.class,
+                com.monpai.sailboatmod.network.packet.KnownDestinationsPacket::encode,
+                com.monpai.sailboatmod.network.packet.KnownDestinationsPacket::decode,
+                com.monpai.sailboatmod.network.packet.KnownDestinationsPacket::handle, Optional.of(NetworkDirection.PLAY_TO_CLIENT));
 
     }
 

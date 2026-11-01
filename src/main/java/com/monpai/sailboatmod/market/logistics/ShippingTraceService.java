@@ -429,7 +429,9 @@ public final class ShippingTraceService {
     public static boolean isMapVisibleStatus(String status) {
         String normalized = status == null ? "" : status.trim().toUpperCase(Locale.ROOT);
         return "SAILING".equals(normalized) || "IN_TRANSIT".equals(normalized)
-                || "ARRIVED".equals(normalized) || "STUCK".equals(normalized);
+                || "ARRIVED".equals(normalized) || "STUCK".equals(normalized)
+                || "WAITING_TERRAIN".equals(normalized) || "REROUTING".equals(normalized)
+                || "PAUSED".equals(normalized) || "WAITING".equals(normalized);
     }
 
     /** 手动发车的稳定 trace id，与订单 id 不冲突。 */
