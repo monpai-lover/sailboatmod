@@ -1725,6 +1725,8 @@ public class MarketBlockEntity extends BlockEntity implements MenuProvider {
                     continue;
                 }
                 int routeIndex = sourceTerminal.findRouteIndexByDestinationDock(targetTerminal.getBlockPos(), targetTerminal.getDockName());
+                if(terminalKind==TransportTerminalKind.PORT && level instanceof ServerLevel routeLevel)
+                    routeIndex=com.monpai.sailboatmod.route.water.WaterDestinationService.ensureMarketRoute(routeLevel,sourceTerminal,targetTerminal);
                 if (routeIndex < 0) {
                     continue;
                 }
@@ -2034,6 +2036,9 @@ public class MarketBlockEntity extends BlockEntity implements MenuProvider {
         }
 
         if (best == null) {
+            boolean waterPending = terminalKind == TransportTerminalKind.PORT && level instanceof ServerLevel pendingLevel
+                    && sourceTerminals.stream().anyMatch(a -> targetTerminals.stream().anyMatch(b ->
+                            com.monpai.sailboatmod.route.water.WaterDestinationService.pending(pendingLevel,a.getBlockPos(),b.getBlockPos())));
             return new MarketOverviewData.DispatchOption(
                     terminalKind.name(),
                     terminalLabel,
@@ -2044,8 +2049,10 @@ public class MarketBlockEntity extends BlockEntity implements MenuProvider {
                     0,
                     0,
                     false,
-                    "No route",
-                    "No valid route was found between the terminals."
+                    waterPending ? "Planning destination" : "No route",
+                    waterPending
+                            ? "航路未就绪：正在按目的地复用/补算；货物未扣除。稍后自动重试。"
+                            : "No valid route was found between the terminals."
             );
         }
 
@@ -2092,6 +2099,8 @@ public class MarketBlockEntity extends BlockEntity implements MenuProvider {
             return new RoutePreview(plan.route().name(), plan.distanceMeters(), true, plan);
         }
         int routeIndex = sourceTerminal.findRouteIndexByDestinationDock(targetTerminal.getBlockPos(), targetTerminal.getDockName());
+                if(terminalKind==TransportTerminalKind.PORT && level instanceof ServerLevel routeLevel)
+                    routeIndex=com.monpai.sailboatmod.route.water.WaterDestinationService.ensureMarketRoute(routeLevel,sourceTerminal,targetTerminal);
         if (routeIndex >= 0) {
             RouteDefinition route = routeIndex < sourceTerminal.getRoutesForMap().size() ? sourceTerminal.getRoutesForMap().get(routeIndex) : null;
             int distanceMeters = route == null ? 0 : (int) Math.round(estimateRouteLength(route));
@@ -2717,6 +2726,8 @@ public class MarketBlockEntity extends BlockEntity implements MenuProvider {
             return new DeadheadRoute(-1, landPlan.route(), landPlan);
         }
         int routeIndex = fromTerminal.findRouteIndexByDestinationDock(toTerminal.getBlockPos(), toTerminal.getDockName());
+        if(kind==TransportTerminalKind.PORT&&level instanceof ServerLevel routeLevel)
+            routeIndex=com.monpai.sailboatmod.route.water.WaterDestinationService.ensureMarketRoute(routeLevel,fromTerminal,toTerminal);
         if (routeIndex < 0) {
             return null;
         }

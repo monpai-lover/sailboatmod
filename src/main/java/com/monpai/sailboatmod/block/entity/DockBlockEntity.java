@@ -113,6 +113,7 @@ public class DockBlockEntity extends BlockEntity implements MenuProvider {
             if (level instanceof net.minecraft.server.level.ServerLevel serverLevel) {
                 // 区块未加载期间航行中产生的航线修正(Tellus 前瞻绕障),码头加载时写回。
                 com.monpai.sailboatmod.route.repair.RouteRepairService.applyPending(serverLevel, worldPosition, this);
+                com.monpai.sailboatmod.route.water.WaterRouteNetworkSavedData.get(serverLevel).importDock(this);
             }
         }
     }
@@ -536,6 +537,28 @@ public class DockBlockEntity extends BlockEntity implements MenuProvider {
         return assigned;
     }
 
+    public record DestinationCargo(int index, ItemStack item, int quantity) {}
+    @Nullable public DestinationCargo captureDestinationCargo(Player player,int index) {
+        if(!canManageDock(player))return null;
+        var groups=getVisibleStorageGroups();if(index<0||index>=groups.size())return null;
+        var g=groups.get(index);return new DestinationCargo(index,g.displayStack().copy(),g.totalCount());
+    }
+    public boolean dispatchCargoToDestination(Player player,LogisticsCarrier boat,RouteDefinition route,DestinationCargo expected) {
+        if(expected==null||!canPlanDestination(boat,player)||boat.hasCargo()||!canManageDock(player))return false;
+        var groups=getVisibleStorageGroups();if(expected.index()<0||expected.index()>=groups.size())return false;
+        var group=groups.get(expected.index());
+        if(group.totalCount()!=expected.quantity()||!ItemStack.isSameItemSameComponents(group.displayStack(),expected.item()))return false;
+        List<ItemStack> cargo=splitCargo(group.displayStack(),group.totalCount());if(!boat.canLoadCargo(cargo))return false;
+        List<ItemStack> removed=removeVisibleStorageGroup(expected.index());if(removed.isEmpty())return false;
+        CargoLoadReceipt receipt=boat.loadCargoForDispatch(removed);
+        if(receipt==null){insertCargo(removed);return false;}
+        boat.setPendingMarketDelivery(player.getName().getString(),player.getUUID().toString(),"","");
+        if(!assignBoatToDestination(boat,route,player)){
+            receipt.rollback();insertCargo(removed);boat.clearPendingMarketDelivery();return false;
+        }
+        receipt.commit();setChanged();return true;
+    }
+
     public boolean dispatchSelectedStorage(Player player) {
         if (!canManageDock(player)) {
             player.displayClientMessage(Component.translatable("screen.sailboatmod.dock.storage_owner_only"), true);
@@ -667,7 +690,26 @@ public class DockBlockEntity extends BlockEntity implements MenuProvider {
 
     private boolean assignBoatToRouteIndex(LogisticsCarrier sailboat, int routeIndex, boolean autoStart,
                                            @Nullable Player operator, boolean allowCargo) {
-        List<RouteDefinition> availableRoutes = availableRoutes();
+        return assignBoatUsingItinerary(sailboat, availableRoutes(), routeIndex, autoStart, operator, allowCargo);
+    }
+
+    public boolean assignBoatToDestination(LogisticsCarrier boat, RouteDefinition itinerary, Player operator) {
+        if (boat == null || itinerary == null) return false;
+        boat.setAllowNonOrderAutoReturn(nonOrderAutoReturnEnabled);
+        boat.setAllowNonOrderAutoUnload(nonOrderAutoUnloadEnabled);
+        boolean started = assignBoatUsingItinerary(boat, List.of(itinerary.copy()), 0, true, operator, true);
+        if (!started) { boat.setAllowNonOrderAutoReturn(false); boat.setAllowNonOrderAutoUnload(false); }
+        return started;
+    }
+
+    public boolean canPlanDestination(LogisticsCarrier boat, Player operator) {
+        return boat != null && boat.isTransportAlive() && !boat.isAutopilotActive() && isCarrierInsideDockZone(boat)
+                && (isBoatOwnedBy(boat, operator) || boat.isAvailableForRent());
+    }
+
+    /** One voyage receives a private immutable geometry copy, never the dock's mutable selection. */
+    private boolean assignBoatUsingItinerary(LogisticsCarrier sailboat, List<RouteDefinition> availableRoutes,
+            int routeIndex, boolean autoStart, @Nullable Player operator, boolean allowCargo) {
         if (availableRoutes.isEmpty()) {
             if (operator != null) {
                 operator.displayClientMessage(Component.translatable(noRouteTranslationKey()), true);

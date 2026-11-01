@@ -41,7 +41,7 @@ public record ShippingTraceRecord(String shippingOrderId,
                 currentX, currentZ, currentSpeed, cargo, manual, null);
     }
 
-    private static final int MAX_WAYPOINTS = 2048;
+    private static final int MAX_WAYPOINTS = 65_536;
     private static final int MAX_CARGO_ITEMS = 64;
 
     public ShippingTraceRecord {
@@ -65,6 +65,11 @@ public record ShippingTraceRecord(String shippingOrderId,
             currentX = waypoints.get(0).x;
             currentZ = waypoints.get(0).z;
         }
+    }
+
+    public ShippingTraceRecord withRouteGeometry(List<Vec3> points,int target,double progress,long gameTime) {
+        return new ShippingTraceRecord(shippingOrderId,shipperUuid,dimensionId,transportMode,status,nationId,townId,
+                sourceName,targetName,points,target,progress,startedGameTime,gameTime,currentX,currentZ,currentSpeed,cargo,manual,flight);
     }
 
     public ShippingTraceRecord withStatus(String nextStatus, long gameTime) {

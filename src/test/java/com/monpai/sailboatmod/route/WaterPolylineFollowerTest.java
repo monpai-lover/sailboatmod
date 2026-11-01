@@ -1,0 +1,37 @@
+package com.monpai.sailboatmod.route;
+import net.minecraft.world.phys.Vec3;
+import org.junit.jupiter.api.Test;
+import java.util.*;
+import static org.junit.jupiter.api.Assertions.*;
+class WaterPolylineFollowerTest {
+    static Vec3 p(double x,double z){return new Vec3(x,65,z);}
+    final List<Vec3> line=List.of(p(0,0),p(10,0),p(20,0),p(40,0));
+    @Test void passingWaypointPlaneDoesNotRequireTurningBack(){assertEquals(2,WaterPolylineFollower.advance(line,1,p(9,0),p(12,1),1,3,(a,b)->true));}
+    @Test void fastTickSweptCaptureWorks(){assertEquals(2,WaterPolylineFollower.advance(line,1,p(8,0),p(13,0),.5,3,(a,b)->true));}
+    @Test void outsideCorridorDoesNotSkip(){assertEquals(1,WaterPolylineFollower.advance(line,1,p(9,8),p(12,8),1,3,(a,b)->true));}
+    @Test void crossingPlaneAcrossLandDoesNotSkip(){assertEquals(1,WaterPolylineFollower.advance(line,1,p(9,0),p(12,0),1,3,(a,b)->false));}
+    @Test void finalWaypointIsNeverDropped(){assertEquals(3,WaterPolylineFollower.advance(line,3,p(39,0),p(42,0),2,3,(a,b)->true));}
+    @Test void blockedLookaheadStopsInsteadOfOrbiting(){var aim=WaterPolylineFollower.aim(line,1,p(8,0),10,(a,b)->false);assertTrue(aim.blocked());assertEquals(0,WaterPolylineFollower.speedCap(aim,5,1),1e-9);}
+    @Test void sharpYawErrorSlowsBeforeTurn(){var aim=new WaterPolylineFollower.Aim(p(10,0),false,20,0);assertTrue(WaterPolylineFollower.speedCap(aim,100,1)<.04);}
+    @Test void projectionProgressMeasuresDistanceNotNumberOfVertices(){assertEquals(.75,WaterPolylineFollower.progress(List.of(p(0,0),p(10,0),p(100,0)),2,p(75,0)),1e-9);}
+    @Test void hairpinDoesNotJumpToNearbyLaterParallelLeg(){var path=List.of(p(0,0),p(100,0),p(100,4),p(0,4));assertEquals(1,WaterPolylineFollower.advance(path,1,p(49,0),p(50,3),1,3,(a,b)->true));}
+    @Test void roundedCornerCanEnterNextSegmentWithoutTouchingVertex(){var path=List.of(p(0,0),p(10,0),p(10,20));assertEquals(2,WaterPolylineFollower.advance(path,1,p(9,0),p(10,2),.5,3,(a,b)->true));}
+    @Test void alreadyOnNextLegDoesNotOrbitBackToDistantMissedCorner(){
+        var path=List.of(p(0,0),p(10,0),p(10,100));
+        assertEquals(2,WaterPolylineFollower.advance(path,1,p(10,39),p(10,40),1,3,(a,b)->WaterPolylineFollower.horizontal(a,b)<=5));
+    }
+    @Test void distantNextLegRejoinStillRequiresWaterConnection(){
+        var path=List.of(p(0,0),p(10,0),p(10,100));
+        assertEquals(1,WaterPolylineFollower.advance(path,1,p(10,39),p(10,40),1,3,(a,b)->false));
+    }
+    @Test void turningBoatModelCompletesPolylineWithMonotonicIndex(){
+        var path=List.of(p(0,0),p(40,0),p(40,40),p(80,40),p(100,70));Vec3 boat=p(0,0),last=boat;double yaw=0;int index=0;
+        for(int tick=0;tick<10000;tick++){
+            int next=WaterPolylineFollower.advance(path,index,last,boat,1.2,3,(a,b)->true);assertTrue(next>=index);index=next;
+            if(WaterPolylineFollower.horizontal(boat,path.getLast())<1.5){assertEquals(path.size()-1,index);return;}
+            var aim=WaterPolylineFollower.aim(path,index,boat,8,(a,b)->true);double desired=Math.atan2(aim.point().z-boat.z,aim.point().x-boat.x);
+            double delta=Math.atan2(Math.sin(desired-yaw),Math.cos(desired-yaw));yaw+=Math.max(-.075,Math.min(.075,delta));
+            double speed=WaterPolylineFollower.speedCap(aim,Math.toDegrees(delta),.5);last=boat;boat=boat.add(Math.cos(yaw)*speed,0,Math.sin(yaw)*speed);
+        }fail("Follower did not complete the path");
+    }
+}

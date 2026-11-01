@@ -44,4 +44,14 @@ class ShippingTraceRecordTest {
         assertEquals(loaded.flight(), history.get(0).trace().flight());
     }
 
+
+    @Test void longLiveItineraryIsNotTruncatedAt2048AndRerouteKeepsOwnership() {
+        var points=new java.util.ArrayList<Vec3>();for(int i=0;i<5000;i++)points.add(new Vec3(i,65,i*.1));
+        var original=new ShippingTraceRecord("order","owner","minecraft:overworld","PORT","SAILING",
+                "N","T","A","B",points,3000,.6,1,2,10,20,2,List.of(),false);
+        assertEquals(5000,ShippingTraceRecord.load(original.save()).waypoints().size());
+        var replacement=original.withRouteGeometry(List.of(points.get(3000),new Vec3(3005,65,320),points.getLast()),1,.2,3);
+        assertEquals("owner",replacement.shipperUuid());assertEquals("order",replacement.shippingOrderId());
+        assertEquals(3,replacement.waypoints().size());assertEquals(points.getLast(),replacement.waypoints().getLast());
+    }
 }

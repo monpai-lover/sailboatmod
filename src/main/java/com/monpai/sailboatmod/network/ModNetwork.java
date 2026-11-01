@@ -1,4 +1,5 @@
 package com.monpai.sailboatmod.network;
+import com.monpai.sailboatmod.network.packet.DepartForDestinationPacket;
 
 import com.monpai.sailboatmod.network.packet.BankActionPacket;
 import com.monpai.sailboatmod.network.packet.CancelBuyOrderPacket;
@@ -109,7 +110,7 @@ import net.neoforged.bus.api.IEventBus;
 import java.util.Optional;
 
 public final class ModNetwork {
-    private static final String PROTOCOL_VERSION = "19"; // Live market updates plus aircraft actions and airport terminals.
+    private static final String PROTOCOL_VERSION = "20"; // Live market updates plus aircraft actions and airport terminals.
     public static final PayloadChannel CHANNEL = new PayloadChannel(PROTOCOL_VERSION);
 
     private static int packetId = 0;
@@ -1020,6 +1021,9 @@ public final class ModNetwork {
                 com.monpai.sailboatmod.network.packet.SyncRouteTasksPacket::encode,
                 com.monpai.sailboatmod.network.packet.SyncRouteTasksPacket::decode,
                 com.monpai.sailboatmod.network.packet.SyncRouteTasksPacket::handle, Optional.of(NetworkDirection.PLAY_TO_CLIENT));
+        CHANNEL.registerMessage(packetId++, DepartForDestinationPacket.class, DepartForDestinationPacket::encode,
+                DepartForDestinationPacket::decode, DepartForDestinationPacket::handle, Optional.of(NetworkDirection.PLAY_TO_SERVER));
+
     }
 
     private ModNetwork() {

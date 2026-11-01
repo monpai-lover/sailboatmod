@@ -86,6 +86,33 @@ class TellusNativeRoutesTest {
         // Actual native data; only delivery latency is simulated. Same corridor includes the strait.
         route("tellus-delayed-strait",29145,-48695,30120,-49350,true);
     }
+    @Test @Order(6) @Timeout(300) void verifiedTellusRouteSupportsReverseInteriorJourneyWithoutNewAStar() throws Exception {
+        List<net.minecraft.world.phys.Vec3> points=new ArrayList<>();
+        for(String line:Files.readAllLines(OUT.resolve("tellus-7623-islands-route.csv")).subList(1,
+                Files.readAllLines(OUT.resolve("tellus-7623-islands-route.csv")).size())) {
+            String[] a=line.split(",");points.add(new net.minecraft.world.phys.Vec3(Double.parseDouble(a[0])+.5,Double.parseDouble(a[1]),Double.parseDouble(a[2])+.5));
+        }
+        assertTrue(points.size()>4);
+        var infrastructure=new WaterRouteNetwork.Route("native-original",BlockPos.containing(points.getFirst()),
+                BlockPos.containing(points.getLast()),points,true);
+        var from=points.get(points.size()*3/4);var to=points.get(points.size()/4);
+        long started=System.nanoTime();
+        var reused=WaterRouteNetwork.plan(List.of(infrastructure),from,to).orElseThrow();
+        assertEquals(0,reused.newLength(),1e-6);assertTrue(reused.reusedLength()>1000);
+        assertTrue(reused.legs().stream().allMatch(WaterRouteNetwork.Leg::reused));
+        var verify=predictor();long checks=0;
+        for(var leg:reused.legs())for(int i=1;i<leg.points().size();i++) {
+            var a=leg.points().get(i-1);var b=leg.points().get(i);int count=Math.max(1,(int)Math.ceil(a.distanceTo(b)*4));
+            for(int j=0;j<=count;j++)for(int dz=0;dz<2;dz++)for(int dx=0;dx<2;dx++) {
+                int x=(int)Math.floor(a.x+(b.x-a.x)*j/count)+dx,z=(int)Math.floor(a.z+(b.z-a.z)*j/count)+dz;
+                var sample=verify.predictChunk(Math.floorDiv(x,16),Math.floorDiv(z,16),5000);
+                assertEquals(Prediction.Status.READY,sample.status());int k=(z&15)*16+(x&15);
+                assertTrue(sample.columns().water()[k]);assertEquals((int)a.y,sample.columns().surfaceY()[k]+1);checks++;
+            }
+        }
+        Files.writeString(OUT.resolve("destination-network-reuse.txt"),"reverseInterior=true newAStarRuns=0 newLength="+reused.newLength()
+                +" reusedLength="+reused.reusedLength()+" independentlyCheckedHullCells="+checks+" collisions=0 elapsedMs="+(System.nanoTime()-started)/1_000_000.0+"\n");
+    }
     static void route(String name,int sx,int sz,int gx,int gz,boolean delayed) throws Exception {
         long started=System.nanoTime();long columnsBefore=rawColumns.get(),surfaceBefore=nativeSurfaces.get();BlockPos start=endpoint(sx,sz),goal=endpoint(gx,gz);
         AtomicInteger jobs=new AtomicInteger();
