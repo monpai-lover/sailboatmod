@@ -1,0 +1,91 @@
+name: Validate saved ProtoChunk routing and retry repair
+on:
+  push:
+    branches: [fix/autoroute-candidates-flag-preview]
+    paths: ['tools/nbt-proto-update/**', '.github/workflows/nbt-proto-repair.yml']
+permissions:
+  contents: write
+concurrency:
+  group: nbt-proto-repair-${{ github.ref }}
+  cancel-in-progress: true
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          lfs: true
+          fetch-depth: 2
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
+      - name: Check and apply exact reviewed changes
+        run: |
+          python3 - <<'PY'
+          import pathlib,base64,lzma,hashlib,json,subprocess
+          payload=lzma.decompress(base64.b64decode(''.join(pathlib.Path('tools/nbt-proto-update/part%d.txt'%i).read_text() for i in range(3))))
+          assert hashlib.sha256(payload).hexdigest()=='90d84d8c463a814a4216bc43df5cfd330560381eafe489d95a58cf78175a0996'
+          data=json.loads(payload)
+          for name,digest in data['expected'].items():
+              p=pathlib.Path(name)
+              assert (hashlib.sha256(p.read_bytes()).hexdigest() if p.exists() else None)==digest, 'Concurrent source change: '+name
+          pathlib.Path('/tmp/nbt-proto.patch').write_text(data['patch'])
+          pathlib.Path('/tmp/nbt-proto-files.json').write_text(json.dumps(list(data['expected'])))
+          subprocess.run(['git','apply','--check','--unidiff-zero','/tmp/nbt-proto.patch'],check=True)
+          subprocess.run(['git','apply','--unidiff-zero','/tmp/nbt-proto.patch'],check=True)
+          PY
+      - name: Compile, run offline regressions and build complete jar
+        run: |
+          chmod +x gradlew
+          ./gradlew --no-daemon -PneoForge.disableRecompilation=true -PfixIndex=proto_region_retry '-Dorg.gradle.jvmargs=-Xmx3G -Dfile.encoding=UTF-8' test --tests '*route.water.*' --tests '*route.terrain.*' --tests '*OfflineChunkPaletteTest' --tests '*ChatFlag*Test' --tests '*NationOfficeTitleTest' --tests '*FlagPreviewLayoutTest' jar
+          cp -r build/test-results/test build/offline-test-results
+      - name: Prepare pinned Tellus runtime
+        run: |
+          mkdir -p build/native-runtime build/native-evidence
+          python3 - <<'PY'
+          import pathlib,zipfile,hashlib
+          p=pathlib.Path('libs/compile-only/Tellus-neoforge-1.21.1-0.8.3.jar')
+          pathlib.Path('build/native-evidence/tellus-sha256.txt').write_text(hashlib.sha256(p.read_bytes()).hexdigest()+'\n')
+          with zipfile.ZipFile(p) as z:
+              for n in z.namelist():
+                  if n.startswith('META-INF/jarjar/') and n.endswith('.jar'):
+                      pathlib.Path('build/native-runtime',pathlib.Path(n).name).write_bytes(z.read(n))
+          PY
+      - name: Real Tellus routes with saved FULL and proto terrain snapshots
+        run: |
+          ./gradlew --no-daemon -I tools/tellus-native/native.init.gradle -PneoForge.disableRecompilation=true '-Dorg.gradle.jvmargs=-Xmx2G -Dfile.encoding=UTF-8' test --tests '*TellusNativeRoutesTest' --rerun-tasks
+      - name: Publish only tested sources without overwriting concurrent work
+        run: |
+          git fetch origin fix/autoroute-candidates-flag-preview
+          test "$(git rev-parse FETCH_HEAD)" = "${{ github.sha }}"
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          python3 - <<'PY'
+          import subprocess,json,pathlib
+          subprocess.run(['git','add','--',*json.loads(pathlib.Path('/tmp/nbt-proto-files.json').read_text())],check=True)
+          PY
+          git commit -m 'fix: route through saved proto terrain without NBT retry storms'
+          git push origin HEAD:fix/autoroute-candidates-flag-preview
+      - name: Archive exact checked source and evidence
+        if: always()
+        run: |
+          mkdir -p build/native-evidence
+          git rev-parse HEAD > build/native-evidence/commit.txt
+          git diff --binary > build/native-evidence/uncommitted.patch
+          sha256sum build/libs/*.jar > build/native-evidence/jar-sha256.txt || true
+          tar czf build/verified-source.tar.gz src tools docs build.gradle gradle.properties settings.gradle
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: proto-region-repair-${{ github.run_id }}
+          path: |
+            build/libs/*.jar
+            build/native-evidence/
+            build/route-regression/
+            build/offline-test-results/
+            build/test-results/test/
+            build/reports/tests/test/
+            build/verified-source.tar.gz
+          retention-days: 14
