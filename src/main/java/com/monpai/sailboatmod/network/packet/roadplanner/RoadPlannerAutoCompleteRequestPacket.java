@@ -1,9 +1,11 @@
 package com.monpai.sailboatmod.network.packet.roadplanner;
 
+import com.monpai.sailboatmod.client.roadplanner.RoadPlannerAutoCompleteExecutor;
 import com.monpai.sailboatmod.client.roadplanner.RoadPlannerAutoCompleteResult;
 import com.monpai.sailboatmod.client.roadplanner.RoadPlannerAutoCompleteService;
 import com.monpai.sailboatmod.client.roadplanner.RoadPlannerPathfinderRunnerFactory;
 import com.monpai.sailboatmod.network.ModNetwork;
+import com.monpai.sailboatmod.road.pathfinding.RoadSearchBudget;
 import net.minecraft.core.BlockPos;
 import net.minecraft.network.FriendlyByteBuf;
 import net.minecraft.server.level.ServerPlayer;
@@ -54,18 +56,38 @@ public record RoadPlannerAutoCompleteRequestPacket(UUID sessionId,
             if (player == null) {
                 return;
             }
-            RoadPlannerAutoCompleteService service = RoadPlannerPathfinderRunnerFactory.serverService(player.serverLevel(), packet.useRealChunk());
-            if (service == null) {
-                service = new RoadPlannerAutoCompleteService();
+            if (packet.manualNodes().size() > 1024) {
+                ModNetwork.CHANNEL.send(player, new RoadPlannerAutoCompleteResultPacket(packet.sessionId(),
+                        false, List.of(), List.of(), "手工节点超过1024，请分段规划", List.of()));
+                return;
             }
-            RoadPlannerAutoCompleteResult result = service.complete(packet.start(), packet.destination(), packet.manualNodes(), packet.spacingBlocks());
-            ModNetwork.CHANNEL.send(player, new RoadPlannerAutoCompleteResultPacket(
-                            packet.sessionId(),
-                            result.success(),
-                            result.nodes(),
-                            result.segmentTypes(),
-                            result.message(),
-                            result.terrainSamples()));
+            var requestedDimension = player.level().dimension();
+            RoadPlannerAutoCompleteService service = RoadPlannerPathfinderRunnerFactory.serverService(player.serverLevel(), packet.useRealChunk());
+            RoadPlannerAutoCompleteService chosen = service == null ? new RoadPlannerAutoCompleteService() : service;
+            var server = player.getServer();
+            UUID playerId = player.getUUID();
+            // 寻路在后台线程跑(超远两城曾在主线程卡服);同一玩家的新请求会中断旧请求;结果回主线程发送。
+            RoadPlannerAutoCompleteExecutor.submit(playerId,
+                    () -> {
+                        try {
+                            return RoadSearchBudget.run(RoadPlannerPathfinderRunnerFactory.AUTO_COMPLETE_BUDGET_MILLIS,
+                                    () -> chosen.complete(packet.start(), packet.destination(), packet.manualNodes(), packet.spacingBlocks()));
+                        } catch (RoadSearchBudget.DeadlineExceeded expired) {
+                            return RoadPlannerAutoCompleteResult.failure("道路规划超时，请缩短范围或增加途经节点；未生成直线兜底");
+                        }
+                    },
+                    server::execute,
+                    result -> {
+                        ServerPlayer target = server.getPlayerList().getPlayer(playerId);
+                        if (target != player || !target.level().dimension().equals(requestedDimension)) return;
+                        RoadPlannerAutoCompleteResult sent = result == null
+                                ? RoadPlannerAutoCompleteResult.failure("自动寻路失败") : result;
+                        ModNetwork.CHANNEL.send(target, new RoadPlannerAutoCompleteResultPacket(
+                                packet.sessionId(), sent.success(), sent.nodes(), sent.segmentTypes(),
+                                sent.message(), sent.terrainSamples()));
+                    },
+                    () -> ModNetwork.CHANNEL.send(player, new RoadPlannerAutoCompleteResultPacket(
+                            packet.sessionId(), false, List.of(), List.of(), "服务器自动补全队列已满，请稍后再试", List.of())));
         });
         context.setPacketHandled(true);
     }

@@ -32,7 +32,8 @@ public class PotentialFieldPathfinder implements Pathfinder {
 
     @Override
     public PathResult findPath(BlockPos start, BlockPos end, TerrainSamplingCache cache) {
-        int step = config.getAStarStep();
+        RoadSearchBudget.check();
+        int step = Math.max(1, config.getAStarStep());
         int maxSteps = Math.max(5000, config.getMaxSteps() * 4);
         int goalX = end.getX();
         int goalZ = end.getZ();
@@ -51,28 +52,36 @@ public class PotentialFieldPathfinder implements Pathfinder {
             goalDirZ /= goalLen;
         }
 
+        if (cache.isBlocked(startX, startZ) || cache.isBlocked(goalX, goalZ))
+            return PathResult.failure("Road endpoint is excluded");
         double h0 = costModel.heuristic(startX, startZ, goalX, goalZ);
         Node startNode = new Node(startX, startZ, 0.0, h0, null);
 
         PriorityQueue<Node> open = new PriorityQueue<>(Comparator.comparingDouble(Node::f));
         HashMap<Long, Double> bestG = new HashMap<>();
+        // Weighted heuristic (x15) is inconsistent: without a closed set cheaper g-values keep re-opening
+        // already expanded cells and the search churns on a few thousand cells until maxSteps (far towns failed).
+        HashSet<Long> closed = new HashSet<>();
 
         open.add(startNode);
         bestG.put(key(startNode.x, startNode.z), 0.0);
 
         int steps = 0;
         while (!open.isEmpty() && steps < maxSteps) {
-            steps++;
+            RoadSearchBudget.check();
             Node current = open.poll();
+            // Stale queue entries (a cheaper route to this cell was found later) are skipped without being
+            // charged to the expansion budget; counting them used to exhaust maxSteps on re-queued cells.
+            double recorded = bestG.getOrDefault(key(current.x, current.z), Double.MAX_VALUE);
+            if (current.g > recorded || !closed.add(key(current.x, current.z))) {
+                continue;
+            }
+            steps++;
 
             // Success check: Manhattan distance <= step * 3
-            if (Math.abs(current.x - goalX) + Math.abs(current.z - goalZ) <= step * 3) {
+            if (Math.abs(current.x - goalX) + Math.abs(current.z - goalZ) <= step * 3
+                    && terminalConnectionAllowed(current.x, current.z, goalX, goalZ, cache)) {
                 return PathResult.success(reconstructPath(current, end, cache));
-            }
-
-            double recorded = bestG.getOrDefault(key(current.x, current.z), Double.MAX_VALUE);
-            if (current.g > recorded) {
-                continue;
             }
             // Terrain gradient at current position
             double[] grad = TerrainGradientHelper.terrainGradient(current.x, current.z, cache);
@@ -83,9 +92,13 @@ public class PotentialFieldPathfinder implements Pathfinder {
             double contourX = contour[0];
             double contourZ = contour[1];
 
+            int fromH = cache.getHeight(current.x, current.z);
             for (int[] dir : DIRECTIONS) {
+                RoadSearchBudget.check();
                 int nx = current.x + dir[0] * step;
                 int nz = current.z + dir[1] * step;
+                long nKey = key(nx, nz);
+                if (closed.contains(nKey) || cache.isBlocked(nx, nz)) continue;
 
                 // Search buffer check: perpendicular distance from start-end line
                 double perpDist = perpendicularDistance(nx, nz, startX, startZ, goalX, goalZ, goalLen);
@@ -94,7 +107,6 @@ public class PotentialFieldPathfinder implements Pathfinder {
                 }
 
                 // Squared elevation cost (halved weight for potential field)
-                int fromH = cache.getHeight(current.x, current.z);
                 int toH = cache.getHeight(nx, nz);
                 double heightDiff = toH - fromH;
                 double elevCost = (heightDiff * heightDiff) * config.getElevationWeight() * 0.5;
@@ -138,7 +150,8 @@ public class PotentialFieldPathfinder implements Pathfinder {
                 double stabilityCost = config.getStabilityWeight() * cache.terrainStability(nx, nz);
 
                 // Water cost
-                double waterCost = costModel.waterCostAggressive(cache, nx, nz);
+                double waterCost = edgeWaterCost(current.x, current.z, nx, nz, cache);
+                if (!Double.isFinite(waterCost)) continue;
                 // Near water penalty
                 double nearWaterCost = cache.isNearWater(nx, nz) ? config.getNearWaterCost() * 4.0 : 0;
 
@@ -149,7 +162,6 @@ public class PotentialFieldPathfinder implements Pathfinder {
                         - contourDiscount + biomeCost + stabilityCost + waterCost + nearWaterCost + devCost;
                 double ng = current.g + totalCost;
 
-                long nKey = key(nx, nz);
                 double prevBest = bestG.getOrDefault(nKey, Double.MAX_VALUE);
                 if (ng < prevBest) {
                     bestG.put(nKey, ng);
@@ -160,6 +172,27 @@ public class PotentialFieldPathfinder implements Pathfinder {
         }
 
         return PathResult.failure("PotentialField A* exhausted after " + steps + " steps without reaching goal");
+    }
+
+    /** Sample the inside of coarse hops too: two dry endpoints are not a dry edge.
+     * Water remains a bridge cost, not an unconditional prohibition. This is a draft planner,
+     * not a substitute for the building stage's per-block collision/support validation. */
+    private double edgeWaterCost(int ax, int az, int bx, int bz, TerrainSamplingCache cache) {
+        int count = Math.max(1, (int)Math.ceil(Math.hypot(bx-(double)ax, bz-(double)az) / 8));
+        double penalty = 0;
+        for (int i = 1; i <= count; i++) {
+            RoadSearchBudget.check();
+            int x = (int)Math.round(ax + (bx-(double)ax)*i/count);
+            int z = (int)Math.round(az + (bz-(double)az)*i/count);
+            if (cache.isBlocked(x, z)) return Double.POSITIVE_INFINITY;
+            penalty = Math.max(penalty, costModel.waterCostAggressive(cache, x, z));
+        }
+        return penalty;
+    }
+    private boolean terminalConnectionAllowed(int ax, int az, int bx, int bz, TerrainSamplingCache cache) {
+        double endpoints = Math.max(costModel.waterCostAggressive(cache, ax, az),
+                costModel.waterCostAggressive(cache, bx, bz));
+        return edgeWaterCost(ax, az, bx, bz, cache) <= endpoints;
     }
 
     private double perpendicularDistance(int x, int z, int sx, int sz, int ex, int ez, double lineLen) {
@@ -175,6 +208,7 @@ public class PotentialFieldPathfinder implements Pathfinder {
         List<BlockPos> path = new ArrayList<>();
         Node n = goalNode;
         while (n != null) {
+            RoadSearchBudget.check();
             int y = cache.getHeight(n.x, n.z);
             path.add(new BlockPos(n.x, y, n.z));
             n = n.parent;

@@ -153,13 +153,20 @@ public final class ServerEvents {
     @SubscribeEvent
     public static void onPlayerLoggedOut(net.neoforged.neoforge.event.entity.player.PlayerEvent.PlayerLoggedOutEvent event) {
         java.util.UUID player = event.getEntity().getUUID();
+        com.monpai.sailboatmod.client.roadplanner.RoadPlannerAutoCompleteExecutor.cancel(player);
         com.monpai.sailboatmod.roadplanner.service.RoadPlannerPreviewJobService.global().cancel(player);
         RoadPlannerBuildControlService.global().forgetPlayer(player);
         com.monpai.sailboatmod.map.route.MapRouteCatalogService.global().forget(player);
     }
 
     @SubscribeEvent
+    public static void onRoadPlayerChangedDimension(net.neoforged.neoforge.event.entity.player.PlayerEvent.PlayerChangedDimensionEvent event) {
+        com.monpai.sailboatmod.client.roadplanner.RoadPlannerAutoCompleteExecutor.cancel(event.getEntity().getUUID());
+    }
+
+    @SubscribeEvent
     public static void onServerStopping(ServerStoppingEvent event) {
+        com.monpai.sailboatmod.client.roadplanner.RoadPlannerAutoCompleteExecutor.cancelAll();
         com.monpai.sailboatmod.transport.control.RegisteredTransportSavedData.markServerStopping(event.getServer());
     }
 

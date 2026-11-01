@@ -10,7 +10,8 @@ import net.minecraft.world.level.biome.Climate;
 import com.monpai.sailboatmod.road.config.PathfindingConfig;
 
 import java.util.Set;
-import java.util.concurrent.ConcurrentHashMap;
+import com.monpai.sailboatmod.road.pathfinding.RoadSearchBudget;
+
 
 public class TerrainSamplingCache {
     private final ServerLevel level;
@@ -22,11 +23,11 @@ public class TerrainSamplingCache {
     private final Set<Long> blockedColumns;
     private final Set<Long> allowedColumns;
 
-    private final ConcurrentHashMap<Long, Integer> heightCache = new ConcurrentHashMap<>();
-    private final ConcurrentHashMap<Long, Integer> waterSurfaceCache = new ConcurrentHashMap<>();
-    private final ConcurrentHashMap<Long, Boolean> waterCache = new ConcurrentHashMap<>();
-    private final ConcurrentHashMap<Long, Integer> oceanFloorCache = new ConcurrentHashMap<>();
-    private final ConcurrentHashMap<Long, Holder<Biome>> biomeCache = new ConcurrentHashMap<>();
+    private final BoundedColumnCache<Integer> heightCache = new BoundedColumnCache<>();
+    private final BoundedColumnCache<Integer> waterSurfaceCache = new BoundedColumnCache<>();
+    private final BoundedColumnCache<Boolean> waterCache = new BoundedColumnCache<>();
+    private final BoundedColumnCache<Integer> oceanFloorCache = new BoundedColumnCache<>();
+    private final BoundedColumnCache<Holder<Biome>> biomeCache = new BoundedColumnCache<>();
 
     public TerrainSamplingCache(ServerLevel level, PathfindingConfig.SamplingPrecision precision) {
         this(level, precision, Set.of());
@@ -55,11 +56,27 @@ public class TerrainSamplingCache {
                 : Set.copyOf(allowedColumns);
     }
 
+    /**
+     * Tests only: a cache with no level. Subclasses must override every sampling method they use
+     * ({@link #getHeight}, {@link #getOceanFloor}, {@link #isWater}, {@link #getWaterSurfaceY}, {@link #isWaterBiome}).
+     */
+    protected TerrainSamplingCache(PathfindingConfig.SamplingPrecision precision) {
+        this.level = null;
+        this.fastSampler = null;
+        this.accurateSampler = null;
+        this.biomeSource = null;
+        this.climateSampler = null;
+        this.precision = precision;
+        this.blockedColumns = Set.of();
+        this.allowedColumns = Set.of();
+    }
+
     private static long key(int x, int z) {
         return ((long) x << 32) | (z & 0xFFFFFFFFL);
     }
 
     public int getHeight(int x, int z) {
+        RoadSearchBudget.check();
         return heightCache.computeIfAbsent(key(x, z), k -> {
             if (precision == PathfindingConfig.SamplingPrecision.NORMAL) {
                 return fastSampler.surfaceHeight(x, z);
@@ -69,6 +86,7 @@ public class TerrainSamplingCache {
     }
 
     public boolean isWater(int x, int z) {
+        RoadSearchBudget.check();
         return waterCache.computeIfAbsent(key(x, z), k -> {
             // 基于世界生成高度(getBaseHeight,不依赖区块加载,远端准):海底(OCEAN_FLOOR_WG)低于海平面
             // 足够多 → 水柱。WORLD_SURFACE_WG 与 OCEAN_FLOOR_WG 之差就是水深(WG 阶段水也算 surface 不算 floor)。
@@ -81,6 +99,7 @@ public class TerrainSamplingCache {
     }
 
     public int getWaterSurfaceY(int x, int z) {
+        RoadSearchBudget.check();
         return waterSurfaceCache.computeIfAbsent(key(x, z), k -> {
             // WG 下:是水则水面=海平面,否则=海底(无区块依赖)。
             int floor = getOceanFloor(x, z);
@@ -92,10 +111,12 @@ public class TerrainSamplingCache {
     }
 
     public int getOceanFloor(int x, int z) {
+        RoadSearchBudget.check();
         return oceanFloorCache.computeIfAbsent(key(x, z), k -> accurateSampler.oceanFloor(x, z));
     }
 
     public Holder<Biome> getBiome(int x, int z) {
+        RoadSearchBudget.check();
         // 噪声生物群系:问 biomeSource(不加载区块)。biome 坐标用 4 格 cell(>>2)。
         return biomeCache.computeIfAbsent(key(x, z), k ->
             biomeSource.getNoiseBiome(x >> 2, getHeight(x, z) >> 2, z >> 2, climateSampler)
@@ -103,21 +124,25 @@ public class TerrainSamplingCache {
     }
 
     public boolean isWaterBiome(int x, int z) {
+        RoadSearchBudget.check();
         Holder<Biome> biome = getBiome(x, z);
         return biome.is(BiomeTags.IS_OCEAN) || biome.is(BiomeTags.IS_RIVER);
     }
 
     public boolean isNearWater(int x, int z) {
+        RoadSearchBudget.check();
         return isWater(x - 1, z) || isWater(x + 1, z)
             || isWater(x, z - 1) || isWater(x, z + 1);
     }
 
     public boolean isBlocked(int x, int z) {
+        RoadSearchBudget.check();
         long column = RoadCoreExclusion.columnKey(x, z);
         return blockedColumns.contains(column) || (!allowedColumns.isEmpty() && !allowedColumns.contains(column));
     }
 
     public double terrainStability(int x, int z) {
+        RoadSearchBudget.check();
         int center = getHeight(x, z);
         int n = getHeight(x, z - 1);
         int s = getHeight(x, z + 1);
@@ -130,6 +155,7 @@ public class TerrainSamplingCache {
     }
 
     public int getWaterDepth(int x, int z) {
+        RoadSearchBudget.check();
         if (!isWater(x, z)) return 0;
         int surface = getWaterSurfaceY(x, z);
         int floor = getOceanFloor(x, z);
@@ -139,7 +165,15 @@ public class TerrainSamplingCache {
     public ServerLevel getLevel() { return level; }
 
     public int motionBlockingHeight(int x, int z) {
+        RoadSearchBudget.check();
         return fastSampler.motionBlockingHeight(x, z);
+    }
+
+    /** Each autocomplete owns its cache; cap each category without altering other callers. */
+    public TerrainSamplingCache withEntryLimit(int limit) {
+        heightCache.limit(limit); waterSurfaceCache.limit(limit); waterCache.limit(limit);
+        oceanFloorCache.limit(limit); biomeCache.limit(limit);
+        return this;
     }
 
     public void clear() {

@@ -2,6 +2,8 @@ package com.monpai.sailboatmod.client.roadplanner;
 
 import com.monpai.sailboatmod.road.pathfinding.cache.TerrainSamplingCache;
 import net.minecraft.core.BlockPos;
+import com.monpai.sailboatmod.road.pathfinding.RoadSearchBudget;
+import java.util.concurrent.CancellationException;
 
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -9,6 +11,7 @@ import java.util.Map;
 
 public final class RoadPlannerTerrainSampleCollector {
     private static final int SAMPLE_SPACING_BLOCKS = 4;
+    static final int MAX_SAMPLES = 4096;
 
     private RoadPlannerTerrainSampleCollector() {
     }
@@ -17,24 +20,32 @@ public final class RoadPlannerTerrainSampleCollector {
         if (cache == null || nodes == null || nodes.isEmpty()) {
             return List.of();
         }
-        LinkedHashMap<Long, RoadPlannerTerrainSample> samples = new LinkedHashMap<>();
-        addSample(cache, nodes.get(0), samples);
-        for (int index = 1; index < nodes.size(); index++) {
-            BlockPos from = nodes.get(index - 1);
-            BlockPos to = nodes.get(index);
-            if (from == null || to == null) {
-                continue;
-            }
-            int dx = to.getX() - from.getX();
-            int dz = to.getZ() - from.getZ();
-            int steps = Math.max(1, (int) Math.ceil(Math.max(Math.abs(dx), Math.abs(dz)) / (double) SAMPLE_SPACING_BLOCKS));
-            for (int step = 0; step <= steps; step++) {
-                double t = step / (double) steps;
-                int x = (int) Math.round(from.getX() + dx * t);
-                int z = (int) Math.round(from.getZ() + dz * t);
-                addSample(cache, new BlockPos(x, from.getY(), z), samples);
-            }
+        RoadSearchBudget.check();
+        double total = 0;
+        for (int i=1; i<nodes.size(); i++) {
+            RoadSearchBudget.check();
+            BlockPos a=nodes.get(i-1), b=nodes.get(i);
+            if (a!=null && b!=null) total += Math.hypot(b.getX()-(double)a.getX(), b.getZ()-(double)a.getZ());
         }
+        // Output is a bounded preview profile, not the authoritative build geometry.
+        double spacing = Math.max(SAMPLE_SPACING_BLOCKS, total/(MAX_SAMPLES-1));
+        double along=0, next=0;
+        LinkedHashMap<Long, RoadPlannerTerrainSample> samples = new LinkedHashMap<>();
+        for (int i=1; i<nodes.size() && samples.size()<MAX_SAMPLES-1; i++) {
+            BlockPos from=nodes.get(i-1), to=nodes.get(i);
+            if (from==null || to==null) continue;
+            double length=Math.hypot(to.getX()-(double)from.getX(), to.getZ()-(double)from.getZ());
+            while (next<=along+length && samples.size()<MAX_SAMPLES-1) {
+                RoadSearchBudget.check();
+                double t=length<1e-9?0:Math.clamp((next-along)/length,0,1);
+                int x=(int)Math.round(from.getX()+(to.getX()-(double)from.getX())*t);
+                int z=(int)Math.round(from.getZ()+(to.getZ()-(double)from.getZ())*t);
+                addSample(cache,new BlockPos(x,from.getY(),z),samples);
+                next+=spacing;
+            }
+            along+=length;
+        }
+        addSample(cache,nodes.getLast(),samples);
         return List.copyOf(samples.values());
     }
 
@@ -46,7 +57,9 @@ public final class RoadPlannerTerrainSampleCollector {
         }
         int x = pos.getX();
         int z = pos.getZ();
-        samples.put(columnKey(x, z), sample(cache, x, z));
+        RoadSearchBudget.check();
+        long key=columnKey(x,z);
+        if (!samples.containsKey(key)) samples.put(key, sample(cache, x, z));
     }
 
     private static RoadPlannerTerrainSample sample(TerrainSamplingCache cache, int x, int z) {
@@ -66,6 +79,8 @@ public final class RoadPlannerTerrainSampleCollector {
                     cache.getHeight(x, z),
                     0,
                     RoadPlannerTerrainSample.Kind.LAND);
+        } catch (RoadSearchBudget.DeadlineExceeded | CancellationException stopped) {
+            throw stopped;
         } catch (RuntimeException ignored) {
             return new RoadPlannerTerrainSample(x, z, 0, 0, RoadPlannerTerrainSample.Kind.UNKNOWN);
         }
