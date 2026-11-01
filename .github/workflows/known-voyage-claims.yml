@@ -37,11 +37,35 @@ jobs:
           git apply build/verification/changes.patch
           python3 - <<'PY'
           from pathlib import Path
+          import re
           p=Path('src/main/java/com/monpai/sailboatmod/block/entity/DockBlockEntity.java')
           text=p.read_text(); anchor='import net.minecraft.core.BlockPos;'
           assert anchor in text
           if 'import net.minecraft.server.level.ServerLevel;' not in text:
               p.write_text(text.replace(anchor,anchor+'\nimport net.minecraft.server.level.ServerLevel;'))
+          # Protocol changed: keep all contributor-facing entry documents consistent with actual registrations.
+          network=Path('src/main/java/com/monpai/sailboatmod/network/ModNetwork.java').read_text()
+          protocol=re.search(r'PROTOCOL_VERSION = "(\d+)"',network).group(1)
+          assert protocol=='22'
+          count=network.count('CHANNEL.registerMessage(')
+          assert count==120
+          pattern=re.compile(r'(?i)((?:protocol(?: version)?(?: is)?\s*\(?["*]*|協定(?:是|為|仍為)\s*\**\s*))(\d+)')
+          for name in ('AGENTS.md','CLAUDE.md','README.md','START_HERE.md','docs/handoff/LDLIB2_INTEGRATION.md'):
+              p=Path(name);text=p.read_text()
+              text,n=pattern.subn(lambda m:m.group(1)+protocol,text)
+              assert n>0,name
+              if name=='AGENTS.md':
+                  text,n=re.subn(r'registers \d+ directional custom payloads',f'registers {count} directional custom payloads',text)
+                  assert n==1
+              p.write_text(text)
+          # Market payload is still clientbound and keeps its position; appended navigation payloads are now last.
+          p=Path('src/test/java/com/monpai/sailboatmod/network/packet/MarketLiveUpdatePacketTest.java')
+          text=p.read_text()
+          old='int at = network.lastIndexOf("CHANNEL.registerMessage(");'
+          new='int payload = network.indexOf("MarketLiveUpdatePacket.class");\n        assertTrue(payload >= 0, "market live-update payload remains registered");\n        int at = network.lastIndexOf("CHANNEL.registerMessage(", payload);\n        assertTrue(network.indexOf("KnownVoyageMenuPacket.class") > payload, "navigation packets append without reordering market payload");'
+          assert old in text
+          text=text.replace(old,new).replace('void registeredLastAsAClientboundPayload()', 'void remainsClientboundBeforeAppendedNavigationPayloads()')
+          p.write_text(text)
           PY
           for patch in tools/known-voyage-claims/fixes/*.patch; do
             if [ -f "$patch" ]; then git apply --check "$patch"; git apply "$patch"; fi
@@ -92,7 +116,7 @@ jobs:
           test "$(git rev-parse FETCH_HEAD)" = "$EXPECTED_HEAD"
           git config user.name 'github-actions[bot]'
           git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
-          git add src
+          git add src AGENTS.md CLAUDE.md README.md START_HERE.md docs/handoff/LDLIB2_INTEGRATION.md
           git commit -m 'fix: known-route dispatch and open-water navigation; add claim monster spawn permission'
           git push origin "HEAD:refs/heads/$BRANCH"
           git rev-parse HEAD > build/verification/tested-source-commit.txt
@@ -103,7 +127,7 @@ jobs:
           git rev-parse HEAD > build/verification/commit.txt
           git status --short > build/verification/working-tree.txt
           sha256sum build/libs/*.jar > build/verification/jar-sha256.txt || true
-          tar czf build/verified-source.tar.gz src tools docs build.gradle gradle.properties settings.gradle
+          tar czf build/verified-source.tar.gz src tools docs AGENTS.md CLAUDE.md README.md START_HERE.md build.gradle gradle.properties settings.gradle
       - uses: actions/upload-artifact@v4
         if: always()
         with:
