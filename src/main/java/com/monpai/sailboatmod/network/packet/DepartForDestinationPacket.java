@@ -12,12 +12,21 @@ import java.util.UUID;
 import java.util.function.Supplier;
 
 /** User intent: send this carrier to this port, not execute an index in a mutable route list. */
-public record DepartForDestinationPacket(BlockPos source,BlockPos target,UUID vessel,int cargoIndex,UUID request) {
+public record DepartForDestinationPacket(BlockPos source,BlockPos target,UUID vessel,int cargoIndex,UUID request,
+                                         RoutePlanningPreference preference) {
+    public DepartForDestinationPacket {
+        preference=preference==null?RoutePlanningPreference.REUSE_FIRST:preference;
+    }
+    public DepartForDestinationPacket(BlockPos source,BlockPos target,UUID vessel,int cargoIndex,UUID request){
+        this(source,target,vessel,cargoIndex,request,RoutePlanningPreference.REUSE_FIRST);
+    }
     public static void encode(DepartForDestinationPacket p,FriendlyByteBuf b){
         b.writeBlockPos(p.source);b.writeBlockPos(p.target);b.writeUUID(p.vessel);b.writeVarInt(p.cargoIndex);b.writeUUID(p.request);
+        b.writeByte(p.preference.id());
     }
     public static DepartForDestinationPacket decode(FriendlyByteBuf b){
-        return new DepartForDestinationPacket(b.readBlockPos(),b.readBlockPos(),b.readUUID(),b.readVarInt(),b.readUUID());
+        return new DepartForDestinationPacket(b.readBlockPos(),b.readBlockPos(),b.readUUID(),b.readVarInt(),b.readUUID(),
+                RoutePlanningPreference.fromId(b.readByte()));
     }
     public static void handle(DepartForDestinationPacket p,Supplier<NetworkEvent.Context> context){
         context.get().enqueueWork(()->{
@@ -51,7 +60,7 @@ public record DepartForDestinationPacket(BlockPos source,BlockPos target,UUID ve
                     session.end(started?100:0,started?RouteWorkProgressPacket.DONE:RouteWorkProgressPacket.FAILED,
                             started?"已按目的地出发":"航路已准备，但出发条件已变化");
                     player.sendSystemMessage(Component.literal(started?"已出发前往 "+destination.getDockName():"未发船：请检查船只、租金或货物状态"));
-                });
+                },p.preference);
                 if(!result.successful())session.end(0,RouteWorkProgressPacket.FAILED,WaterAutoRouteService.messageFor(result.reason()).getString());
                 } catch(RuntimeException failure) {
                     session.end(0,RouteWorkProgressPacket.FAILED,"目的地任务准备失败，未发船");

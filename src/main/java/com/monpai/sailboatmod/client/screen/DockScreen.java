@@ -225,11 +225,11 @@ public class DockScreen<T extends DockMenu> extends TransportTerminalScreen<T> {
         boats.addChildren(panelHeading(screenText("boats_title")), boatList);
         UIElement routes = Ui.column();
         routes.layout(l -> l.width(100).flexGrow(1).flexShrink(0).minWidth(90).height(100).gapAll(Ui.GAP_XS));
-        routes.addChildren(panelHeading(Component.literal("目的地调度")),
-                Ui.paragraph(Component.literal("选择船只后选择目的港。航路是共享基础设施，不需要手工选择或反转路线。"),"sm-muted"));
+        routes.addChildren(panelHeading(Component.translatable("screen.sailboatmod.destination.heading")),
+                Ui.paragraph(Component.translatable("screen.sailboatmod.destination.explain"),"sm-muted"));
         lists.addChildren(boats, routes);
 
-        assignButton = new ActionButton(Component.literal("选择目的地并出发"), Ui.Tone.PRIMARY,
+        assignButton = new ActionButton(Component.translatable("screen.sailboatmod.destination.choose"), Ui.Tone.PRIMARY,
                 () -> openDestination(-1));
         autoReturnButton = new ActionButton(Component.empty(), Ui.Tone.SECONDARY, () -> send(KEY_ACTION, DockGuiActionPacket.Action.TOGGLE_NON_ORDER_AUTO_RETURN));
         autoUnloadButton = new ActionButton(Component.empty(), Ui.Tone.SECONDARY, () -> send(KEY_ACTION, DockGuiActionPacket.Action.TOGGLE_NON_ORDER_AUTO_UNLOAD));

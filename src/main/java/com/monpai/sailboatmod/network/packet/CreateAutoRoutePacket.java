@@ -20,6 +20,7 @@ public class CreateAutoRoutePacket {
     private final java.util.UUID requestId;
     private final BlockPos targetDockPos;
     private final WaterMidMode midMode; // 中段寻路模式(noise/nbt/hybrid),仅水路用
+    private final com.monpai.sailboatmod.route.water.RoutePlanningPreference preference; // 最优 / 复用优先
 
     public CreateAutoRoutePacket(BlockPos sourceDockPos, BlockPos targetDockPos) {
         this(sourceDockPos, targetDockPos, WaterMidMode.current());
@@ -29,6 +30,11 @@ public class CreateAutoRoutePacket {
         this(sourceDockPos,targetDockPos,midMode,java.util.UUID.randomUUID());
     }
     public CreateAutoRoutePacket(BlockPos sourceDockPos,BlockPos targetDockPos,WaterMidMode midMode,java.util.UUID requestId) {
+        this(sourceDockPos,targetDockPos,midMode,requestId,com.monpai.sailboatmod.route.water.RoutePlanningPreference.OPTIMAL);
+    }
+    public CreateAutoRoutePacket(BlockPos sourceDockPos,BlockPos targetDockPos,WaterMidMode midMode,java.util.UUID requestId,
+                                 com.monpai.sailboatmod.route.water.RoutePlanningPreference preference) {
+        this.preference=preference==null?com.monpai.sailboatmod.route.water.RoutePlanningPreference.OPTIMAL:preference;
         this.requestId=requestId;
         this.sourceDockPos = sourceDockPos;
         this.targetDockPos = targetDockPos;
@@ -40,6 +46,7 @@ public class CreateAutoRoutePacket {
         buf.writeUUID(msg.requestId);
         buf.writeBlockPos(msg.targetDockPos);
         buf.writeByte(msg.midMode.id());
+        buf.writeByte(msg.preference.id());
     }
 
     public static CreateAutoRoutePacket decode(FriendlyByteBuf buf) {
@@ -47,7 +54,8 @@ public class CreateAutoRoutePacket {
         java.util.UUID requestId=buf.readUUID();
         BlockPos tgt = buf.readBlockPos();
         WaterMidMode mode = WaterMidMode.fromId(buf.readByte());
-        return new CreateAutoRoutePacket(src, tgt, mode,requestId);
+        var preference = com.monpai.sailboatmod.route.water.RoutePlanningPreference.fromId(buf.readByte());
+        return new CreateAutoRoutePacket(src, tgt, mode,requestId,preference);
     }
 
     public static void handle(CreateAutoRoutePacket msg, Supplier<NetworkEvent.Context> ctx) {
@@ -75,7 +83,7 @@ public class CreateAutoRoutePacket {
                         if(error!=null||current!=sourceDock||!com.monpai.sailboatmod.route.water.PortDockSnapshot.isPort(target)){
                             session.end(0,RouteWorkProgressPacket.FAILED,"码头加载失败，请重试");return;
                         }
-                        WaterRouteResult<Void> result=WaterAutoRouteService.submitAutoRoute(serverLevel,sourceDock,target,player,msg.midMode);
+                        WaterRouteResult<Void> result=WaterAutoRouteService.submitAutoRoute(serverLevel,sourceDock,target,player,msg.midMode,msg.preference);
                         if(!result.successful())session.end(0,RouteWorkProgressPacket.FAILED,WaterAutoRouteService.messageFor(result.reason()).getString());
                     }));
                 return;

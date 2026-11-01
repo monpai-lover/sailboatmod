@@ -110,7 +110,7 @@ import net.neoforged.bus.api.IEventBus;
 import java.util.Optional;
 
 public final class ModNetwork {
-    private static final String PROTOCOL_VERSION = "20"; // Live market updates plus aircraft actions and airport terminals.
+    private static final String PROTOCOL_VERSION = "21"; // 20 + route planning preference (optimal / reuse-first) on route and destination requests.
     public static final PayloadChannel CHANNEL = new PayloadChannel(PROTOCOL_VERSION);
 
     private static int packetId = 0;

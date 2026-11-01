@@ -12,6 +12,7 @@ import com.monpai.sailboatmod.market.TransportTerminalKind;
 import com.monpai.sailboatmod.network.ModNetwork;
 import com.monpai.sailboatmod.network.packet.CreateAutoRoutePacket;
 import com.monpai.sailboatmod.network.packet.RequestAutoRouteDocksPacket;
+import com.monpai.sailboatmod.route.water.RoutePlanningPreference;
 import com.monpai.sailboatmod.route.water.WaterMidMode;
 import dev.vfyjxf.taffy.style.AlignItems;
 import net.minecraft.core.BlockPos;
@@ -23,8 +24,14 @@ import java.util.ArrayList;
 import java.util.List;
 
 /**
- * Picks the destination for an automatic route. Ports also choose the mid-route pathfinding mode (default hybrid).
- * "Create" stays disabled until a destination is selected and sends the same {@link CreateAutoRoutePacket}.
+ * Two separate intents share this destination picker:
+ * <ul>
+ *   <li><b>Create route</b> (Routes tab): builds a named route stored on this dock. Stored routes are the shared,
+ *       reusable sea lanes. Default planning: {@link RoutePlanningPreference#OPTIMAL}.</li>
+ *   <li><b>Go to destination</b> (Destination tab): sends a ship to a port. The player never picks a route; the
+ *       server reuses stored lanes and only plans the gaps. Default: {@link RoutePlanningPreference#REUSE_FIRST}.</li>
+ * </ul>
+ * Both let the player switch the planning preference.
  */
 public class AutoRouteDockSelectionScreen extends ThemedScreen {
     private final BlockPos sourceDockPos;
@@ -51,10 +58,28 @@ public class AutoRouteDockSelectionScreen extends ThemedScreen {
 
     private java.util.UUID destinationVessel;
     private int destinationCargoIndex=-1;
-    public void forDeparture(java.util.UUID vessel,int cargoIndex){destinationVessel=vessel;destinationCargoIndex=cargoIndex;}
+    private RoutePlanningPreference preference=RoutePlanningPreference.OPTIMAL;
+    private TabBar<RoutePlanningPreference> preferenceTabs;
+    private Label preferenceDescription;
+    public void forDeparture(java.util.UUID vessel,int cargoIndex){
+        destinationVessel=vessel;destinationCargoIndex=cargoIndex;preference=RoutePlanningPreference.REUSE_FIRST;
+    }
+
+    /** "Go to destination" picker: its own title, defaults to reusing stored sea lanes. */
+    public static AutoRouteDockSelectionScreen forDestination(BlockPos sourceDockPos, java.util.UUID vessel, int cargoIndex) {
+        AutoRouteDockSelectionScreen screen = new AutoRouteDockSelectionScreen(sourceDockPos, TransportTerminalKind.PORT, List.of(),
+                Component.translatable("screen.sailboatmod.destination.title"));
+        screen.forDeparture(vessel, cargoIndex);
+        return screen;
+    }
 
     public AutoRouteDockSelectionScreen(BlockPos sourceDockPos, TransportTerminalKind terminalKind, List<AvailableDockEntry> docks) {
-        super(Component.translatable(baseKey(terminalKind) + ".title"));
+        this(sourceDockPos, terminalKind, docks, Component.translatable(baseKey(terminalKind) + ".title"));
+    }
+
+    private AutoRouteDockSelectionScreen(BlockPos sourceDockPos, TransportTerminalKind terminalKind, List<AvailableDockEntry> docks,
+                                         Component title) {
+        super(title);
         this.sourceDockPos = sourceDockPos;
         this.terminalKind = terminalKind == null ? TransportTerminalKind.PORT : terminalKind;
         this.docks = docks == null ? List.of() : docks;
@@ -68,7 +93,8 @@ public class AutoRouteDockSelectionScreen extends ThemedScreen {
     @Override
     protected UIElement buildBody() {
         UIElement body = Ui.column();
-        body.addChild(Ui.paragraph(destinationVessel==null?autoRouteText("subtitle"):Component.literal("自动复用已有航段，只补算缺口；路线准备好后发船。"), "sm-muted"));
+        body.addChild(Ui.paragraph(destinationVessel==null?autoRouteText("subtitle")
+                :Component.translatable("screen.sailboatmod.destination.subtitle"), "sm-muted"));
 
         dockList = Ui.scroller();
         dockList.layout(l -> l.height(150).flexGrow(0));
@@ -81,6 +107,18 @@ public class AutoRouteDockSelectionScreen extends ThemedScreen {
 
 
         if (terminalKind == TransportTerminalKind.PORT) {
+            // 规划方式:最优(完整重新规划) / 优先复用(沿已建航线,只补缺口)。两种意图各有默认值,玩家可切换。
+            UIElement preferenceRow = Ui.row();
+            preferenceRow.layout(l -> l.widthPercent(100).minWidth(0).gapAll(Ui.GAP_S).alignItems(AlignItems.CENTER));
+            preferenceTabs = TabBar.horizontal(next -> { preference = next; refresh(); });
+            preferenceTabs.add(RoutePlanningPreference.OPTIMAL, new ItemStack(Items.COMPASS),
+                            Component.translatable("screen.sailboatmod.route_preference.optimal"))
+                    .add(RoutePlanningPreference.REUSE_FIRST, new ItemStack(Items.FILLED_MAP),
+                            Component.translatable("screen.sailboatmod.route_preference.reuse_first"));
+            preferenceRow.addChildren(Ui.clippedText(Component.translatable("screen.sailboatmod.route_preference.label"), "sm-muted"),
+                    preferenceTabs.element());
+            preferenceDescription = Ui.text(Component.empty(), "sm-muted");
+            body.addChildren(preferenceRow, preferenceDescription);
             body.addChild(Ui.paragraph(Component.literal("后台异步规划：真实方块 / NBT 优先，Tellus 补足未生成地形。"),"sm-muted"));
             if (net.neoforged.fml.ModList.get() != null
                     && net.neoforged.fml.ModList.get().isLoaded(com.monpai.sailboatmod.route.terrain.TellusWorlds.MOD_ID)) {
@@ -89,7 +127,8 @@ public class AutoRouteDockSelectionScreen extends ThemedScreen {
             }
         }
 
-        createButton = Ui.button(destinationVessel==null?autoRouteText("create"):Component.literal("出发到此目的地"), Ui.Tone.PRIMARY, this::createRoute);
+        createButton = Ui.button(destinationVessel==null?autoRouteText("create")
+                :Component.translatable("screen.sailboatmod.destination.depart"), Ui.Tone.PRIMARY, this::createRoute);
         UIElement actions = Ui.row();
         actions.layout(l -> l.widthPercent(100).minWidth(0).gapAll(Ui.GAP_S)
                 .flexWrap(dev.vfyjxf.taffy.style.FlexWrap.WRAP).flexShrink(0));
@@ -161,6 +200,11 @@ public class AutoRouteDockSelectionScreen extends ThemedScreen {
             modeTabs.select(selectedMode);
             modeDescription.setValue(Component.literal(selectedMode.label()));
         }
+        if (preferenceTabs != null) {
+            preferenceTabs.select(preference);
+            preferenceDescription.setValue(Component.translatable(preference == RoutePlanningPreference.OPTIMAL
+                    ? "screen.sailboatmod.route_preference.optimal.desc" : "screen.sailboatmod.route_preference.reuse_first.desc"));
+        }
         if (createButton != null) {
             createButton.setActive(!building && selectedIndex >= 0 && selectedIndex < docks.size());
         }
@@ -175,9 +219,10 @@ public class AutoRouteDockSelectionScreen extends ThemedScreen {
             listRequest=java.util.UUID.randomUUID();
             routeRequest=java.util.UUID.randomUUID();building=true;progressStarted=ticks();
             progressPercent=0;progressState=0;progressStage="排队 / 异步载入码头";
-            if(destinationVessel==null)ModNetwork.CHANNEL.sendToServer(new CreateAutoRoutePacket(sourceDockPos,docks.get(selectedIndex).pos(),selectedMode,routeRequest));
+            if(destinationVessel==null)ModNetwork.CHANNEL.sendToServer(new CreateAutoRoutePacket(sourceDockPos,docks.get(selectedIndex).pos(),
+                    selectedMode,routeRequest,preference));
             else ModNetwork.CHANNEL.sendToServer(new com.monpai.sailboatmod.network.packet.DepartForDestinationPacket(
-                    sourceDockPos,docks.get(selectedIndex).pos(),destinationVessel,destinationCargoIndex,routeRequest));
+                    sourceDockPos,docks.get(selectedIndex).pos(),destinationVessel,destinationCargoIndex,routeRequest,preference));
             refreshProgress();refresh();
             return;
         }

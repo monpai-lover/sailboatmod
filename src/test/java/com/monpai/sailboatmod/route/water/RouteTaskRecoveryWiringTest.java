@@ -22,7 +22,7 @@ class RouteTaskRecoveryWiringTest {
         assertFalse(p.contains("getChunk"));assertFalse(p.contains(".join("));
     }
     @Test void taskPacketsAreRegisteredAndProtocolIsBumped()throws Exception{
-        String p=src("network/ModNetwork.java");assertTrue(p.contains("PROTOCOL_VERSION = \"20\""));
+        String p=src("network/ModNetwork.java");assertTrue(p.contains("PROTOCOL_VERSION = \"21\""));
         assertTrue(p.contains("RequestRouteTasksPacket.class"));assertTrue(p.contains("SyncRouteTasksPacket.class"));
     }
 }
