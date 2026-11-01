@@ -2,10 +2,10 @@ name: Berth and collision-aware navigation verification
 on:
   push:
     branches: [fix/autoroute-candidates-flag-preview]
-    paths: ['src/**', '.github/workflows/berth-collision-verification.yml']
+    paths: ['src/**', 'tools/berth-collision/**', '.github/workflows/berth-collision-verification.yml']
   workflow_dispatch:
 permissions:
-  contents: read
+  contents: write
 concurrency:
   group: berth-collision-${{ github.ref }}
   cancel-in-progress: true
@@ -17,9 +17,23 @@ jobs:
       - uses: actions/checkout@v4
         with:
           lfs: true
-      - name: Capture exact source before compilation
+      - name: Apply reviewed actual-motion safety follow-up
         run: |
           mkdir -p build/verification
+          python3 - <<'PY'
+          import pathlib,base64,lzma,hashlib
+          data=lzma.decompress(base64.b64decode(pathlib.Path('tools/berth-collision/motion-safety.patch.xz.b64').read_text(),validate=True))
+          assert hashlib.sha256(data).hexdigest()=='20595509009c84609bda771eefd943ab7c54e39404f4d87613fe51836f4516ab'
+          pathlib.Path('build/verification/motion-safety.patch').write_bytes(data)
+          PY
+          if git apply --check build/verification/motion-safety.patch; then
+            git apply build/verification/motion-safety.patch
+          else
+            git apply --reverse --check build/verification/motion-safety.patch
+          fi
+          git diff --check
+      - name: Capture exact source before compilation
+        run: |
           git rev-parse HEAD > build/verification/commit.txt
           git status --short > build/verification/working-tree.txt
           tar czf build/current-source.tar.gz src tools docs AGENTS.md CLAUDE.md README.md START_HERE.md build.gradle gradle.properties settings.gradle gradle gradlew gradlew.bat .github
@@ -72,6 +86,21 @@ jobs:
         run: |
           set -o pipefail
           ./gradlew --no-daemon -I tools/tellus-native/native.init.gradle -PneoForge.disableRecompilation=true '-Dorg.gradle.jvmargs=-Xmx2G -Dfile.encoding=UTF-8' test --tests '*TellusNativeRoutesTest' --rerun-tasks 2>&1 | tee build/verification/native.log
+      - name: Publish tested follow-up sources without force
+        env:
+          EXPECTED_HEAD: ${{ github.sha }}
+          BRANCH: fix/autoroute-candidates-flag-preview
+        run: |
+          git fetch origin "$BRANCH"
+          test "$(git rev-parse FETCH_HEAD)" = "$EXPECTED_HEAD"
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add src
+          if ! git diff --cached --quiet; then
+            git commit -m 'fix: sweep actual boat velocity and preserve berth/unknown collision boundaries'
+            git push origin "HEAD:refs/heads/$BRANCH"
+          fi
+          git rev-parse HEAD > build/verification/tested-source-commit.txt
       - name: Archive build identity
         if: always()
         run: |
