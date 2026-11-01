@@ -56,9 +56,9 @@ class LookaheadGuardWiringContractTest {
     @Test
     void tellusRescueUsesTheStrictLocalPredictorPlannerAndRetainsTheVoyage() throws Exception {
         String src = sailboat();
-        assertTrue(src.contains("WaterAutoRouteService.planLocalRescue("),
-                "Tellus rescue must use actual NBT/prediction, never noise or a full voyage restart");
-        assertTrue(src.contains("next.addAll(original.subList(splice.tailIndex(), original.size()))"));
+        assertTrue(src.contains("BoatLocalDetour.plan("),
+                "Live rescue must use captured physical hull/obstacles, never noise or a full voyage restart");
+        assertTrue(src.contains("next.addAll(original.subList(splice.tailIndex(),original.size()))"));
 
     }
 

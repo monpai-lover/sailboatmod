@@ -34,7 +34,7 @@ class SailboatHelmAndRescueTest {
         int a=s.indexOf("private boolean tryRuntimeAStarReroute()"),b=s.indexOf("\n    /**",a);
         assertFalse(s.substring(a,b).contains("RuntimeWaterAStar.findPath"));
         assertFalse(s.contains("isAutopilotPaused() && !(captain instanceof Player)"));
-        assertTrue(s.contains("WaterAutoRouteService.planLocalRescue("));
+        assertTrue(s.contains("BoatLocalDetour.plan("));
         assertTrue(s.contains("request::cancelled"));assertTrue(s.contains("!original.equals(autopilotRoute)"));
         assertTrue(s.contains("if (rerouteRequests.isInFlight()) {\n            setNavigationPhase(com.monpai.sailboatmod.route.NavigationPhase.RECOVERING);\n            autopilotSafeSpeedCap = 0;"));
     }

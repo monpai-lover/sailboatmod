@@ -749,7 +749,7 @@ public class DockBlockEntity extends BlockEntity implements MenuProvider {
         }
         int safeRouteIndex = Mth.clamp(routeIndex, 0, availableRoutes.size() - 1);
         if (autoStart && sailboat instanceof com.monpai.sailboatmod.entity.SailboatEntity ship) {
-            RouteDefinition departure=ship.prepareKnownDeparture(availableRoutes.get(safeRouteIndex));
+            RouteDefinition departure=ship.prepareKnownDeparture(availableRoutes.get(safeRouteIndex), this);
             if(departure==null)return false; // No fee/cargo mutation for an unsafe local entry.
             availableRoutes=new ArrayList<>(availableRoutes);availableRoutes.set(safeRouteIndex,departure);
         }
@@ -2070,15 +2070,15 @@ public class DockBlockEntity extends BlockEntity implements MenuProvider {
     }
 
     public boolean isCarrierInsideDockZone(LogisticsCarrier carrier) {
-        if (carrier instanceof com.monpai.sailboatmod.entity.TransportEntity) {
+        if (carrier == null) return false;
+        if (!(carrier instanceof com.monpai.sailboatmod.entity.SailboatEntity)) {
             return isInsideDockZone(carrier.transportPosition());
         }
-        if (carrier == null) return false;
         double centerX = worldPosition.getX() + 0.5D;
         double centerZ = worldPosition.getZ() + 0.5D;
         AABB berth = new AABB(centerX + zoneMinX, worldPosition.getY() - 4.0D, centerZ + zoneMinZ,
                 centerX + zoneMaxX, worldPosition.getY() + 8.0D, centerZ + zoneMaxZ).inflate(1.0E-4D);
-        return berth.intersects(carrier.transportBounds());
+        return com.monpai.sailboatmod.route.DockDeparturePolicy.inside(berth, carrier.transportBounds());
     }
 
     public int getZoneMinX() {

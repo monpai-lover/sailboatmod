@@ -120,10 +120,10 @@ public final class KnownVoyageService {
             if(trip==null||autoReturn&&!reversible(fresh,trip.routeIds())){reply(player,query,List.of(),"当前航程不可原路返航。",false);return;}
             var dock=PortDockSnapshot.loaded(l.level,l.source);
             RouteDefinition route=definition(trip,l.catalog.ports.get(l.source).dockName(),l.catalog.ports.get(target).dockName());
-            // A dock can berth a ship several blocks from the saved entry. Do not skip that entry.
-            // This is a bounded LIVE collision check, not terrain search or route construction.
-            route=boat.prepareKnownDeparture(route);
-            if(route==null){reply(player,query,List.of(),"船只尚未安全接入起始泊位。请驶入泊位，或上船按 R 接入航路。",false);return;}
+            // Admit the whole legal berth, not a straight ray to one route start coordinate.
+            // The ship's live collision controller performs the actual local exit manoeuvre.
+            route=boat.prepareKnownDeparture(route,dock);
+            if(route==null){reply(player,query,List.of(),"船只已离开本港泊位，未发船。",false);return;}
             var cargo=l.cargo<0?null:dock.captureDestinationCargo(player,l.cargo);
             boolean started=l.cargo<0?dock.assignBoatToDestination(boat,route,player,autoReturn,autoUnload)
                     :cargo!=null&&dock.dispatchCargoToDestination(player,boat,route,cargo);

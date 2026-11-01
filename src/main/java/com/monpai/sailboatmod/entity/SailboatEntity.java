@@ -28,6 +28,7 @@ import com.monpai.sailboatmod.route.water.WaterRouteNbtVerifier;
 import com.monpai.sailboatmod.route.water.WaterRoutePathfinder;
 import com.monpai.sailboatmod.route.water.WaterRoutePolicy;
 import com.monpai.sailboatmod.route.water.WaterRouteResult;
+import com.monpai.sailboatmod.route.water.WaterRouteFailureReason;
 import com.monpai.sailboatmod.route.water.WaterRouteTaskExecutor;
 import net.minecraft.world.level.ChunkPos;
 import net.minecraft.core.particles.ParticleTypes;
@@ -322,7 +323,9 @@ public class SailboatEntity extends Boat implements GeoEntity, MenuProvider, Tra
     private static final EntityDataAccessor<Integer> DATA_NAVIGATION_PHASE =
             SynchedEntityData.defineId(SailboatEntity.class, EntityDataSerializers.INT);
     private long followerCellTick=Long.MIN_VALUE;
-    private final java.util.Map<BlockPos,Boolean> followerCells=new java.util.HashMap<>();
+    private com.monpai.sailboatmod.route.water.local.LoadedBoatCollisionField.Probe followerCollisionProbe;
+    private int localObstacleTicks;
+    private long localTerrainRetryTick;
     private String autopilotRouteName = "";
     private BlockPos routeDockPos = null;
     @Nullable
@@ -1833,16 +1836,12 @@ public class SailboatEntity extends Boat implements GeoEntity, MenuProvider, Tra
         updateRouteSyncData();
     }
 
-    /** No A*: just a loaded, <=32-block departure segment to the saved berth. */
-    public RouteDefinition prepareKnownDeparture(RouteDefinition route) {
-        if (level().isClientSide || route==null || route.waypoints().size()<2) return null;
-        Vec3 entry=route.waypoints().getFirst();
-        Vec3 here=new Vec3(getX(),entry.y,getZ());
-        if (!liveAutopilotConnectionClear(here,entry)) return null;
-        var points=new ArrayList<Vec3>(); points.add(here);
-        for(Vec3 p:route.waypoints()) if(points.getLast().distanceToSqr(p)>1e-12)points.add(p);
-        return new RouteDefinition(route.name(),points,route.authorName(),route.authorUuid(),route.createdAtEpochMillis(),
-                com.monpai.sailboatmod.route.water.KnownWaterRouteGraph.length(points),route.startDockName(),route.endDockName());
+    /** Dock admission uses its legal berth, not a straight ray to one saved route endpoint.
+     * No terrain search occurs on click; the local controller handles the actual exit manoeuvre.
+     */
+    public RouteDefinition prepareKnownDeparture(RouteDefinition route, DockBlockEntity dock) {
+        if (level().isClientSide || dock == null || dock.getLevel() != level()) return null;
+        return com.monpai.sailboatmod.route.DockDeparturePolicy.prepare(route, position(), dock.isCarrierInsideDockZone(this));
     }
     public void setKnownDestination(BlockPos destination) {
         if (!level().isClientSide && destination!=null) autopilotDestinationDockHintPos=destination.immutable();
@@ -1910,7 +1909,7 @@ public class SailboatEntity extends Boat implements GeoEntity, MenuProvider, Tra
         }
         initializeAutopilotShipmentContext(route);
         autopilotTargetIndex = validatedPositionConnector ? 1 : determineInitialAutopilotTargetIndex();
-        recoveryGuard.reset(); terrainHoldStarted = -1;
+        recoveryGuard.reset(); terrainHoldStarted = -1; localTerrainRetryTick=0; localObstacleTicks=0; followerCollisionProbe=null;
         entityData.set(DATA_AUTOPILOT_ACTIVE, true);
         createLookaheadGuard();
         entityData.set(DATA_AUTOPILOT_PAUSED, false);
@@ -1996,7 +1995,7 @@ public class SailboatEntity extends Boat implements GeoEntity, MenuProvider, Tra
         }
         entityData.set(DATA_AUTOPILOT_ACTIVE, false);
         setNavigationPhase(com.monpai.sailboatmod.route.NavigationPhase.IDLE);
-        recoveryGuard.reset(); terrainHoldStarted = -1;
+        recoveryGuard.reset(); terrainHoldStarted = -1; localTerrainRetryTick=0; localObstacleTicks=0; followerCollisionProbe=null;
         lastAutopilotTrackingPosition=null;
         autopilotRoute.clear();
         autopilotTargetIndex = 0;
@@ -2044,7 +2043,7 @@ public class SailboatEntity extends Boat implements GeoEntity, MenuProvider, Tra
         entityData.set(DATA_AUTOPILOT_PAUSED, false);
         autopilotSafeSpeedCap = Double.POSITIVE_INFINITY; autopilotAimBlocked = false;
         autopilotNoProgressTicks = 0; autopilotLastTargetDistance = Double.NaN;
-        lastAutopilotTrackingPosition = position(); recoveryGuard.reset(); terrainHoldStarted = -1;
+        lastAutopilotTrackingPosition = position(); recoveryGuard.reset(); terrainHoldStarted = -1; localTerrainRetryTick=0; localObstacleTicks=0; followerCollisionProbe=null;
         if (lookaheadGuard != null) lookaheadGuard.reset();
         setNavigationPhase(com.monpai.sailboatmod.route.NavigationPhase.SAILING);
         clearStuckTraceStatus(); // 玩家手动恢复被卡死暂停的船：webmap 状态从 STUCK 恢复 SAILING
@@ -2243,29 +2242,20 @@ public class SailboatEntity extends Boat implements GeoEntity, MenuProvider, Tra
      * Route water height is the air/water interface; solid waterlogged blocks are not boat clearance.
      */
     private boolean liveAutopilotConnectionClear(Vec3 from,Vec3 to) {
-        double distance=com.monpai.sailboatmod.route.WaterPolylineFollower.horizontal(from,to);
-        if(distance>32||!(level() instanceof ServerLevel serverLevel))return false;
-        if (followerCellTick != level().getGameTime()) { followerCellTick=level().getGameTime();followerCells.clear(); }
-        int samples=Math.max(1,(int)Math.ceil(distance*4)),surface=com.monpai.sailboatmod.route.AutopilotMotionPolicy.waterBlockY(to.y);
-        for(int i=0;i<=samples;i++) {
-            int x=Mth.floor(from.x+(to.x-from.x)*i/samples),z=Mth.floor(from.z+(to.z-from.z)*i/samples);
-            for(int dz=0;dz<2;dz++)for(int dx=0;dx<2;dx++) {
-                BlockPos pos=new BlockPos(x+dx,surface,z+dz);
-                Boolean known=followerCells.get(pos);
-                if (known != null) { if(!known)return false;continue; }
-                // Never make an unbounded entity tick even with hundreds of tiny waypoints.
-                if(followerCells.size()>=512){followerTerrainUnknown=true;return false;}
-                var chunk=serverLevel.getChunkSource().getChunkNow((x+dx)>>4,(z+dz)>>4);
-                if (chunk == null) { followerTerrainUnknown=true; return false; }
-                boolean clear=com.monpai.sailboatmod.route.water.WaterSurfaceRules.isNavigableSurface(chunk.getBlockState(pos));
-                if(clear)for(int y=surface;y<=surface+2;y++) {
-                    BlockPos at=pos.atY(y);
-                    if(!chunk.getBlockState(at).getCollisionShape(level(),at).isEmpty()){clear=false;break;}
-                }
-                followerCells.put(pos,clear);if(!clear)return false;
-            }
+        if (com.monpai.sailboatmod.route.WaterPolylineFollower.horizontal(from,to)>32
+                || !(level() instanceof ServerLevel serverLevel)) return false;
+        // Centre the real 2x2 entity hull on its position. +X/+Z cell anchoring used to
+        // reject legal berths and to miss collisions on the negative sides of the ship.
+        if (followerCellTick != level().getGameTime() || followerCollisionProbe == null) {
+            followerCellTick=level().getGameTime();
+            try {
+                followerCollisionProbe=new com.monpai.sailboatmod.route.water.local.LoadedBoatCollisionField.Probe(serverLevel,this,to.y,2048);
+            } catch (RuntimeException unavailable) { followerTerrainUnknown=true;return false; }
         }
-        return true;
+        Vec3 start=new Vec3(from.x,to.y,from.z);
+        var check=followerCollisionProbe.field().segment(start,to);
+        followerTerrainUnknown=check==com.monpai.sailboatmod.route.water.local.BoatCollisionField.Check.UNKNOWN;
+        return check==com.monpai.sailboatmod.route.water.local.BoatCollisionField.Check.CLEAR;
     }
 
     /**
@@ -2404,6 +2394,16 @@ public class SailboatEntity extends Boat implements GeoEntity, MenuProvider, Tra
             return new AutopilotCommand(true, false, 0, 0, EngineGear.STOP);
         }
         terrainHoldStarted = -1;
+        if (autopilotAimBlocked) {
+            localObstacleTicks++;
+            setNavigationPhase(com.monpai.sailboatmod.route.NavigationPhase.BLOCKED);
+            autopilotSafeSpeedCap=0;
+            // Known block/entity collision: stop before impact, then use the same geometry
+            // for a bounded local bypass, including on the final approach segment.
+            if(localObstacleTicks>=10 && level().getGameTime()>=localTerrainRetryTick)tryLocalWaterRescueAsync();
+            return new AutopilotCommand(true,false,0,0,EngineGear.STOP);
+        }
+        localObstacleTicks=0;
 
         float yawStep = heading.yawStep();
         float turnInput = heading.turnInput();
@@ -2472,11 +2472,9 @@ public class SailboatEntity extends Boat implements GeoEntity, MenuProvider, Tra
 
     /** 进入一轮窄河道脱困：记起点、累加轮数、交替摆舵方向。 */
     private void beginUnstickAttempt() {
-        autopilotUnstickTicks = AUTOPILOT_UNSTICK_REVERSE_TICKS;
-        autopilotUnstickStartPos = position();
-        autopilotUnstickAttempts++;
-        autopilotUnstickYawDir = -autopilotUnstickYawDir;
-        autopilotStuckTicks = 0;
+        autopilotUnstickTicks=0;
+        autopilotStuckTicks=0;
+        tryLocalWaterRescueAsync();
     }
 
     /**
@@ -2555,7 +2553,7 @@ public class SailboatEntity extends Boat implements GeoEntity, MenuProvider, Tra
      * → server.execute 回主线程做 PathSmoother + RealWaterVerifier(碰真实区块,必须主线程)+ applyRescueRoute。
      */
     private void tryRerouteAndResumeAsync() {
-        if (level() instanceof ServerLevel tellus && com.monpai.sailboatmod.route.terrain.TellusWorlds.isTellusLevel(tellus)) {
+        if (level() instanceof ServerLevel) {
             tryLocalWaterRescueAsync();
             return;
         }
@@ -2666,64 +2664,69 @@ public class SailboatEntity extends Boat implements GeoEntity, MenuProvider, Tra
      * + RealWaterVerifier(碰真实区块)+ 拼接落地。
      */
     private void tryLocalWaterRescueAsync() {
-        if (!(level() instanceof ServerLevel server) || isAutopilotPaused() || rerouteRequests.isInFlight() || !hasAutopilotRoute()) return;
-        var recovery = recoveryGuard.request(level().getGameTime(), getX(), getZ());
-        if (recovery == com.monpai.sailboatmod.route.AutopilotRecoveryGuard.Decision.EXHAUSTED) {
-            LOGGER.warn("[Rescue] ship={} repeated geometric repairs produced no actual movement; paused", getUUID());
-            rerouteFailedFallback(); return;
+        if (!(level() instanceof ServerLevel server) || isAutopilotPaused() || rerouteRequests.isInFlight() || !hasAutopilotRoute()
+                || level().getGameTime()<localTerrainRetryTick) return;
+        var recovery=recoveryGuard.request(level().getGameTime(),getX(),getZ());
+        if(recovery==com.monpai.sailboatmod.route.AutopilotRecoveryGuard.Decision.EXHAUSTED){
+            LOGGER.warn("[Rescue] ship={} local obstacles still prevent real movement; paused",getUUID());
+            rerouteFailedFallback();return;
         }
-        if (recovery == com.monpai.sailboatmod.route.AutopilotRecoveryGuard.Decision.COOLDOWN) {
-            setNavigationPhase(com.monpai.sailboatmod.route.NavigationPhase.RECOVERING); return;
-        }
+        if(recovery==com.monpai.sailboatmod.route.AutopilotRecoveryGuard.Decision.COOLDOWN)return;
         setNavigationPhase(com.monpai.sailboatmod.route.NavigationPhase.RECOVERING);
-        final List<Vec3> original = List.copyOf(autopilotRoute);
-        final int targetIndex = autopilotTargetIndex;
-        final Vec3 capturedPosition = position();
-        final var request = rerouteRequests.claim();
-        if (request == null) return;
-        final var predictor = com.monpai.sailboatmod.route.terrain.TellusTerrain.forLevel(server).orElse(null);
-        autopilotSafeSpeedCap = 0;
-        setDeltaMovement(0, getDeltaMovement().y, 0);
-        LOGGER.info("[Rescue] 严格局部接回原航次:船位={} 目标序号={}", capturedPosition, targetIndex);
-        WaterRouteTaskExecutor.submit(() -> com.monpai.sailboatmod.route.water.WaterRouteCancellation.run(
-                request::cancelled, () -> WaterAutoRouteService.planLocalRescue(server, capturedPosition, original, targetIndex, predictor)))
-                .whenComplete((result, error) -> server.getServer().execute(() -> {
-                    if (!rerouteRequests.complete(request)) return;
-                    if (isRemoved() || !isAutopilotActive() || isAutopilotPaused() || level() != server
-                            || !original.equals(autopilotRoute) || targetIndex != autopilotTargetIndex) return;
-                    if (error != null || result == null || !result.successful()
-                            || capturedPosition.distanceToSqr(position()) > 4) {
-                        LOGGER.warn("[Rescue] 局部接驳未成功，安全暂停，不反复启动全程远航: {}",
-                                error != null ? error.toString() : result == null ? "no result" : result.reason());
-                        rerouteFailedFallback();
-                        return;
+        final List<Vec3> original=List.copyOf(autopilotRoute);
+        final int targetIndex=autopilotTargetIndex;
+        final Vec3 capturedPosition=position();
+        final var request=rerouteRequests.claim();if(request==null)return;
+        autopilotSafeSpeedCap=0;setDeltaMovement(0,getDeltaMovement().y,0);
+        LOGGER.info("[Rescue] ship={} snapshot physical shapes+vessels near {} target={}",getUUID(),capturedPosition,targetIndex);
+        com.monpai.sailboatmod.route.water.local.LoadedBoatCollisionField.capture(server,this,original.get(targetIndex).y,request::cancelled)
+            .thenCompose(field->WaterRouteTaskExecutor.submit(()->com.monpai.sailboatmod.route.water.WaterRouteCancellation.run(
+                request::cancelled,()->com.monpai.sailboatmod.route.water.local.BoatLocalDetour.plan(field,capturedPosition,original,targetIndex))))
+            .whenComplete((result,error)->server.getServer().execute(()->{
+                if(!rerouteRequests.complete(request))return;
+                if(isRemoved()||!isAutopilotActive()||isAutopilotPaused()||level()!=server
+                        ||!original.equals(autopilotRoute)||targetIndex!=autopilotTargetIndex)return;
+                if(error!=null || result==null || !result.successful()) {
+                    boolean unknown=error!=null || result==null || result.reason()==WaterRouteFailureReason.TERRAIN_NOT_READY;
+                    localTerrainRetryTick=level().getGameTime()+100;
+                    localObstacleTicks=0;
+                    if(unknown) {
+                        // Busy/unloaded != land. Do not reset the voyage or publish a fake success.
+                        setNavigationPhase(com.monpai.sailboatmod.route.NavigationPhase.WAITING_TERRAIN);
+                    } else {
+                        setNavigationPhase(com.monpai.sailboatmod.route.NavigationPhase.BLOCKED);
                     }
-                    var splice = result.value();
-                    List<Vec3> next = new ArrayList<>(splice.detour());
-                    next.addAll(original.subList(splice.tailIndex(), original.size()));
-                    if (next.size() < 2 || next.size() > 65_536 || !next.getLast().equals(original.getLast())) {
-                        rerouteFailedFallback(); return;
-                    }
-                    // Reset any guard state computed on the old geometry; its next tick observes this splice.
-                    if (lookaheadGuard != null) lookaheadGuard.reset();
-                    autopilotRoute.clear(); autopilotRoute.addAll(next);
-                    autopilotTargetIndex = 1;
-                    lastAutopilotTrackingPosition = position();
-                    autopilotNoProgressTicks = 0; autopilotLastTargetDistance = Double.NaN;
-                    autopilotSafeSpeedCap = Double.POSITIVE_INFINITY; autopilotAimBlocked = false;
-                    traceLiveSyncTicks = TRACE_LIVE_SYNC_INTERVAL_TICKS;
-                    resetUnstickState(); clearStuckTraceStatus();
-                    setNavigationPhase(com.monpai.sailboatmod.route.NavigationPhase.SAILING);
-                    // Do NOT reset recoveryGuard here: a new polyline is not physical progress.
-                    LOGGER.info("[Rescue] 局部修复成功:新接驳={} 保留原航点={}", splice.detour().size(), original.size()-splice.tailIndex());
-                }));
+                    LOGGER.warn("[Rescue] ship={} no safe local bypass yet: {}; bounded retry, vessel held",getUUID(),
+                        error!=null?error.toString():result==null?"no result":result.reason());
+                    return;
+                }
+                if(capturedPosition.distanceToSqr(position())>1.0){localTerrainRetryTick=level().getGameTime()+40;return;}
+                var splice = result.value();
+                List<Vec3> next=new ArrayList<>(splice.detour());
+                next.addAll(original.subList(splice.tailIndex(),original.size()));
+                if(next.size()<2||next.size()>65_536||!next.getLast().equals(original.getLast())){rerouteFailedFallback();return;}
+                // A vessel may have moved or a block may have been placed during worker planning.
+                followerCollisionProbe=null;
+                Vec3 first=next.get(1);double d=com.monpai.sailboatmod.route.WaterPolylineFollower.horizontal(position(),first);
+                Vec3 from=new Vec3(getX(),first.y,getZ()),probe=from.lerp(first,d<1e-8?1:Math.min(1,8/d));
+                if(!liveAutopilotConnectionClear(from,probe)){localTerrainRetryTick=level().getGameTime()+40;return;}
+                if(lookaheadGuard!=null)lookaheadGuard.reset();
+                autopilotRoute.clear();autopilotRoute.addAll(next);autopilotTargetIndex=1;
+                lastAutopilotTrackingPosition=position();autopilotNoProgressTicks=0;autopilotLastTargetDistance=Double.NaN;
+                autopilotSafeSpeedCap=Double.POSITIVE_INFINITY;autopilotAimBlocked=false;localObstacleTicks=0;
+                traceLiveSyncTicks=TRACE_LIVE_SYNC_INTERVAL_TICKS;
+                resetUnstickState();clearStuckTraceStatus();
+                setNavigationPhase(com.monpai.sailboatmod.route.NavigationPhase.SAILING);
+                // This detour is private to this voyage: never register a parked boat as permanent land.
+                LOGGER.info("[Rescue] ship={} physical bypass installed points={} retained={}",getUUID(),splice.detour().size(),original.size()-splice.tailIndex());
+            }));
     }
 
     private void tryRerouteToNextNavigableWaypointAsync() {
         if (!(level() instanceof ServerLevel server)) {
             return;
         }
-        if (com.monpai.sailboatmod.route.terrain.TellusWorlds.isTellusLevel(server)) {
+        if (!level().isClientSide) {
             tryLocalWaterRescueAsync();
             return;
         }
@@ -4010,12 +4013,14 @@ public class SailboatEntity extends Boat implements GeoEntity, MenuProvider, Tra
         if (route.waypoints().isEmpty()) {
             return false;
         }
-        BlockPos startDockPos = findTransportHubZoneContains(route.waypoints().get(0));
-        DockBlockEntity dock = startDockPos == null ? null : getTransportHub(startDockPos);
-        if (dock == null) {
-            return false;
+        // Prefer the source dock bound by the server dispatch. Hull-overlap and centre
+        // checks must not disagree between the berth menu and the actual start command.
+        DockBlockEntity dock=routeDockPos==null?null:getTransportHub(routeDockPos);
+        if(dock==null){
+            BlockPos startDockPos=findTransportHubZoneContains(route.waypoints().getFirst());
+            dock=startDockPos==null?null:getTransportHub(startDockPos);
         }
-        return dock.isInsideDockZone(position());
+        return dock!=null&&dock.isCarrierInsideDockZone(this);
     }
 
     @Nullable
