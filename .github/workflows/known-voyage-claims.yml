@@ -1,0 +1,108 @@
+name: Known-voyage navigation and claim spawning verification
+on:
+  push:
+    branches: [fix/autoroute-candidates-flag-preview]
+    paths: ['tools/known-voyage-claims/**', '.github/workflows/known-voyage-claims.yml']
+  workflow_dispatch:
+permissions:
+  contents: write
+concurrency:
+  group: known-voyage-claims-${{ github.ref }}
+  cancel-in-progress: true
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          lfs: true
+          fetch-depth: 0
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
+      - name: Apply audited navigation and claim permission patch
+        run: |
+          mkdir -p build/verification
+          python3 - <<'PY'
+          import pathlib,base64,lzma,hashlib
+          parts=sorted(pathlib.Path('tools/known-voyage-claims').glob('patch.part*'))
+          assert len(parts)==5
+          patch=lzma.decompress(base64.b64decode(''.join(p.read_text() for p in parts),validate=True))
+          assert hashlib.sha256(patch).hexdigest()=='20638b1510b3c89c133c476b405feace8ab09f5e4b3abaaffc94a6ea16079caf'
+          pathlib.Path('build/verification/changes.patch').write_bytes(patch)
+          PY
+          git apply --check build/verification/changes.patch
+          git apply build/verification/changes.patch
+          git diff --check
+      - name: Full NeoForge compilation, regression suite and both JARs
+        run: |
+          cat > /tmp/known-voyage-tests.gradle <<'GRADLE'
+          allprojects {
+            afterEvaluate {
+              if (plugins.hasPlugin('java')) {
+                tasks.named('test', Test) {
+                  maxHeapSize = '3G'
+                  maxParallelForks = 1
+                  filter { excludeTestsMatching '*TellusTaipeiAmsterdamBenchmark' }
+                  testLogging { events 'failed','skipped'; showStandardStreams = true }
+                }
+              }
+            }
+          }
+          GRADLE
+          chmod +x gradlew
+          ./gradlew --no-daemon -I /tmp/known-voyage-tests.gradle -PneoForge.disableRecompilation=true -PfixIndex=known_voyage_claims22 '-Dorg.gradle.jvmargs=-Xmx2G -Dfile.encoding=UTF-8' build marketWebJar
+          cp -r build/test-results/test build/offline-test-results
+      - name: Prepare pinned native Tellus runtime
+        run: |
+          mkdir -p build/native-runtime build/native-evidence
+          python3 - <<'PY'
+          import pathlib,zipfile,hashlib
+          p=pathlib.Path('libs/compile-only/Tellus-neoforge-1.21.1-0.8.3.jar')
+          digest=hashlib.sha256(p.read_bytes()).hexdigest()
+          assert digest=='fe3287f5b7cb1e8ef9395b71462db8c4455c21ebdca5ea33eee7cd0c5b62fcb6'
+          pathlib.Path('build/native-evidence/tellus-sha256.txt').write_text(digest+'\n')
+          with zipfile.ZipFile(p) as z:
+              for n in z.namelist():
+                  if n.startswith('META-INF/jarjar/') and n.endswith('.jar'):
+                      pathlib.Path('build/native-runtime',pathlib.Path(n).name).write_bytes(z.read(n))
+          PY
+      - name: Actual Tellus terrain and reverse-reuse compatibility
+        run: |
+          ./gradlew --no-daemon -I tools/tellus-native/native.init.gradle -PneoForge.disableRecompilation=true '-Dorg.gradle.jvmargs=-Xmx2G -Dfile.encoding=UTF-8' test --tests '*TellusNativeRoutesTest' --rerun-tasks
+      - name: Publish tested sources to same feature branch without force
+        env:
+          EXPECTED_HEAD: ${{ github.sha }}
+          BRANCH: fix/autoroute-candidates-flag-preview
+        run: |
+          git fetch origin "$BRANCH"
+          test "$(git rev-parse FETCH_HEAD)" = "$EXPECTED_HEAD"
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add src
+          git commit -m 'fix: known-route dispatch and open-water navigation; add claim monster spawn permission'
+          git push origin "HEAD:refs/heads/$BRANCH"
+          git rev-parse HEAD > build/verification/tested-source-commit.txt
+      - name: Archive exact source and verification identity
+        if: always()
+        run: |
+          mkdir -p build/verification
+          git rev-parse HEAD > build/verification/commit.txt
+          git status --short > build/verification/working-tree.txt
+          sha256sum build/libs/*.jar > build/verification/jar-sha256.txt || true
+          tar czf build/verified-source.tar.gz src tools docs build.gradle gradle.properties settings.gradle
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: known-voyage-claims-${{ github.run_id }}
+          path: |
+            build/libs/*.jar
+            build/offline-test-results/
+            build/test-results/test/
+            build/native-evidence/
+            build/route-regression/
+            build/verification/
+            build/verified-source.tar.gz
+          retention-days: 14
