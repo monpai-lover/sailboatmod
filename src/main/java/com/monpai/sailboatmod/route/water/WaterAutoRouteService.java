@@ -712,6 +712,9 @@ public final class WaterAutoRouteService {
                     try {
                         path = finishGuidedRoute(map, planner.path(), planner.directEdges(), boatHalfWidth,
                                 terrain == null ? null : terrain::awaitProgress, bar::update, true);
+                    } catch (StrictWaterDetour.Failure failedRepair) {
+                        LOGGER.warn("[WaterPath] 近港接驳修复失败 reason={} {}", failedRepair.reason(), failedRepair.getMessage());
+                        return WaterRouteResult.failure(failedRepair.reason());
                     } catch (IllegalArgumentException unverified) {
                         LOGGER.warn("[WaterPath] 航线后处理输入不能验证: {}", unverified.getMessage());
                         return WaterRouteResult.failure(WaterRouteFailureReason.TERRAIN_NOT_READY);
@@ -813,28 +816,21 @@ public final class WaterAutoRouteService {
      * 分段后处理:keep=true 的边(开阔直航段/已验证的复用段)原样保留,只对其余连续区段(港口两端、近岸精寻段、
      * 复用接口)跑 {@link #finishWholeRoute}。区段两端是固定接点,后处理不会移动。对整条远洋航线逐格做离岸优化
      * 既慢(实测 66s/1100 万取样)又几乎不改变直航段。{@code verifyNearPorts} 时,靠近码头的直航段先做严格船宽校验
-     * (那里是生成器真实地形,与陆地遮罩可能不同);不过则整条退回全程后处理。
+     * (真实地形可能与陆地遮罩不同);失败段先严格局部重寻，不把坏输入交给几何优化器。
      */
     static List<BlockPos> finishGuidedRoute(RealBlockWaterMap map, List<BlockPos> path, List<Boolean> keep, int halfWidth,
                                             WaterRoutePostProcessor.AwaitTerrain await, WaterRoutePostProcessor.Progress progress,
                                             boolean verifyNearPorts) {
+        // Re-plan actual blocked geometry before handing it to a validator/optimizer.
+        if (verifyNearPorts) {
+            var repaired = NearPortRouteRepair.repair(map, path, keep, halfWidth, await, progress, DIRECT_NEAR_PORT_BLOCKS);
+            path = repaired.path();
+            keep = repaired.keep();
+        }
         if (keep == null || keep.size() != path.size() - 1 || !keep.contains(Boolean.TRUE)) {
             LOGGER.info("[WaterPath] 全程后处理(无可保留边) points={} keep={} kept={}", path.size(),
                     keep == null ? -1 : keep.size(), keep == null ? 0 : keep.stream().filter(Boolean::booleanValue).count());
             return finishWholeRoute(map, path, halfWidth, await, progress).path();
-        }
-        if (verifyNearPorts) {
-            BlockPos first = path.getFirst(), last = path.getLast();
-            long nearSq = (long) DIRECT_NEAR_PORT_BLOCKS * DIRECT_NEAR_PORT_BLOCKS;
-            for (int i = 0; i < keep.size(); i++) {
-                if (!keep.get(i)) continue;
-                BlockPos a = path.get(i), b = path.get(i + 1);
-                boolean nearPort = a.distSqr(first) <= nearSq || a.distSqr(last) <= nearSq || b.distSqr(first) <= nearSq || b.distSqr(last) <= nearSq;
-                if (nearPort && !strictSegmentClear(map, a, b, halfWidth, await)) {
-                    LOGGER.info("[WaterPath] 近港直航段严格校验未过 {}->{},整条航线改为全程后处理", a, b);
-                    return finishWholeRoute(map, path, halfWidth, await, progress).path();
-                }
-            }
         }
         List<BlockPos> out = new ArrayList<>();
         int i = 0, sections = 0;
@@ -918,6 +914,21 @@ public final class WaterAutoRouteService {
      * <b>后台线程</b>:Tellus 世界的完整自救——船位最近可航格 → 目的港泊位,用与建线相同的「NBT + 地形预测」单段规划。
      * (原自救的 ServerWaterRouteWorld 依赖原版噪声生成器,在 Tellus 世界全判不可航。)level 可为 null(测试)。
      */
+    public static WaterRouteResult<WaterRescuePlanner.Splice> planLocalRescue(ServerLevel level, Vec3 boat,
+            List<Vec3> route, int targetIndex,
+            @Nullable com.monpai.sailboatmod.route.terrain.TerrainPredictor predictor) {
+        if (level != null && level.getServer().isSameThread())
+            throw new IllegalStateException("Water rescue must run on a route worker");
+        int seaY = level == null ? (int)Math.floor(boat.y) : level.getSeaLevel();
+        RealBlockWaterMap map = new RealBlockWaterMap(level, seaY).enableOnDemand().retryUnknownPrediction()
+                .withPredictor(predictor, com.monpai.sailboatmod.route.terrain.PredictionBudget.sixtySeconds());
+        try (RouteTerrainSource terrain = level == null ? null : new RouteTerrainSource(level, predictor,
+                () -> com.monpai.sailboatmod.route.terrain.TellusSurfaceSamplers.forLevel(level).orElse(null))) {
+            if (terrain != null) map.withAsyncTerrain(terrain);
+            return WaterRescuePlanner.plan(map, boat, route, targetIndex, terrain == null ? null : terrain::awaitProgress);
+        }
+    }
+
     public static WaterRouteResult<List<BlockPos>> planTellusRescue(@Nullable ServerLevel level, int seaY, BlockPos boat,
                                                                     DockBerthResolver.DockZone destination,
                                                                     com.monpai.sailboatmod.route.terrain.TerrainPredictor predictor,

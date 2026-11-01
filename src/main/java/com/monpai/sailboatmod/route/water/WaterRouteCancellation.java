@@ -19,9 +19,9 @@ public final class WaterRouteCancellation {
         if (cancelled()) throw new CancellationException("Water route cancelled");
     }
 
-    static <T> T run(BooleanSupplier token, Supplier<T> work) {
+    public static <T> T run(BooleanSupplier token, Supplier<T> work) {
         BooleanSupplier previous = CURRENT.get();
-        CURRENT.set(token);
+        CURRENT.set(() -> (previous != null && previous.getAsBoolean()) || (token != null && token.getAsBoolean()));
         try {
             check();
             return work.get();

@@ -64,7 +64,7 @@ public final class RouteLookaheadGuard {
     private List<Vec3> checkedRoute = List.of();
     private RouteLookahead.Obstacle pending;
     private Vec3 holdPoint;
-    private long generation;
+    private volatile long generation;
 
     public RouteLookaheadGuard(Host host, LongFunction<NbtChunkWaterReader.ChunkColumns> loadedColumns,
                                Supplier<RealBlockWaterMap> mapFactory, Executor background, Executor mainThread) {
@@ -172,7 +172,8 @@ public final class RouteLookaheadGuard {
             background.execute(() -> {
                 Runnable onMain;
                 try {
-                    onMain = work.get();
+                    onMain = com.monpai.sailboatmod.route.water.WaterRouteCancellation.run(
+                            () -> generation != requestGeneration, work);
                 } catch (Throwable t) {
                     LOGGER.error("[Lookahead] 后台绕行异常", t);
                     onMain = () -> finish(false);

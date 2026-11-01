@@ -271,7 +271,7 @@ public class SailboatEntity extends Boat implements GeoEntity, MenuProvider, Tra
     public static final int MIN_RENTAL_PRICE = DISABLED_RENTAL_PRICE;
     public static final int MAX_RENTAL_PRICE = 1_000_000;
     private static final Vec3[] PASSENGER_OFFSETS = new Vec3[] {
-            new Vec3(0.0D, 0.55D, 0.4D),
+            SailboatSeatLayout.CAPTAIN,
             new Vec3(-0.9D, 0.55D, -0.1D),
             new Vec3(0.9D, 0.55D, -0.1D),
             new Vec3(-0.65D, 0.55D, -1.1D),
@@ -568,10 +568,8 @@ public class SailboatEntity extends Boat implements GeoEntity, MenuProvider, Tra
                 && isAutopilotActive()
                 && !isAutopilotPaused()
                 && hasAutopilotRoute();
-        if (!level().isClientSide && isAutopilotActive() && isAutopilotPaused() && !(captain instanceof Player)) {
-            resumeAutopilot();
-            autopilotControl = !isAutopilotPaused() && hasAutopilotRoute();
-        }
+        // Paused/stuck means stopped until an explicit resume. Autopilot deliberately has
+        // no controlling passenger; treating that as an empty boat resumed failures every tick.
         // 双端预测：客户端驾驶者也跑移动物理(本地预测=零延迟跟手)，但仅手动(非 autopilot)、有玩家驾驶时。
         // autopilot 时 isControlledByLocalInstance()=false→客户端不本地控制，靠 tickNetworkLerp 插值服务端权威位置。
         boolean clientLocalDrive = level().isClientSide
@@ -1314,12 +1312,8 @@ public class SailboatEntity extends Boat implements GeoEntity, MenuProvider, Tra
             seatIndex = Math.min(getPassengers().indexOf(passenger), PASSENGER_OFFSETS.length - 1);
         }
         Vec3 seat = PASSENGER_OFFSETS[seatIndex];
-        float yawRad = -getYRot() * ((float) Math.PI / 180F);
-        double sin = Math.sin(yawRad);
-        double cos = Math.cos(yawRad);
-        Vec3 legacySeatPosition = new Vec3(getX() + seat.x * cos - seat.z * sin,
-                getY() + getPassengersRidingOffset() + seat.y,
-                getZ() + seat.x * sin + seat.z * cos);
+        Vec3 offset = SailboatSeatLayout.worldOffset(seat, getYRot());
+        Vec3 legacySeatPosition = position().add(offset).add(0, getPassengersRidingOffset(), 0);
         return PassengerSeatPosition.anchor(passenger, this, legacySeatPosition, getPassengersRidingOffset());
     }
 
@@ -1985,6 +1979,9 @@ public class SailboatEntity extends Boat implements GeoEntity, MenuProvider, Tra
         if (level().isClientSide || !isAutopilotActive()) {
             return;
         }
+        invalidateAutopilotReroutes();
+        setDeltaMovement(0, getDeltaMovement().y, 0);
+        autopilotSafeSpeedCap = 0;
         entityData.set(DATA_AUTOPILOT_PAUSED, true);
         entityData.set(DATA_ENGINE_GEAR, EngineGear.STOP.id);
     }
@@ -2256,6 +2253,11 @@ public class SailboatEntity extends Boat implements GeoEntity, MenuProvider, Tra
             finishAutopilotAndUnloadAtDestination();
             return AutopilotCommand.inactive();
         }
+        if (rerouteRequests.isInFlight()) {
+            autopilotSafeSpeedCap = 0;
+            autopilotNoProgressTicks = 0;
+            return new AutopilotCommand(true, false, 0, 0, EngineGear.STOP);
+        }
         // 窄河道脱困：后退分两段——【前段纯直退不转船头】(后退方向=船头反向,转了就退不出,这是旧 bug 根因),
         // 后段(最后 AUTOPILOT_UNSTICK_SWING_TICKS tick)才小幅摆舵换个朝向,给下一轮换方向重试。
         if (autopilotUnstickTicks > 0) {
@@ -2441,62 +2443,9 @@ public class SailboatEntity extends Boat implements GeoEntity, MenuProvider, Tra
      * @return true 表示 A* 成功并已替换剩余航线。
      */
     private boolean tryRuntimeAStarReroute() {
-        if (!(level() instanceof ServerLevel server)) {
-            return false;
-        }
-        List<Vec3> remaining = new ArrayList<>();
-        for (int i = Math.max(0, autopilotTargetIndex); i < autopilotRoute.size(); i++) {
-            remaining.add(autopilotRoute.get(i));
-        }
-        if (remaining.isEmpty()) {
-            return false;
-        }
-        int seaY = server.getSeaLevel();
-        RealBlockWaterMap map = new RealBlockWaterMap(server, seaY).enableOnDemand();
-        int halfWidth = 1; // 语义已统一 2×2(见 RealBlockWaterMap.hullClear)
-        BlockPos boatPos = blockPosition();
-        // 起点校正到最近可航格(船卡窄道当前格可能 2×2 不全水)。
-        BlockPos start = map.nearestHullWater(boatPos.getX(), boatPos.getZ(), halfWidth, 16);
-        if (start == null) {
-            LOGGER.info("[Rescue] 运行时A*: 船位 16 格内无可航格,放弃");
-            return false;
-        }
-        // 找剩余航线第一个仍可航的节点当 goal(卡点节点会被跳过)。
-        int goalIdx = -1;
-        BlockPos goal = null;
-        for (int i = 0; i < remaining.size(); i++) {
-            Vec3 node = remaining.get(i);
-            int nx = Mth.floor(node.x);
-            int nz = Mth.floor(node.z);
-            if (map.hullClear(nx, nz, halfWidth)) {
-                goalIdx = i;
-                goal = new BlockPos(nx, seaY, nz);
-                break;
-            }
-        }
-        if (goal == null) {
-            LOGGER.info("[Rescue] 运行时A*: {} 个剩余航点 2×2 全不可航,放弃", remaining.size());
-            return false;
-        }
-        long t0 = System.nanoTime();
-        List<BlockPos> path = RuntimeWaterAStar.findPath(map, start, goal, halfWidth,
-                RuntimeWaterAStar.DEFAULT_MARGIN, RuntimeWaterAStar.DEFAULT_MAX_EXPANSIONS);
-        long ms = (System.nanoTime() - t0) / 1_000_000L;
-        if (path.size() < 2) {
-            LOGGER.info("[Rescue] 运行时A* 无路 耗时={}ms start={} goal={}", ms, start, goal);
-            return false;
-        }
-        // 撞陆感知平滑(治本,与生成期同)+ 2×2 段校验兜底。
-        List<BlockPos> smoothed = WaterPathSmoother.smooth(map, path, seaY, 2.0D, halfWidth);
-        List<BlockPos> verified = WaterRouteNbtVerifier.verify(map, smoothed, halfWidth);
-        if (verified == null || verified.size() < 2) {
-            LOGGER.info("[Rescue] 运行时A* 校验后<2点,放弃");
-            return false;
-        }
-        LOGGER.info("[Rescue] 运行时A* 成功 耗时={}ms A*点={} 平滑校验后={} 接回剩余[{}]",
-                ms, path.size(), verified.size(), goalIdx);
-        applyNextWaypointReroute(verified, remaining, goalIdx);
-        return true;
+        // Never call the legacy on-demand NBT BFS from an entity tick.
+        tryRerouteToNextNavigableWaypointAsync();
+        return rerouteRequests.isInFlight();
     }
 
     /**
@@ -2510,6 +2459,10 @@ public class SailboatEntity extends Boat implements GeoEntity, MenuProvider, Tra
      * → server.execute 回主线程做 PathSmoother + RealWaterVerifier(碰真实区块,必须主线程)+ applyRescueRoute。
      */
     private void tryRerouteAndResumeAsync() {
+        if (level() instanceof ServerLevel tellus && com.monpai.sailboatmod.route.terrain.TellusWorlds.isTellusLevel(tellus)) {
+            tryLocalWaterRescueAsync();
+            return;
+        }
         if (!(level() instanceof ServerLevel server)) {
             return;
         }
@@ -2536,44 +2489,6 @@ public class SailboatEntity extends Boat implements GeoEntity, MenuProvider, Tra
         }
         LOGGER.info("[Rescue] 卡死自救:后台寻路提交 boatPos=({},{},{}) destDock={}",
                 boatPos.getX(), boatPos.getY(), boatPos.getZ(), destDockPos);
-
-        // Tellus 地球世界:下方噪声采样寻路(ServerWaterRouteWorld)依赖原版噪声生成器,在这里全判不可航;
-        // 改用与建线相同的「NBT + 地形预测」规划到目的港泊位。成功/失败的落地与原自救一致。
-        if (com.monpai.sailboatmod.route.terrain.TellusWorlds.isTellusLevel(server)) {
-            com.monpai.sailboatmod.route.terrain.TerrainPredictor predictor =
-                    com.monpai.sailboatmod.route.terrain.TellusTerrain.forLevel(server).orElse(null);
-            WaterRouteTaskExecutor.submit(() -> {
-                try {
-                    WaterRouteResult<List<BlockPos>> plan = com.monpai.sailboatmod.route.water.WaterAutoRouteService.planTellusRescue(
-                            server, seaY, boatPos, destZone, predictor,
-                            com.monpai.sailboatmod.route.terrain.PredictionBudget.sixtySeconds());
-                    if (!plan.successful()) {
-                        LOGGER.warn("[Rescue] Tellus 自救规划失败 ({})", plan.reason());
-                        return null;
-                    }
-                    return plan.value();
-                } catch (Throwable t) {
-                    LOGGER.error("[Rescue] Tellus 自救规划异常", t);
-                    return null;
-                }
-            }).whenComplete((path, ex) -> server.getServer().execute(() -> {
-                if (!rerouteRequests.complete(rerouteRequest)) {
-                    return;
-                }
-                if (isRemoved() || !isAutopilotActive()) {
-                    LOGGER.info("[Rescue] 自救结果丢弃:船已卸载/到站/停自动驾驶");
-                    return;
-                }
-                if (ex != null || path == null || path.size() < 2) {
-                    LOGGER.warn("[Rescue] Tellus 自救失败 → 降级求救(头顶提示+聊天+webmap STUCK+暂停)");
-                    rerouteFailedFallback();
-                    return;
-                }
-                LOGGER.info("[Rescue] Tellus 自救成功:新航线接管 航点={} 恢复航行", path.size());
-                applyRescueRoute(path);
-            }));
-            return;
-        }
 
         // ---- 后台线程:纯只读采样寻路,返回原始航点(失败返回 null)----
         WaterRouteTaskExecutor.submit(() -> {
@@ -2654,12 +2569,55 @@ public class SailboatEntity extends Boat implements GeoEntity, MenuProvider, Tra
      * 当 goal + WaterRoutePathfinder(纯只读 getBaseHeight 采样,线程安全)→ server.execute 回主线程做 PathSmoother
      * + RealWaterVerifier(碰真实区块)+ 拼接落地。
      */
+    private void tryLocalWaterRescueAsync() {
+        if (!(level() instanceof ServerLevel server) || isAutopilotPaused() || rerouteRequests.isInFlight() || !hasAutopilotRoute()) return;
+        final List<Vec3> original = List.copyOf(autopilotRoute);
+        final int targetIndex = autopilotTargetIndex;
+        final Vec3 capturedPosition = position();
+        final var request = rerouteRequests.claim();
+        if (request == null) return;
+        final var predictor = com.monpai.sailboatmod.route.terrain.TellusTerrain.forLevel(server).orElse(null);
+        autopilotSafeSpeedCap = 0;
+        setDeltaMovement(0, getDeltaMovement().y, 0);
+        LOGGER.info("[Rescue] 严格局部接回原航次:船位={} 目标序号={}", capturedPosition, targetIndex);
+        WaterRouteTaskExecutor.submit(() -> com.monpai.sailboatmod.route.water.WaterRouteCancellation.run(
+                request::cancelled, () -> WaterAutoRouteService.planLocalRescue(server, capturedPosition, original, targetIndex, predictor)))
+                .whenComplete((result, error) -> server.getServer().execute(() -> {
+                    if (!rerouteRequests.complete(request)) return;
+                    if (isRemoved() || !isAutopilotActive() || isAutopilotPaused() || level() != server
+                            || !original.equals(autopilotRoute) || targetIndex != autopilotTargetIndex) return;
+                    if (error != null || result == null || !result.successful()
+                            || capturedPosition.distanceToSqr(position()) > 4) {
+                        LOGGER.warn("[Rescue] 局部接驳未成功，安全暂停，不反复启动全程远航: {}",
+                                error != null ? error.toString() : result == null ? "no result" : result.reason());
+                        rerouteFailedFallback();
+                        return;
+                    }
+                    var splice = result.value();
+                    List<Vec3> next = new ArrayList<>(splice.detour());
+                    next.addAll(original.subList(splice.tailIndex(), original.size()));
+                    if (next.size() < 2 || next.size() > 65_536 || !next.getLast().equals(original.getLast())) {
+                        rerouteFailedFallback(); return;
+                    }
+                    // Reset any guard state computed on the old geometry; its next tick observes this splice.
+                    if (lookaheadGuard != null) lookaheadGuard.reset();
+                    autopilotRoute.clear(); autopilotRoute.addAll(next);
+                    autopilotTargetIndex = 1;
+                    lastAutopilotTrackingPosition = position();
+                    autopilotNoProgressTicks = 0; autopilotLastTargetDistance = Double.NaN;
+                    autopilotSafeSpeedCap = Double.POSITIVE_INFINITY; autopilotAimBlocked = false;
+                    traceLiveSyncTicks = TRACE_LIVE_SYNC_INTERVAL_TICKS;
+                    resetUnstickState(); clearStuckTraceStatus();
+                    LOGGER.info("[Rescue] 局部修复成功:新接驳={} 保留原航点={}", splice.detour().size(), original.size()-splice.tailIndex());
+                }));
+    }
+
     private void tryRerouteToNextNavigableWaypointAsync() {
         if (!(level() instanceof ServerLevel server)) {
             return;
         }
         if (com.monpai.sailboatmod.route.terrain.TellusWorlds.isTellusLevel(server)) {
-            tryRerouteAndResumeAsync();
+            tryLocalWaterRescueAsync();
             return;
         }
         if (rerouteRequests.isInFlight()) {
@@ -4085,12 +4043,9 @@ public class SailboatEntity extends Boat implements GeoEntity, MenuProvider, Tra
                     return chunk == null ? null
                             : com.monpai.sailboatmod.route.water.lookahead.LoadedChunkWaterColumns.capture(chunk);
                 },
-                () -> new com.monpai.sailboatmod.route.water.RealBlockWaterMap(serverLevel, seaY).enableOnDemand()
+                () -> new com.monpai.sailboatmod.route.water.RealBlockWaterMap(serverLevel, seaY).enableOnDemand().retryUnknownPrediction()
                         .withPredictor(predictor, com.monpai.sailboatmod.route.terrain.PredictionBudget.sixtySeconds()),
-                task -> com.monpai.sailboatmod.route.water.WaterRouteTaskExecutor.submit(() -> {
-                    task.run();
-                    return null;
-                }),
+                com.monpai.sailboatmod.route.water.WaterRouteTaskExecutor::execute,
                 serverLevel.getServer()::execute);
     }
 
@@ -4115,7 +4070,7 @@ public class SailboatEntity extends Boat implements GeoEntity, MenuProvider, Tra
 
         @Override
         public boolean autopilotActive() {
-            return !isRemoved() && isAutopilotActive();
+            return !isRemoved() && isAutopilotActive() && !isAutopilotPaused();
         }
 
         @Override

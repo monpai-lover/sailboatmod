@@ -54,12 +54,12 @@ class LookaheadGuardWiringContractTest {
     }
 
     @Test
-    void fullRescueUsesThePredictorPlannerInTellusWorlds() throws Exception {
+    void tellusRescueUsesTheStrictLocalPredictorPlannerAndRetainsTheVoyage() throws Exception {
         String src = sailboat();
-        int rescue = src.indexOf("private void tryRerouteAndResumeAsync()");
-        int next = src.indexOf("private void", rescue + 1);
-        assertTrue(src.substring(rescue, next).contains("WaterAutoRouteService.planTellusRescue("),
-                "the noise-based rescue cannot sample Tellus terrain, so Tellus worlds plan with NBT + prediction");
+        assertTrue(src.contains("WaterAutoRouteService.planLocalRescue("),
+                "Tellus rescue must use actual NBT/prediction, never noise or a full voyage restart");
+        assertTrue(src.contains("next.addAll(original.subList(splice.tailIndex(), original.size()))"));
+
     }
 
 }

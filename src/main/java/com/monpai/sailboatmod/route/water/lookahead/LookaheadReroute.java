@@ -20,14 +20,12 @@ public final class LookaheadReroute {
 
     /** @return a..b 的绕行航点(含首尾);找不到返回空。 */
     public static List<BlockPos> compute(RealBlockWaterMap map, BlockPos a, BlockPos b, int halfWidth) {
-        List<BlockPos> path = map.localRerouteNbt(a, b, halfWidth, BFS_MARGIN, BFS_MAX_CELLS);
-        if (path == null || path.size() < 2) {
-            path = RuntimeWaterAStar.findPath(map, a, b, halfWidth, ASTAR_MARGIN, ASTAR_MAX_EXPANSIONS);
-        }
-        if (path == null || path.size() < 2) {
+        try {
+            return com.monpai.sailboatmod.route.water.StrictWaterDetour.find(map, a, b, halfWidth, null,
+                    System.nanoTime() + 30_000_000_000L, ASTAR_MAX_EXPANSIONS);
+        } catch (com.monpai.sailboatmod.route.water.StrictWaterDetour.Failure failed) {
             return List.of();
         }
-        return pull(map, path, halfWidth);
     }
 
     /** 贪婪拉直:从每个点出发,取窗口内最远的、连线仍 2×2 全水的点。 */

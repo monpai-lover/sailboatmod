@@ -15,6 +15,8 @@ public final class WaterRouteTaskExecutor {
         }
         return owned;
     }
+    /** Executor adapter: rejection must be observable by callers holding a rescue slot. */
+    public static void execute(Runnable task){executor().execute(task);}
     public static <T> CompletableFuture<T> submit(Supplier<T> task){
         try{return CompletableFuture.supplyAsync(task,executor());}
         catch(RejectedExecutionException busy){return CompletableFuture.failedFuture(busy);}

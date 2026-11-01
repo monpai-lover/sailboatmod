@@ -6,6 +6,8 @@ package com.monpai.sailboatmod.entity;
  */
 final class AutopilotRerouteRequests {
     static final class Request {
+        private volatile boolean cancelled;
+        boolean cancelled() { return cancelled; }
         private Request() {
         }
     }
@@ -34,6 +36,7 @@ final class AutopilotRerouteRequests {
     }
 
     void invalidate() {
+        if (active != null) active.cancelled = true;
         active = null;
     }
 }
