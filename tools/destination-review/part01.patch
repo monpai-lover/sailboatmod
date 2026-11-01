@@ -1,0 +1,116 @@
+diff --git a/src/main/java/com/monpai/sailboatmod/block/entity/MarketBlockEntity.java b/src/main/java/com/monpai/sailboatmod/block/entity/MarketBlockEntity.java
+index 5631680..743fb4f 100644
+--- a/src/main/java/com/monpai/sailboatmod/block/entity/MarketBlockEntity.java
++++ b/src/main/java/com/monpai/sailboatmod/block/entity/MarketBlockEntity.java
+@@ -1727,2 +1727,4 @@ public class MarketBlockEntity extends BlockEntity implements MenuProvider {
+                 int routeIndex = sourceTerminal.findRouteIndexByDestinationDock(targetTerminal.getBlockPos(), targetTerminal.getDockName());
++                if(terminalKind==TransportTerminalKind.PORT && level instanceof ServerLevel routeLevel)
++                    routeIndex=com.monpai.sailboatmod.route.water.WaterDestinationService.ensureMarketRoute(routeLevel,sourceTerminal,targetTerminal);
+                 if (routeIndex < 0) {
+@@ -2036,2 +2038,5 @@ public class MarketBlockEntity extends BlockEntity implements MenuProvider {
+         if (best == null) {
++            boolean waterPending = terminalKind == TransportTerminalKind.PORT && level instanceof ServerLevel pendingLevel
++                    && sourceTerminals.stream().anyMatch(a -> targetTerminals.stream().anyMatch(b ->
++                            com.monpai.sailboatmod.route.water.WaterDestinationService.pending(pendingLevel,a.getBlockPos(),b.getBlockPos())));
+             return new MarketOverviewData.DispatchOption(
+@@ -2046,4 +2051,6 @@ public class MarketBlockEntity extends BlockEntity implements MenuProvider {
+                     false,
+-                    "No route",
+-                    "No valid route was found between the terminals."
++                    waterPending ? "Planning destination" : "No route",
++                    waterPending
++                            ? "航路未就绪：正在按目的地复用/补算；货物未扣除。稍后自动重试。"
++                            : "No valid route was found between the terminals."
+             );
+@@ -2094,2 +2101,4 @@ public class MarketBlockEntity extends BlockEntity implements MenuProvider {
+         int routeIndex = sourceTerminal.findRouteIndexByDestinationDock(targetTerminal.getBlockPos(), targetTerminal.getDockName());
++                if(terminalKind==TransportTerminalKind.PORT && level instanceof ServerLevel routeLevel)
++                    routeIndex=com.monpai.sailboatmod.route.water.WaterDestinationService.ensureMarketRoute(routeLevel,sourceTerminal,targetTerminal);
+         if (routeIndex >= 0) {
+@@ -2719,2 +2728,4 @@ public class MarketBlockEntity extends BlockEntity implements MenuProvider {
+         int routeIndex = fromTerminal.findRouteIndexByDestinationDock(toTerminal.getBlockPos(), toTerminal.getDockName());
++        if(kind==TransportTerminalKind.PORT&&level instanceof ServerLevel routeLevel)
++            routeIndex=com.monpai.sailboatmod.route.water.WaterDestinationService.ensureMarketRoute(routeLevel,fromTerminal,toTerminal);
+         if (routeIndex < 0) {
+diff --git a/src/main/java/com/monpai/sailboatmod/client/DockClientHooks.java b/src/main/java/com/monpai/sailboatmod/client/DockClientHooks.java
+index 037f425..863086c 100644
+--- a/src/main/java/com/monpai/sailboatmod/client/DockClientHooks.java
++++ b/src/main/java/com/monpai/sailboatmod/client/DockClientHooks.java
+@@ -33,2 +33,7 @@ public final class DockClientHooks {
+ 
++    public static void beginDestination(BlockPos pos,java.util.UUID vessel,int cargoIndex) {
++        var screen=new AutoRouteDockSelectionScreen(pos,TransportTerminalKind.PORT,List.of());
++        screen.forDeparture(vessel,cargoIndex);
++        Minecraft.getInstance().setScreen(screen);screen.requestValidation();
++    }
+     public static void beginAutoRoute(BlockPos pos,TransportTerminalKind kind) {
+diff --git a/src/main/java/com/monpai/sailboatmod/client/screen/AutoRouteDockSelectionScreen.java b/src/main/java/com/monpai/sailboatmod/client/screen/AutoRouteDockSelectionScreen.java
+index 8b971ed..27c9f56 100644
+--- a/src/main/java/com/monpai/sailboatmod/client/screen/AutoRouteDockSelectionScreen.java
++++ b/src/main/java/com/monpai/sailboatmod/client/screen/AutoRouteDockSelectionScreen.java
+@@ -51,2 +51,6 @@ public class AutoRouteDockSelectionScreen extends ThemedScreen {
+ 
++    private java.util.UUID destinationVessel;
++    private int destinationCargoIndex=-1;
++    public void forDeparture(java.util.UUID vessel,int cargoIndex){destinationVessel=vessel;destinationCargoIndex=cargoIndex;}
++
+     public AutoRouteDockSelectionScreen(BlockPos sourceDockPos, TransportTerminalKind terminalKind, List<AvailableDockEntry> docks) {
+@@ -66,3 +70,3 @@ public class AutoRouteDockSelectionScreen extends ThemedScreen {
+         UIElement body = Ui.column();
+-        body.addChild(Ui.paragraph(autoRouteText("subtitle"), "sm-muted"));
++        body.addChild(Ui.paragraph(destinationVessel==null?autoRouteText("subtitle"):Component.literal("自动复用已有航段，只补算缺口；路线准备好后发船。"), "sm-muted"));
+ 
+@@ -87,3 +91,3 @@ public class AutoRouteDockSelectionScreen extends ThemedScreen {
+ 
+-        createButton = Ui.button(autoRouteText("create"), Ui.Tone.PRIMARY, this::createRoute);
++        createButton = Ui.button(destinationVessel==null?autoRouteText("create"):Component.literal("出发到此目的地"), Ui.Tone.PRIMARY, this::createRoute);
+         UIElement actions = Ui.row();
+@@ -173,3 +177,5 @@ public class AutoRouteDockSelectionScreen extends ThemedScreen {
+             progressPercent=0;progressState=0;progressStage="排队 / 异步载入码头";
+-            ModNetwork.CHANNEL.sendToServer(new CreateAutoRoutePacket(sourceDockPos,docks.get(selectedIndex).pos(),selectedMode,routeRequest));
++            if(destinationVessel==null)ModNetwork.CHANNEL.sendToServer(new CreateAutoRoutePacket(sourceDockPos,docks.get(selectedIndex).pos(),selectedMode,routeRequest));
++            else ModNetwork.CHANNEL.sendToServer(new com.monpai.sailboatmod.network.packet.DepartForDestinationPacket(
++                    sourceDockPos,docks.get(selectedIndex).pos(),destinationVessel,destinationCargoIndex,routeRequest));
+             refreshProgress();refresh();
+diff --git a/src/main/java/com/monpai/sailboatmod/client/screen/DockScreen.java b/src/main/java/com/monpai/sailboatmod/client/screen/DockScreen.java
+index 7f7f005..e3b4032 100644
+--- a/src/main/java/com/monpai/sailboatmod/client/screen/DockScreen.java
++++ b/src/main/java/com/monpai/sailboatmod/client/screen/DockScreen.java
+@@ -227,6 +227,8 @@ public class DockScreen<T extends DockMenu> extends TransportTerminalScreen<T> {
+         routes.layout(l -> l.width(100).flexGrow(1).flexShrink(0).minWidth(90).height(100).gapAll(Ui.GAP_XS));
+-        routes.addChildren(panelHeading(screenText("routes_title")), dispatchRouteList);
++        routes.addChildren(panelHeading(Component.literal("目的地调度")),
++                Ui.paragraph(Component.literal("选择船只后选择目的港。航路是共享基础设施，不需要手工选择或反转路线。"),"sm-muted"));
+         lists.addChildren(boats, routes);
+ 
+-        assignButton = new ActionButton(screenText("assign"), Ui.Tone.PRIMARY, () -> send(KEY_ACTION, DockGuiActionPacket.Action.ASSIGN_SELECTED));
++        assignButton = new ActionButton(Component.literal("选择目的地并出发"), Ui.Tone.PRIMARY,
++                () -> openDestination(-1));
+         autoReturnButton = new ActionButton(Component.empty(), Ui.Tone.SECONDARY, () -> send(KEY_ACTION, DockGuiActionPacket.Action.TOGGLE_NON_ORDER_AUTO_RETURN));
+@@ -241,2 +243,10 @@ public class DockScreen<T extends DockMenu> extends TransportTerminalScreen<T> {
+     /** Keep narrow terminal columns readable; stacked lists and actions remain reachable below them. */
++    private void openDestination(int cargoIndex) {
++        if(data==null||data.nearbyBoatIds().isEmpty())return;
++        int index=Math.clamp(data.selectedBoatIndex(),0,data.nearbyBoatIds().size()-1);
++        var client=net.minecraft.client.Minecraft.getInstance();
++        var boat=client.level==null?null:client.level.getEntity(data.nearbyBoatIds().get(index));
++        if(boat!=null)com.monpai.sailboatmod.client.DockClientHooks.beginDestination(data.dockPos(),boat.getUUID(),cargoIndex);
++    }
++
+     private static ScrollerView scrollPage(UIElement content) {
+@@ -253,3 +263,4 @@ public class DockScreen<T extends DockMenu> extends TransportTerminalScreen<T> {
+         takeStorageButton = new ActionButton(screenText("withdraw"), Ui.Tone.SECONDARY, () -> send(KEY_ACTION, DockGuiActionPacket.Action.TAKE_SELECTED_STORAGE));
+-        shipCargoButton = new ActionButton(screenText("ship_cargo"), Ui.Tone.PRIMARY, () -> send(KEY_ACTION, DockGuiActionPacket.Action.DISPATCH_SELECTED_CARGO));
++        shipCargoButton = new ActionButton(screenText("ship_cargo"), Ui.Tone.PRIMARY,
++                () -> openDestination(data.selectedStorageIndex()));
+         UIElement actions = Ui.row();
+@@ -330,3 +341,3 @@ public class DockScreen<T extends DockMenu> extends TransportTerminalScreen<T> {
+                 i -> select(DockGuiActionPacket.Action.SELECT_ROUTE_INDEX, i), screenText("no_route"));
+-        syncAction(assignButton, !data.nearbyBoatNames().isEmpty() && !data.routeNames().isEmpty(), KEY_ACTION, null);
++        syncAction(assignButton, !data.nearbyBoatNames().isEmpty(), KEY_ACTION, null);
+         autoReturnButton.setLabel(screenText(data.nonOrderAutoReturnEnabled() ? "non_order_auto.on" : "non_order_auto.off"));
+@@ -347,3 +358,3 @@ public class DockScreen<T extends DockMenu> extends TransportTerminalScreen<T> {
+         syncAction(takeStorageButton, hasCargo, KEY_ACTION, null);
+-        syncAction(shipCargoButton, hasCargo && !data.nearbyBoatNames().isEmpty() && !data.routeNames().isEmpty(), KEY_ACTION, null);
++        syncAction(shipCargoButton, hasCargo && !data.nearbyBoatNames().isEmpty(), KEY_ACTION, null);
+ 

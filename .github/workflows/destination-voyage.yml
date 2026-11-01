@@ -1,0 +1,101 @@
+name: Build destination voyages and route quality
+on:
+  push:
+    branches: [fix/autoroute-candidates-flag-preview]
+    paths: ['tools/destination-review/**', '.github/workflows/destination-voyage.yml']
+  workflow_dispatch:
+permissions:
+  contents: write
+concurrency:
+  group: destination-voyage-${{ github.ref }}
+  cancel-in-progress: true
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          lfs: true
+          fetch-depth: 2
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
+      - name: Verify and apply reviewed plaintext source changes
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          import subprocess, hashlib
+          expected = {
+              'network.patch': '4aeb5eecf8d0a47ac76fcb65f1865cb10b481b66',
+              'part00.patch': '49617c1084d85131961ea4da95a88aaf5f0ff23b',
+              'part01.patch': '63b66c5e430cf8adf39e88b6904b3d92c0d1edef',
+              'part02.patch': 'c2a51c4322b436131e3cf2c07b9e854d2fb09888',
+              'part03.patch': '2c762bfd436388ed62de486e27f1336dfd3a8c42',
+              'part04.patch': '7c7d4df4936ec3167defa6bedf54d543fff675fc',
+              'part05.patch': '97e67a0a8f503720283a11ed4fadfdb68d0da491',
+              'part06.patch': 'a59d352aa68862a1cd4752aefd01e824694123bc',
+              'part07.patch': '84ba6f692fd06f9ca7b3769610f66c7247bf06b5',
+              'part08.patch': 'bcc50a1eadf8b8d2db8b3867e37c09181f4fefba',
+              'part09.patch': '4c626dee066b64910a2f36321bfae71aa3babbe3',
+              'part10.patch': '939268134f9f5b2ba8a1c6eca586742fdd4ac2cd'
+          }
+          chunks = []
+          for name, sha in expected.items():
+              p = Path('tools/destination-review') / name
+              assert subprocess.check_output(['git','hash-object',str(p)], text=True).strip() == sha, name
+              chunks.append(p.read_bytes())
+          patch = Path('/tmp/destination-reviewed.patch')
+          patch.write_bytes(b''.join(chunks))
+          subprocess.run(['git','apply','--index','--check',str(patch)], check=True)
+          subprocess.run(['git','apply','--index',str(patch)], check=True)
+          PY
+      - name: Compile complete mod, regress and package both artifacts
+        run: |
+          chmod +x gradlew
+          ./gradlew --no-daemon -PneoForge.disableRecompilation=true -PfixIndex=destination_voyage '-Dorg.gradle.jvmargs=-Xmx3G -Dfile.encoding=UTF-8' test --tests '*route.water.*' --tests '*route.terrain.*' --tests '*WaterPolylineFollowerTest' --tests '*ShippingTraceRecordTest' --tests '*Autopilot*Test' --tests '*ChatFlag*Test' --tests '*NationOfficeTitleTest' --tests '*FlagPreviewLayoutTest' jar marketWebJar
+          cp -r build/test-results/test build/offline-test-results
+      - name: Prepare pinned Tellus native runtime
+        run: |
+          mkdir -p build/native-runtime build/native-evidence
+          python3 - <<'PY'
+          import pathlib, zipfile, hashlib
+          p=pathlib.Path('libs/compile-only/Tellus-neoforge-1.21.1-0.8.3.jar')
+          pathlib.Path('build/native-evidence/tellus-sha256.txt').write_text(hashlib.sha256(p.read_bytes()).hexdigest()+'\n')
+          with zipfile.ZipFile(p) as z:
+              for n in z.namelist():
+                  if n.startswith('META-INF/jarjar/') and n.endswith('.jar'):
+                      pathlib.Path('build/native-runtime',pathlib.Path(n).name).write_bytes(z.read(n))
+          PY
+      - name: Real Tellus routes, offshore checks and reverse interior reuse
+        run: |
+          ./gradlew --no-daemon -I tools/tellus-native/native.init.gradle -PneoForge.disableRecompilation=true '-Dorg.gradle.jvmargs=-Xmx2G -Dfile.encoding=UTF-8' test --tests '*TellusNativeRoutesTest' --rerun-tasks
+      - name: Publish tested sources without replacing concurrent changes
+        run: |
+          git fetch origin fix/autoroute-candidates-flag-preview
+          test "$(git rev-parse FETCH_HEAD)" = "${{ github.sha }}"
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git commit -m 'feat: destination route infrastructure, monotonic boat following and bounded offshore quality'
+          git push origin HEAD:fix/autoroute-candidates-flag-preview
+      - name: Archive exact sources, reports and artifact identity
+        if: always()
+        run: |
+          mkdir -p build/native-evidence
+          git rev-parse HEAD > build/native-evidence/commit.txt
+          git diff --cached --stat > build/native-evidence/uncommitted-source-stat.txt
+          sha256sum build/libs/*.jar > build/native-evidence/jar-sha256.txt || true
+          tar czf build/verified-source.tar.gz src tools docs build.gradle gradle.properties settings.gradle
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: destination-voyage-${{ github.run_id }}
+          path: |
+            build/libs/*.jar
+            build/offline-test-results/
+            build/test-results/test/
+            build/native-evidence/
+            build/route-regression/
+            build/verified-source.tar.gz
+          retention-days: 14

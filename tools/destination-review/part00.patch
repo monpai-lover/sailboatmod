@@ -1,0 +1,140 @@
+diff --git a/docs/handoff/ADAPTIVE_ROUTE_PROGRESS_BUDGET.md b/docs/handoff/ADAPTIVE_ROUTE_PROGRESS_BUDGET.md
+new file mode 100644
+index 0000000..7801628
+--- /dev/null
++++ b/docs/handoff/ADAPTIVE_ROUTE_PROGRESS_BUDGET.md
+@@ -0,0 +1,34 @@
++# Bounded progress-based route budgets
++
++Base source: 3535ecc7cf45c3272ea715400eed89a22e8ccd1c (same production sources as the 52c728a1 artifact).
++
++## Behavior
++
++Hierarchical coarse and fine searches explicitly opt into an adaptive RouteStageBudget. Legacy users of the original constructor keep fixed limits. The base allowance remains the policy's search time plus 60 seconds of waiting (normally 90+60 = 150 seconds).
++
++Only nodes actually expanded from a rooted search frontier can report progress. Arbitrary sampled points, pending edges, callbacks, failed reads and polling counters cannot earn credit. Each direction keeps its historical best distance to the opposite endpoint. The sum of the two best advances is capped by the initial endpoint separation; it is a heuristic for allocating resources, NOT proof that the fronts are connected or a route completion percentage.
++
++- Every new 16 blocks of best aggregate approach earns 1 second of wall budget (128 blocks = 8 seconds).
++- Exploring eight new 128x128 regions earns 5 seconds of detour allowance, at most 60 seconds. The two initial endpoint regions are excluded. Revisited regions and repeated refinements cannot claim this allowance again.
++- Stage wall time is capped at the smaller of four times its base allowance and 480 seconds, without lowering a larger caller-specified base allowance. The standard stage caps at 480 seconds.
++- Active search time earns at most half of awarded wall time and may at most double its original allowance (standard 90 -> 180 seconds). This measures time charged to search slices, not OS CPU time.
++- 60 seconds with no new approach milestone or qualifying exploration milestone terminates the stage. Mere node growth, cache hits and requests do not renew this stall allowance.
++- 600 seconds caps the whole planner independently of progress. Existing UI session total timeout, node/radius bounds, bounded workers and per-player task limits remain unchanged; the UI session may expire earlier because it includes queue/endpoint preparation time.
++- Credit is retained across step-size retries within one stage. After a verified segment completes, the next stage gets an independent budget; the whole task's hard timer is never reset.
++- The old deadline is checked before accepting a new progress observation. Expired tasks cannot resurrect from a late completion. Cancellation and terrain safety checks are unchanged.
++
++Progress text appends accumulated award and remaining stage time using the existing protocol-19 packet. New diagnostics include best forward/backward remaining distance, approach, detour grant, current allowance and the precise stop cause.
++
++## Validation scope
++
++27 new JUnit-style test methods plus 45 selected existing methods executed through a lightweight isolated Java harness: 72 passed, zero failed. This is not a full Gradle/JUnit platform or NeoForge runtime test. Minecraft coordinate/logging classes and the annotation/assertion surface are minimal test doubles; actual production planner, policy, postprocessor and cache logic execute from the output JAR. Five existing 7000-block geometry cases and cancellation/unknown-terrain checks are included.
++
++An injected-clock 7000-block cold-frontier case completed at simulated 168 seconds; the original fixed controller timed out under the same timeline. There was no 168-second live-server measurement. This round did NOT rerun actual Tellus online sources or the uploaded complete regions.
++
++## Delivery and publishing
++
++The provided JAR is an experimental incremental build over the previous complete, verified proto-region JAR. Four production classes and their nested classes were compiled with javac --release 21 against matching API test doubles. The existing WaterAutoRouteService received the exact two-instruction equivalent of the single source-level withBudget call. All non-private method descriptors of replaced existing classes were retained; all unrelated archive entries are byte-for-byte unchanged. No test doubles are shipped in the mod JAR.
++
++Full source and a patch are provided for a clean Gradle rebuild. The current connector exposes reads but not writes/CI dispatch; no GitHub push or new full build was performed in this turn. Do not label the incremental package as CI-verified.
++
++No protocol or WebMarket interface changed. Keep main mod versions aligned on both ends, back up first, and resubmit the route rather than editing region files.
+diff --git a/docs/handoff/DESTINATION_WATER_NETWORK.md b/docs/handoff/DESTINATION_WATER_NETWORK.md
+new file mode 100644
+index 0000000..e2c4929
+--- /dev/null
++++ b/docs/handoff/DESTINATION_WATER_NETWORK.md
+@@ -0,0 +1,37 @@
++# Destination water infrastructure and monotonic voyage following
++
++## Data and planning
++- `WaterRouteNetworkSavedData`: per-dimension saved infrastructure, max 256 records / 262144 geometry vertices. No cargo, player state, or journey progress. Imports generated legacy routes from loaded port BEs; does not force-load all ports.
++- `WaterRouteNetwork`: immutable background graph of existing geometric segments. Projects origin/destination onto existing edges, splits only at exact projected positions, supports reverse/subset and multiple routes. Different berths at one dock remain gaps, not invented water connections.
++- Full route, reverse section, useful prefix/suffix extension, or merged routes are selected. All reused segments are revalidated against live/saved/Tellus real-first water. Every missing connector runs normal strict planning. Unusable cache falls back to ordinary planning. No safe route is saved merely because points are nearby.
++- Geometry is intentionally not a voyage: a boat receives a private itinerary copy. Route-library edits do not mutate a moving boat's current itinerary.
++- Reuse is not zero cost: current water checks, endpoint access, and local connector work remain. No guarantee of the globally shortest path.
++
++## User and market dispatch
++- PORT dispatch UI selects a vessel then a destination; storage cargo uses the same destination selector. Existing route-management/book functions remain for compatibility; POST_STATION is unchanged.
++- New `DepartForDestinationPacket`: server checks boat UUID, origin proximity, carrier ownership/rental, registered target, terminal diplomacy, and rechecks after asynchronous planning. Cargo identity/count is snapshotted but not removed until success; existing cargo receipts and rental rollback remain.
++- `WaterDestinationService`: market has bounded single-flight requests keyed by dimension/source/target; max8 active, backoff on failure, 10 minute timeout, shutdown cleanup. No cargo removal or payment while planning. The normal dispatcher retries when an itinerary exists. Automatic empty pickup legs use it too.
++- Destination selection is dock based, not arbitrary mid-ocean click-to-sail. Legacy routes are gradually imported when relevant docks load, rather than a forced global startup scan.
++
++## Tracking and map
++- Monotonic segment projection and swept waypoint crossing, with loaded-only 2x2 near-field checks, replace exact-vertex chasing. A passed waypoint inside the corridor does not force a return orbit. No blind stalled-waypoint skip.
++- Bounded arc-length lookahead follows the polyline; live checks reject shortcutting land. Sharp heading errors/corners reduce speed. Per boat live-cell checks cached per tick, capped512 unique cells; no chunk loading in this check.
++- Passenger/server-authority policy retained; no client route steering. Actual passenger/vehicle packet and physics behavior still require game acceptance testing.
++- Trace geometry follows the boat's active route including docking/rescue/splices, not an obsolete initial route; up to65536 points instead of2048. New oversized boat itineraries are rejected rather than displaying a truncated path. Actual tracked position remains distinct from the planned path and updates at a bounded0.5s cadence.
++- All boats' individual cargo-order traces receive identical geometry/position updates. Trace schema and HTTP endpoints unchanged; marketweb sources are unchanged; its artifact is also compiled as a compatibility check.
++
++## Search and safety
++- Includes the previously local adaptive progress budget; genuine progress buys bounded extra budget, not repetitive requests.
++- Bidirectional meeting accepts an opposite already-rooted open node; immutable parent chains are checked for roots/cycles/long jumps before publishing, and downstream strict terrain validation remains.
++- Reused geometry still respects current endpoint permissions. Shared navigation geometry is not permission to operate other players' boats or inventories.
++- Protocol20: update server and clients together. Back up world before testing; new SavedData is additive, old routes/orders are not deleted.
++
++## Validation / boundaries
++- Pure deterministic graph/follower and existing pathfinding tests run locally with lightweight API stubs. This is not a running Minecraft client/server.
++- CI compiles the entire project, runs selected water/terrain/follower/logistics/chat/UI tests, packages a full main JAR and addon, then runs pinned Tellus native integrations and an independently checked reverse interior reuse test. Final counts/status must come from the produced reports, not this plan.
++- No live multiplayer or passenger physics or browser rendering acceptance has been performed here. Server restarts cancel running jobs; infrastructure persists but in-flight computation does not resume.
++
++## Final source-review corrections
++- The final visibility pruning preserves tapered offshore clearance; it must not undo the relocation by joining two coastal endpoints along the shore.
++- Default offshore target12 blocks, maximum32 block shift; narrow channels retain necessary corners. Shift detours are bounded against both the shortened path and original path.
++- Compilation and real regression execution are required before delivery; local stub checks alone are not an executable-mod verification.
+diff --git a/src/main/java/com/monpai/sailboatmod/block/entity/DockBlockEntity.java b/src/main/java/com/monpai/sailboatmod/block/entity/DockBlockEntity.java
+index 5e79712..3c36d21 100644
+--- a/src/main/java/com/monpai/sailboatmod/block/entity/DockBlockEntity.java
++++ b/src/main/java/com/monpai/sailboatmod/block/entity/DockBlockEntity.java
+@@ -115,2 +115,3 @@ public class DockBlockEntity extends BlockEntity implements MenuProvider {
+                 com.monpai.sailboatmod.route.repair.RouteRepairService.applyPending(serverLevel, worldPosition, this);
++                com.monpai.sailboatmod.route.water.WaterRouteNetworkSavedData.get(serverLevel).importDock(this);
+             }
+@@ -538,2 +539,24 @@ public class DockBlockEntity extends BlockEntity implements MenuProvider {
+ 
++    public record DestinationCargo(int index, ItemStack item, int quantity) {}
++    @Nullable public DestinationCargo captureDestinationCargo(Player player,int index) {
++        if(!canManageDock(player))return null;
++        var groups=getVisibleStorageGroups();if(index<0||index>=groups.size())return null;
++        var g=groups.get(index);return new DestinationCargo(index,g.displayStack().copy(),g.totalCount());
++    }
++    public boolean dispatchCargoToDestination(Player player,LogisticsCarrier boat,RouteDefinition route,DestinationCargo expected) {
++        if(expected==null||!canPlanDestination(boat,player)||boat.hasCargo()||!canManageDock(player))return false;
++        var groups=getVisibleStorageGroups();if(expected.index()<0||expected.index()>=groups.size())return false;
++        var group=groups.get(expected.index());
++        if(group.totalCount()!=expected.quantity()||!ItemStack.isSameItemSameComponents(group.displayStack(),expected.item()))return false;
++        List<ItemStack> cargo=splitCargo(group.displayStack(),group.totalCount());if(!boat.canLoadCargo(cargo))return false;
++        List<ItemStack> removed=removeVisibleStorageGroup(expected.index());if(removed.isEmpty())return false;
++        CargoLoadReceipt receipt=boat.loadCargoForDispatch(removed);
++        if(receipt==null){insertCargo(removed);return false;}
++        boat.setPendingMarketDelivery(player.getName().getString(),player.getUUID().toString(),"","");
++        if(!assignBoatToDestination(boat,route,player)){
++            receipt.rollback();insertCargo(removed);boat.clearPendingMarketDelivery();return false;
++        }
++        receipt.commit();setChanged();return true;
++    }
++
+     public boolean dispatchSelectedStorage(Player player) {
+@@ -669,3 +692,22 @@ public class DockBlockEntity extends BlockEntity implements MenuProvider {
+                                            @Nullable Player operator, boolean allowCargo) {
+-        List<RouteDefinition> availableRoutes = availableRoutes();
++        return assignBoatUsingItinerary(sailboat, availableRoutes(), routeIndex, autoStart, operator, allowCargo);
++    }
++
++    public boolean assignBoatToDestination(LogisticsCarrier boat, RouteDefinition itinerary, Player operator) {
++        if (boat == null || itinerary == null) return false;
++        boat.setAllowNonOrderAutoReturn(nonOrderAutoReturnEnabled);
++        boat.setAllowNonOrderAutoUnload(nonOrderAutoUnloadEnabled);
++        boolean started = assignBoatUsingItinerary(boat, List.of(itinerary.copy()), 0, true, operator, true);
++        if (!started) { boat.setAllowNonOrderAutoReturn(false); boat.setAllowNonOrderAutoUnload(false); }
++        return started;
++    }
++
++    public boolean canPlanDestination(LogisticsCarrier boat, Player operator) {
++        return boat != null && boat.isTransportAlive() && !boat.isAutopilotActive() && isCarrierInsideDockZone(boat)
++                && (isBoatOwnedBy(boat, operator) || boat.isAvailableForRent());
++    }
++
++    /** One voyage receives a private immutable geometry copy, never the dock's mutable selection. */
++    private boolean assignBoatUsingItinerary(LogisticsCarrier sailboat, List<RouteDefinition> availableRoutes,
++            int routeIndex, boolean autoStart, @Nullable Player operator, boolean allowCargo) {
+         if (availableRoutes.isEmpty()) {
