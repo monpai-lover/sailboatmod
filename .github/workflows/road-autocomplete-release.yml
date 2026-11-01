@@ -1,0 +1,110 @@
+name: Verify far-town road autocomplete
+on:
+  push:
+    branches: [fix/autoroute-candidates-flag-preview]
+    paths: ['tools/road-autocomplete-update/**', '.github/workflows/road-autocomplete-release.yml']
+permissions:
+  contents: write
+concurrency:
+  group: road-autocomplete-${{ github.ref }}
+  cancel-in-progress: true
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          lfs: true
+          fetch-depth: 2
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
+      - name: Apply exact reviewed plaintext road changes
+        run: |
+          python3 - <<'PY'
+          import ast, pathlib, hashlib, json
+          edits=[]
+          for i in range(9):
+              module=ast.parse(pathlib.Path('tools/road-autocomplete-update/part-%d.py'%i).read_text())
+              assert len(module.body)==1 and isinstance(module.body[0],ast.Assign)
+              edits.extend(ast.literal_eval(module.body[0].value))
+          outputs={}
+          for name,before,after,changes in edits:
+              p=pathlib.Path(name)
+              assert not p.is_absolute() and '..' not in p.parts and (name.startswith('src/') or name.startswith('docs/handoff/'))
+              assert name not in outputs
+              original=p.read_bytes() if p.exists() else None
+              assert (hashlib.sha256(original).hexdigest() if original is not None else None)==before, 'Concurrent source change: '+name
+              lines=(original or b'').decode('utf-8').splitlines(keepends=True)
+              for start,end,text in reversed(changes):
+                  assert 0<=start<=end<=len(lines)
+                  lines[start:end]=text.splitlines(keepends=True)
+              text=''.join(lines)
+              if name.endswith('/LongRangeRoadPathfinder.java'):
+                  text=text.replace('sameXZ(BlockPos a,BlockPos b)', 'sameXZ(BlockPos a, BlockPos b)')
+              data=text.encode('utf-8')
+              assert hashlib.sha256(data).hexdigest()==after, 'Transfer mismatch: '+name
+              outputs[name]=data
+          for name,data in outputs.items():
+              p=pathlib.Path(name);p.parent.mkdir(parents=True,exist_ok=True);p.write_bytes(data)
+          pathlib.Path('/tmp/road-files.json').write_text(json.dumps(list(outputs)))
+          pathlib.Path('/tmp/road-memory.gradle').write_text("allprojects { afterEvaluate { if (plugins.hasPlugin('java')) { tasks.named('test', Test) { maxHeapSize = '3G'; filter { excludeTestsMatching '*TellusTaipeiAmsterdamBenchmark' }; testLogging { events 'failed', 'skipped'; showStandardStreams = true } } } } }\n")
+          PY
+          git diff --check
+      - name: Full compile, road and existing navigation regressions, both jars
+        run: |
+          chmod +x gradlew
+          ./gradlew --no-daemon -I /tmp/road-memory.gradle -PneoForge.disableRecompilation=true -PfixIndex=road_autocomplete '-Dorg.gradle.jvmargs=-Xmx2G -Dfile.encoding=UTF-8' test --tests '*road.*' --tests '*roadplanner.*' --tests '*route.water.*' --tests '*route.terrain.*' --tests '*WaterPolylineFollowerTest' --tests '*ShippingTraceRecordTest' --tests '*Autopilot*Test' --tests '*ChatFlag*Test' --tests '*NationOfficeTitleTest' --tests '*FlagPreviewLayoutTest' jar marketWebJar
+          cp -r build/test-results/test build/offline-test-results
+      - name: Prepare pinned Tellus runtime
+        run: |
+          mkdir -p build/native-runtime build/native-evidence
+          python3 - <<'PY'
+          import pathlib,zipfile,hashlib
+          p=pathlib.Path('libs/compile-only/Tellus-neoforge-1.21.1-0.8.3.jar')
+          digest=hashlib.sha256(p.read_bytes()).hexdigest()
+          assert digest=='fe3287f5b7cb1e8ef9395b71462db8c4455c21ebdca5ea33eee7cd0c5b62fcb6'
+          pathlib.Path('build/native-evidence/tellus-sha256.txt').write_text(digest+'\n')
+          with zipfile.ZipFile(p) as z:
+              for n in z.namelist():
+                  if n.startswith('META-INF/jarjar/') and n.endswith('.jar'):
+                      pathlib.Path('build/native-runtime',pathlib.Path(n).name).write_bytes(z.read(n))
+          PY
+      - name: Existing native Tellus water routes and reuse remain valid
+        run: |
+          ./gradlew --no-daemon -I tools/tellus-native/native.init.gradle -PneoForge.disableRecompilation=true '-Dorg.gradle.jvmargs=-Xmx2G -Dfile.encoding=UTF-8' test --tests '*TellusNativeRoutesTest' --rerun-tasks
+      - name: Publish tested source without overwriting concurrent work
+        run: |
+          git fetch origin fix/autoroute-candidates-flag-preview
+          test "$(git rev-parse FETCH_HEAD)" = "${{ github.sha }}"
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          python3 - <<'PY'
+          import subprocess,json,pathlib
+          subprocess.run(['git','add','--',*json.loads(pathlib.Path('/tmp/road-files.json').read_text())],check=True)
+          PY
+          git commit -m 'fix: integrate far-town road autocomplete with bounded asynchronous search and safe failure' -m 'Based on supplied e0734fcf260bcd757dae98bb0d3aba2d1f8e747a; add cooperative search deadlines, supersession-safe delivery, bounded caches and output, and coarse-edge water checks.' -m 'Co-authored-by: Claude <noreply@anthropic.com>'
+          git push origin HEAD:fix/autoroute-candidates-flag-preview
+      - name: Archive exact source, reports and identity
+        if: always()
+        run: |
+          mkdir -p build/native-evidence
+          git rev-parse HEAD > build/native-evidence/commit.txt
+          git diff --stat > build/native-evidence/uncommitted-stat.txt
+          sha256sum build/libs/*.jar > build/native-evidence/jar-sha256.txt || true
+          tar czf build/verified-source.tar.gz src tools docs build.gradle gradle.properties settings.gradle
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: road-autocomplete-${{ github.run_id }}
+          path: |
+            build/libs/*.jar
+            build/offline-test-results/
+            build/test-results/test/
+            build/native-evidence/
+            build/road-evidence/
+            build/route-regression/
+            build/verified-source.tar.gz
+          retention-days: 14
