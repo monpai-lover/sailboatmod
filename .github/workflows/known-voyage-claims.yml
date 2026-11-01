@@ -2,10 +2,10 @@ name: Known-voyage navigation and claim spawning verification
 on:
   push:
     branches: [fix/autoroute-candidates-flag-preview]
-    paths: ['tools/known-voyage-claims/**', '.github/workflows/known-voyage-claims.yml']
+    paths: ['src/**', 'tools/tellus-native/**']
   workflow_dispatch:
 permissions:
-  contents: write
+  contents: read
 concurrency:
   group: known-voyage-claims-${{ github.ref }}
   cancel-in-progress: true
@@ -17,60 +17,10 @@ jobs:
       - uses: actions/checkout@v4
         with:
           lfs: true
-          fetch-depth: 0
       - uses: actions/setup-java@v4
         with:
           distribution: temurin
           java-version: '21'
-      - name: Apply audited navigation and claim permission patch
-        run: |
-          mkdir -p build/verification
-          python3 - <<'PY'
-          import pathlib,base64,lzma,hashlib
-          parts=sorted(pathlib.Path('tools/known-voyage-claims').glob('patch.part*'))
-          assert len(parts)==5
-          patch=lzma.decompress(base64.b64decode(''.join(p.read_text() for p in parts),validate=True))
-          assert hashlib.sha256(patch).hexdigest()=='20638b1510b3c89c133c476b405feace8ab09f5e4b3abaaffc94a6ea16079caf'
-          pathlib.Path('build/verification/changes.patch').write_bytes(patch)
-          PY
-          git apply --check build/verification/changes.patch
-          git apply build/verification/changes.patch
-          python3 - <<'PY'
-          from pathlib import Path
-          import re
-          p=Path('src/main/java/com/monpai/sailboatmod/block/entity/DockBlockEntity.java')
-          text=p.read_text(); anchor='import net.minecraft.core.BlockPos;'
-          assert anchor in text
-          if 'import net.minecraft.server.level.ServerLevel;' not in text:
-              p.write_text(text.replace(anchor,anchor+'\nimport net.minecraft.server.level.ServerLevel;'))
-          # Protocol changed: keep all contributor-facing entry documents consistent with actual registrations.
-          network=Path('src/main/java/com/monpai/sailboatmod/network/ModNetwork.java').read_text()
-          protocol=re.search(r'PROTOCOL_VERSION = "(\d+)"',network).group(1)
-          assert protocol=='22'
-          count=network.count('CHANNEL.registerMessage(')
-          assert count==120
-          pattern=re.compile(r'(?i)((?:protocol(?: version)?(?: is)?\s*\(?["*]*|協定(?:是|為|仍為)\s*\**\s*))(\d+)')
-          for name in ('AGENTS.md','CLAUDE.md','README.md','START_HERE.md','docs/handoff/LDLIB2_INTEGRATION.md'):
-              p=Path(name);text=p.read_text()
-              text,n=pattern.subn(lambda m:m.group(1)+protocol,text)
-              assert n>0,name
-              if name=='AGENTS.md':
-                  text,n=re.subn(r'registers \d+ directional custom payloads',f'registers {count} directional custom payloads',text)
-                  assert n==1
-              p.write_text(text)
-          # Market payload is still clientbound and keeps its position; appended navigation payloads are now last.
-          p=Path('src/test/java/com/monpai/sailboatmod/network/packet/MarketLiveUpdatePacketTest.java')
-          text=p.read_text()
-          old='int at = network.lastIndexOf("CHANNEL.registerMessage(");'
-          new='int payload = network.indexOf("MarketLiveUpdatePacket.class");\n        assertTrue(payload >= 0, "market live-update payload remains registered");\n        int at = network.lastIndexOf("CHANNEL.registerMessage(", payload);\n        assertTrue(network.indexOf("KnownVoyageMenuPacket.class") > payload, "navigation packets append without reordering market payload");'
-          assert old in text
-          text=text.replace(old,new).replace('void registeredLastAsAClientboundPayload()', 'void remainsClientboundBeforeAppendedNavigationPayloads()')
-          p.write_text(text)
-          PY
-          for patch in tools/known-voyage-claims/fixes/*.patch; do
-            if [ -f "$patch" ]; then git apply --check "$patch"; git apply "$patch"; fi
-          done
-          git diff --check
       - name: Full NeoForge compilation, regression suite and both JARs
         run: |
           cat > /tmp/known-voyage-tests.gradle <<'GRADLE'
@@ -107,19 +57,6 @@ jobs:
       - name: Actual Tellus terrain and reverse-reuse compatibility
         run: |
           ./gradlew --no-daemon -I tools/tellus-native/native.init.gradle -PneoForge.disableRecompilation=true '-Dorg.gradle.jvmargs=-Xmx2G -Dfile.encoding=UTF-8' test --tests '*TellusNativeRoutesTest' --rerun-tasks
-      - name: Publish tested sources to same feature branch without force
-        env:
-          EXPECTED_HEAD: ${{ github.sha }}
-          BRANCH: fix/autoroute-candidates-flag-preview
-        run: |
-          git fetch origin "$BRANCH"
-          test "$(git rev-parse FETCH_HEAD)" = "$EXPECTED_HEAD"
-          git config user.name 'github-actions[bot]'
-          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
-          git add src AGENTS.md CLAUDE.md README.md START_HERE.md docs/handoff/LDLIB2_INTEGRATION.md
-          git commit -m 'fix: known-route dispatch and open-water navigation; add claim monster spawn permission'
-          git push origin "HEAD:refs/heads/$BRANCH"
-          git rev-parse HEAD > build/verification/tested-source-commit.txt
       - name: Archive exact source and verification identity
         if: always()
         run: |
