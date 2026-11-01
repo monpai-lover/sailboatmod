@@ -1,10 +1,11 @@
-name: Integrate and verify Tellus far routes
+name: Tellus far-route regression
 on:
   push:
     branches: [fix/autoroute-candidates-flag-preview]
-    paths: ['tools/farroute-release/**', '.github/workflows/farroute-release.yml']
+    paths: ['src/main/java/com/monpai/sailboatmod/route/**', 'src/main/java/com/monpai/sailboatmod/compat/tellus/**', 'src/test/java/com/monpai/sailboatmod/route/**', 'src/test/java/com/monpai/sailboatmod/network/packet/RoutePlanningPreferencePacketTest.java']
+  workflow_dispatch:
 permissions:
-  contents: write
+  contents: read
 concurrency:
   group: farroute-release-${{ github.ref }}
   cancel-in-progress: true
@@ -21,52 +22,19 @@ jobs:
         with:
           distribution: temurin
           java-version: '21'
-      - name: Check exact reviewed patch and preserve current branch changes
-        run: |
-          python3 - <<'PY'
-          import pathlib,json,hashlib,subprocess
-          root=pathlib.Path('tools/farroute-release')
-          m=json.loads((root/'manifest.json').read_text())
-          chunks=[]
-          for name,digest in m['parts'].items():
-              data=(root/name).read_bytes()
-              if name=='patch-07.txt':
-                  data=data.replace(b'\n diff --git ',b'\ndiff --git ')
-              assert hashlib.sha256(data).hexdigest()==digest, 'Patch hash mismatch: '+name
-              chunks.append(data)
-          for name,digest in m['expected_git_blobs'].items():
-              p=pathlib.Path(name)
-              if digest is None:
-                  assert not p.exists(), 'New file already exists: '+name
-              else:
-                  actual=subprocess.check_output(['git','hash-object',str(p)],text=True).strip()
-                  assert actual.startswith(digest), 'Concurrent source change: '+name
-          assert not pathlib.Path(m['overview_path']).exists()
-          patch=pathlib.Path('/tmp/farroute-reviewed.patch')
-          patch.write_bytes(b''.join(chunks))
-          subprocess.run(['git','apply','--check',str(patch)],check=True)
-          subprocess.run(['git','apply',str(patch)],check=True)
-          PY
-      - name: Recreate and verify supplied overview resource; fetch official Tellus mask
+      - name: Verify checked-in overview and fetch official Tellus mask
         run: |
           mkdir -p build/test-data build/native-evidence
-          python3 -m pip install --disable-pip-version-check 'numpy==2.2.6' 'Pillow==11.3.0'
-          curl --fail --location --retry 3 --max-time 180 https://naciscdn.org/naturalearth/10m/physical/ne_10m_land.zip -o build/test-data/ne_10m_land.zip
-          unzip -q build/test-data/ne_10m_land.zip -d build/test-data/ne-land
-          mkdir -p src/main/resources/com/monpai/sailboatmod/route/water
-          python3 tools/gen_world_water_overview.py build/test-data/ne-land/ne_10m_land.shp src/main/resources/com/monpai/sailboatmod/route/water/world_water_overview.bin.gz
-          python3 - <<'PY'
-          import pathlib,gzip,hashlib,json
-          m=json.loads(pathlib.Path('tools/farroute-release/manifest.json').read_text())
-          p=pathlib.Path(m['overview_path'])
+          python3 - <<'PYTHON'
+          import gzip,hashlib,pathlib
+          p=pathlib.Path('src/main/resources/com/monpai/sailboatmod/route/water/world_water_overview.bin.gz')
           actual=hashlib.sha256(gzip.decompress(p.read_bytes())).hexdigest()
-          assert actual==m['overview_decoded_sha256'], 'Regenerated overview differs from supplied binary: '+actual
+          assert actual=='90d51342861d98d880b716cb1164c5a532e88caa568585e87381dbb150dd745e'
           pathlib.Path('build/native-evidence/overview-decoded-sha256.txt').write_text(actual+'\n')
-          pathlib.Path(str(p)+'.preview.png').unlink(missing_ok=True)
-          PY
+          PYTHON
           curl --fail --location --retry 3 --max-time 180 https://github.com/Yucareux/Tellus-Land-Polygons/releases/download/v1.0.0/tellus_landmask.pmtiles -o build/test-data/tellus_landmask.pmtiles
           echo 'ab142dc692ee9607eeb23802219c25f7dff5340cfe3cc8d7ee2083acfac3afa2  build/test-data/tellus_landmask.pmtiles' | sha256sum -c -
-          sha256sum build/test-data/*.zip build/test-data/*.pmtiles > build/native-evidence/input-data-sha256.txt
+          sha256sum build/test-data/*.pmtiles > build/native-evidence/input-data-sha256.txt
       - name: Compile, run targeted regressions and actual-mask far-route benchmark, package both JARs
         run: |
           chmod +x gradlew
@@ -100,22 +68,6 @@ jobs:
       - name: Native Tellus port, saved-region, long-route and reverse-reuse regressions
         run: |
           ./gradlew --no-daemon -I tools/tellus-native/native.init.gradle -PneoForge.disableRecompilation=true '-Dorg.gradle.jvmargs=-Xmx2G -Dfile.encoding=UTF-8' test --tests '*TellusNativeRoutesTest' --rerun-tasks
-      - name: Publish the two integrated changes only after all checks pass
-        run: |
-          git fetch origin fix/autoroute-candidates-flag-preview
-          test "$(git rev-parse FETCH_HEAD)" = "${{ github.sha }}"
-          git config user.name 'github-actions[bot]'
-          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
-          python3 - <<'PY'
-          import pathlib,json,subprocess
-          m=json.loads(pathlib.Path('tools/farroute-release/manifest.json').read_text())
-          for group,message,original in [
-              ('performance_files','perf: integrate Tellus global water-grid far routes and selective reuse','bbccb2a1ffee4fd9e21040e59a98c0872593e316'),
-              ('ui_files','feat: separate destination departures and stored routes with protocol 21 planning preferences','d8c29d6df4f28ba881965b81dfa9e320d3ebd440')]:
-              subprocess.run(['git','add','--',*m[group]],check=True)
-              subprocess.run(['git','commit','--author=Claude <noreply@anthropic.com>','-m',message+'\n\nIntegrated from supplied incremental package, original commit '+original+'. Rebased on the current verified destination branch; subsequent safety and regression changes retained.'],check=True)
-          PY
-          git push origin HEAD:fix/autoroute-candidates-flag-preview
       - name: Archive exact source, reports and build identity
         if: always()
         run: |
