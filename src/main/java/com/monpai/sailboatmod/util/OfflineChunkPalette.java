@@ -42,6 +42,16 @@ public final class OfflineChunkPalette {
         if (chunkTag == null || maxBuildHeight <= minBuildHeight || !isFullStatus(chunkTag)) {
             return new OfflineChunkBlocks(List.of(), minBuildHeight, maxBuildHeight);
         }
+        return decodeTerrainSnapshot(chunkTag, minBuildHeight, maxBuildHeight);
+    }
+
+    /** Read-only palette view for a validated terrain snapshot. Unlike decode(), this
+     * does not interpret generation status. Routing validates the status and packed
+     * section structure first; existing web/map callers keep their FULL-only contract.
+     * No status is rewritten and no world/chunk generation is requested. */
+    public static OfflineChunkBlocks decodeTerrainSnapshot(CompoundTag chunkTag, int minBuildHeight, int maxBuildHeight) {
+        if (chunkTag == null || maxBuildHeight <= minBuildHeight)
+            return new OfflineChunkBlocks(List.of(), minBuildHeight, maxBuildHeight);
         CompoundTag data = chunkTag.contains("Level", Tag.TAG_COMPOUND) ? chunkTag.getCompound("Level") : chunkTag;
         return new OfflineChunkBlocks(readSections(data), minBuildHeight, maxBuildHeight);
     }

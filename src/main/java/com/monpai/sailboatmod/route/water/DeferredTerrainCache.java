@@ -24,10 +24,49 @@ final class DeferredTerrainCache<K, V> implements AutoCloseable {
     private long submitted, completed, retries, rejected;
     private K lastPending;
     private static final long RETRY_NANOS = 250_000_000L;
+    private static final long MAX_RETRY_NANOS = 8_000_000_000L;
+    private long capacityRejected;
+
+    /** Only the planner thread harvests results. A completed failed future must enter
+     * cooldown BEFORE an eviction decision; isDone alone does not make it evictable. */
+    private void harvest(Entry<V> entry, long now) {
+        if (entry.future == null || !entry.future.isDone()) return;
+        CompletableFuture<V> future = entry.future;
+        V value = null;
+        try { value = future.getNow(null); }
+        catch (CompletionException | CancellationException unavailable) { /* unknown, never land */ }
+        active.remove(future);
+        entry.future = null;
+        if (value != null && usable.test(value)) {
+            entry.ready = value; entry.failures = 0; completed++;
+        } else {
+            entry.failures = Math.min(31, entry.failures + 1);
+            long delay = Math.min(MAX_RETRY_NANOS, RETRY_NANOS << Math.min(5, entry.failures - 1));
+            entry.retryAt = now + delay;
+            retries++;
+        }
+    }
+
+    private boolean makeRoom(long now) {
+        if (entries.size() < capacity) return true;
+        // Prefer reusable successes over destroying failure history. Cooling entries
+        // and in-flight work are pinned. If all are pinned, apply backpressure.
+        for (var it = entries.entrySet().iterator(); it.hasNext();) {
+            Entry<V> old = it.next().getValue(); harvest(old, now);
+            if (old.ready != null) { it.remove(); return true; }
+        }
+        for (var it = entries.entrySet().iterator(); it.hasNext();) {
+            Entry<V> old = it.next().getValue();
+            if (old.future == null && now >= old.retryAt) { it.remove(); return true; }
+        }
+        capacityRejected++;
+        return false;
+    }
 
     private static final class Entry<V> {
         CompletableFuture<V> future;
         long retryAt;
+        int failures;
         V ready;
         Entry(CompletableFuture<V> future) { this.future = future; }
     }
@@ -47,14 +86,7 @@ final class DeferredTerrainCache<K, V> implements AutoCloseable {
         if (entry != null && entry.future == null && now < entry.retryAt) { lastPending = key; return null; }
         if (entry == null || entry.future == null) {
             if (pending() >= maxPending) { lastPending = key; rejected++; return null; }
-            if (entry == null && entries.size() >= capacity) {
-                var iterator = entries.entrySet().iterator();
-                while (iterator.hasNext()) {
-                    Entry<V> old = iterator.next().getValue();
-                    if (old.future == null || old.future.isDone()) { iterator.remove(); break; }
-                }
-                if (entries.size() >= capacity) { lastPending = key; return null; }
-            }
+            if (entry == null && !makeRoom(now)) { lastPending = key; return null; }
             CompletableFuture<V> future;
             try { future = start.apply(key); }
             catch (RuntimeException error) { future = CompletableFuture.failedFuture(error); }
@@ -65,16 +97,11 @@ final class DeferredTerrainCache<K, V> implements AutoCloseable {
             submitted++;
         }
         if (!entry.future.isDone()) { lastPending = key; return null; }
-        V value = null;
-        try { value = entry.future.getNow(null); }
-        catch (CompletionException | CancellationException unavailable) { /* retried, never converted to land */ }
-        active.remove(entry.future);
-        entry.future = null;
-        if (value != null && usable.test(value)) { entry.ready = value; completed++; return value; }
-        entry.retryAt = now + RETRY_NANOS;
-        retries++; lastPending = key;
-        return null;
+        harvest(entry, now);
+        if (entry.ready == null) lastPending = key;
+        return entry.ready;
     }
+
     int pending() {
         active.removeIf(CompletableFuture::isDone);
         return active.size();
@@ -82,7 +109,7 @@ final class DeferredTerrainCache<K, V> implements AutoCloseable {
     int size() { return entries.size(); }
     String diagnostic() {
         return "submitted=" + submitted + " ready=" + completed + " inFlight=" + pending()
-                + " retry=" + retries + " throttled=" + rejected + " last=" + lastPending;
+                + " retry=" + retries + " throttled=" + rejected + " capacityThrottled=" + capacityRejected + " last=" + lastPending;
     }
     @Override public void close() {
         closed = true;

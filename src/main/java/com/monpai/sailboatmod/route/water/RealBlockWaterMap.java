@@ -424,7 +424,7 @@ public final class RealBlockWaterMap {
         if (!absentSavedChunks.containsKey(k)) {
             var stored = asyncTerrain == null ? NbtChunkWaterReader.readForRouting(level, cx, cz, 200L)
                     : asyncTerrain.read(cx, cz);
-            if (stored.status() == NbtChunkWaterReader.ReadStatus.READY) {
+            if (stored.hasTerrain()) {
                 ChunkWater water = toChunkWater(stored.columns());
                 cache.put(k, water);
                 hitNbt.incrementAndGet();
@@ -433,7 +433,7 @@ public final class RealBlockWaterMap {
                 terrainMisses.decrementAndGet();
                 return water;
             }
-            if (stored.status() == NbtChunkWaterReader.ReadStatus.UNAVAILABLE) return pending(k);
+            if (!stored.allowsPrediction()) return pending(k);
             absentSavedChunks.put(k, true);
         }
         var p = predictor;

@@ -21,6 +21,9 @@ final class RouteTerrainSource implements AutoCloseable {
     @FunctionalInterface interface SavedReader {
         NbtChunkWaterReader.ReadResult read(int cx, int cz);
     }
+    @FunctionalInterface interface AsyncSavedReader {
+        CompletableFuture<NbtChunkWaterReader.ReadResult> read(int cx, int cz);
+    }
     interface AsyncWork {
         <T> CompletableFuture<T> submit(Supplier<T> work);
     }
@@ -31,9 +34,11 @@ final class RouteTerrainSource implements AutoCloseable {
     private final DeferredTerrainCache<ChunkPos, NbtChunkWaterReader.ReadResult> saved;
     private final DeferredTerrainCache<Point, SurfaceSample> surfaces;
     private final DeferredTerrainCache<ChunkPos, Prediction> columns;
+    private final java.util.concurrent.ConcurrentHashMap<String, java.util.concurrent.atomic.LongAdder> readOutcomes = new java.util.concurrent.ConcurrentHashMap<>();
+    private volatile String lastReadFailure = "none";
 
     RouteTerrainSource(ServerLevel level, TerrainPredictor predictor, Supplier<TerrainSurfaceSampler> surfaceFactory) {
-        this((cx, cz) -> NbtChunkWaterReader.readForRouting(level, cx, cz, 2000),
+        this(null, (cx, cz) -> NbtChunkWaterReader.readForRoutingAsync(level, cx, cz, 2000),
                 predictor, surfaceFactory, new AsyncWork() {
                     @Override public <T> CompletableFuture<T> submit(Supplier<T> work) {
                         return PortAsyncRuntime.worker(level.getServer(), work);
@@ -44,9 +49,25 @@ final class RouteTerrainSource implements AutoCloseable {
     /** Native integration tests use the same queues/cache/decoding without inventing a ServerLevel. */
     RouteTerrainSource(SavedReader reader, TerrainPredictor predictor,
                        Supplier<TerrainSurfaceSampler> surfaceFactory, AsyncWork executor) {
+        this(reader, null, predictor, surfaceFactory, executor);
+    }
+
+    private RouteTerrainSource(SavedReader reader, AsyncSavedReader asyncReader, TerrainPredictor predictor,
+                       Supplier<TerrainSurfaceSampler> surfaceFactory, AsyncWork executor) {
         this.executor = executor;
-        saved = new DeferredTerrainCache<>(pos -> submit(() -> reader.read(pos.x, pos.z)),
-                result -> result.status() != NbtChunkWaterReader.ReadStatus.UNAVAILABLE, 4096, 8);
+        saved = new DeferredTerrainCache<>(pos -> {
+            if (closed.get()) return CompletableFuture.failedFuture(new java.util.concurrent.CancellationException());
+            CompletableFuture<NbtChunkWaterReader.ReadResult> request = asyncReader == null
+                    ? submit(() -> reader.read(pos.x, pos.z)) : observe(asyncReader.read(pos.x, pos.z));
+            request.whenComplete((value, error) -> {
+                String outcome = error != null ? "exception" : value == null ? "empty_result"
+                        : value.status() + "/" + value.generationStatus() + "/" + value.issue();
+                readOutcomes.computeIfAbsent(outcome, ignored -> new java.util.concurrent.atomic.LongAdder()).increment();
+                if (error != null || value == null || value.status() == NbtChunkWaterReader.ReadStatus.UNAVAILABLE)
+                    lastReadFailure = pos + ":" + outcome;
+            });
+            return request;
+        }, result -> result.status() != NbtChunkWaterReader.ReadStatus.UNAVAILABLE, 4096, 8);
         surfaces = new DeferredTerrainCache<>(p -> submit(() -> {
             TerrainSurfaceSampler sampler = samplers.computeIfAbsent(Thread.currentThread().threadId(), ignored -> surfaceFactory.get());
             return sampler == null ? null : sampler.sample(p.x, p.z, p.spacing).orElse(null);
@@ -59,7 +80,9 @@ final class RouteTerrainSource implements AutoCloseable {
     }
     private <T> CompletableFuture<T> submit(Supplier<T> work) {
         if (closed.get()) return CompletableFuture.failedFuture(new java.util.concurrent.CancellationException());
-        CompletableFuture<T> result = executor.submit(() -> WaterRouteCancellation.run(closed::get, work));
+        return observe(executor.submit(() -> WaterRouteCancellation.run(closed::get, work)));
+    }
+    private <T> CompletableFuture<T> observe(CompletableFuture<T> result) {
         result.whenComplete((value, failure) -> {
             // Coalesce notifications. At most the concurrent completers can race here.
             if (completedWork.availablePermits() == 0) completedWork.release();
@@ -89,7 +112,8 @@ final class RouteTerrainSource implements AutoCloseable {
     }
     String diagnostic() {
         return "NBT{" + saved.diagnostic() + "} LOD{" + surfaces.diagnostic()
-                + "} GENERATOR{" + columns.diagnostic() + "}";
+                + "} GENERATOR{" + columns.diagnostic() + "} NBT_RESULTS{" + new java.util.TreeMap<>(readOutcomes)
+                + "} lastReadFailure=" + lastReadFailure;
     }
     @Override public void close() {
         closed.set(true);

@@ -67,13 +67,13 @@ public final class CoarseWaterRouteWorld implements WaterRouteWorld {
             if (result.status() != NbtChunkWaterReader.ReadStatus.UNAVAILABLE) chunks.put(key, result);
         }
         if (result.status() == NbtChunkWaterReader.ReadStatus.UNAVAILABLE) return null;
-        if (result.status() == NbtChunkWaterReader.ReadStatus.READY) {
+        if (result.hasTerrain()) {
             int index = (z & 15) * 16 + (x & 15);
             return result.columns().water()[index]
                     ? WaterColumn.passable(new BlockPos(x, result.columns().surfaceY()[index] + 1, z), 0)
                     : WaterColumn.blocked();
         }
-        if (predicted == null) return null;
+        if (!result.allowsPrediction() || predicted == null) return null;
         return predicted.sample(x, z, Math.max(2, policy == null ? 2 : policy.stepSize())).map(surface -> surface.water()
                 ? WaterColumn.passable(new BlockPos(x, surface.surfaceY() + 1, z), 0)
                 : WaterColumn.blocked()).orElse(null);

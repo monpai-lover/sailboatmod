@@ -123,9 +123,10 @@ public final class PortTerrainProbe {
                 throw unavailable;
             }
             if (owned.loaded != null) return new Disk(owned.loaded, false, Origin.LIVE);
-            if (!OfflineChunkPalette.isFullStatus(owned.tag)) return Disk.unavailable();
-            return NbtChunkWaterReader.decode(owned.tag, minY, maxY)
-                    .map(columns -> new Disk(columns, false, Origin.NBT)).orElseGet(Disk::unavailable);
+            var decoded = NbtChunkWaterReader.decodeForRouting(owned.tag, minY, maxY);
+            if (decoded.hasTerrain()) return new Disk(decoded.columns(), false,
+                    decoded.status() == NbtChunkWaterReader.ReadStatus.READY ? Origin.NBT : Origin.TELLUS);
+            return decoded.allowsPrediction() ? new Disk(null, true, Origin.NONE) : Disk.unavailable();
         } catch (InterruptedException stopped) {
             Thread.currentThread().interrupt();
             return Disk.unavailable();

@@ -29,16 +29,23 @@ class TellusNativeRoutesTest {
     private static int sea;
     private static final Path OUT=Path.of("build/native-evidence");
     private static final Map<Long,NbtChunkWaterReader.ChunkColumns> CAPTURED=new ConcurrentHashMap<>();
+    private static final Map<Long,NbtChunkWaterReader.ReadResult> SAVED_FIXTURES=new HashMap<>();
     private static final AtomicLong rawColumns=new AtomicLong(),nativeSurfaces=new AtomicLong();
 
     @BeforeAll static void prepare() throws Exception {
         SharedConstants.tryDetectVersion();Bootstrap.bootStrap();Files.createDirectories(OUT);
+        for(String name:List.of("sample-full","sample-biomes","sample-structure_starts","target-carvers","target-initialize-light")) {
+            var tag=ProtoChunkRoutingTest.fixture(name);
+            var decoded=NbtChunkWaterReader.decodeForRouting(tag,-64,320);
+            assertNotEquals(NbtChunkWaterReader.ReadStatus.UNAVAILABLE,decoded.status());
+            SAVED_FIXTURES.put(key(tag.getInt("xPos"),tag.getInt("zPos")),decoded);
+        }
         var components=EarthGeneratorSettings.class.getRecordComponents();Object[] v=new Object[components.length];Class<?>[] t=new Class<?>[components.length];
         for(int i=0;i<v.length;i++){v[i]=components[i].getAccessor().invoke(EarthGeneratorSettings.DEFAULT);t[i]=components[i].getType();if(components[i].getName().equals("worldScale"))v[i]=100.0;}
         var settings=EarthGeneratorSettings.class.getConstructor(t).newInstance(v);
         generator=EarthChunkGenerator.create(VanillaRegistries.createLookup(),settings);
         heights=LevelHeightAccessor.create(generator.getMinY(),generator.getGenDepth());sea=generator.getSeaLevel();
-        Files.writeString(OUT.resolve("route-settings.txt"),settings+"\ngeneratorSeaLevel="+sea+"\nnew-world: no saved NBT override; native LOD and generated columns only\n");
+        Files.writeString(OUT.resolve("route-settings.txt"),settings+"\ngeneratorSeaLevel="+sea+"\nmixed world: 5 sanitized saved snapshots from uploaded regions override native Tellus; other terrain uses native LOD/generator (not the complete user save)\n");
     }
     static GeneratorColumnPredictor rawPredictor(){return new GeneratorColumnPredictor((x,z)->{rawColumns.incrementAndGet();return generator.getBaseColumn(x,z,heights,null);},PrefetchGate.ALWAYS_READY,heights.getMinBuildHeight(),heights.getMaxBuildHeight());}
     static TerrainPredictor predictor(){return new TerrainPredictor(){
@@ -92,7 +99,7 @@ class TellusNativeRoutesTest {
             }
         };
         var prediction=predictor();var map=new RealBlockWaterMap(null,sea).enableOnDemand().retryUnknownPrediction().withPredictor(prediction,PredictionBudget.sixtySeconds());
-        try(RouteTerrainSource terrain=new RouteTerrainSource((cx,cz)->NbtChunkWaterReader.ReadResult.absent(),prediction,TellusNativeRoutesTest::surface,executor)) {
+        try(RouteTerrainSource terrain=new RouteTerrainSource((cx,cz)->SAVED_FIXTURES.getOrDefault(key(cx,cz),NbtChunkWaterReader.ReadResult.absent()),prediction,TellusNativeRoutesTest::surface,executor)) {
             map.withAsyncTerrain(terrain);
             var coarse=CoarseWaterRouteWorld.realFirst(terrain::read,terrain::surface,sea);
             var detail=RealBlockWaterWorld.streaming(map,sea,1,start,goal);
@@ -133,7 +140,10 @@ class TellusNativeRoutesTest {
                 for(int j=0;j<=n;j++){
                     int x=(int)Math.floor(a.getX()+.5+(b.getX()-a.getX())*(double)j/n),z=(int)Math.floor(a.getZ()+.5+(b.getZ()-a.getZ())*(double)j/n);
                     for(int dz=0;dz<2;dz++)for(int dx=0;dx<2;dx++) {
-                        int xx=x+dx,zz=z+dz;var p=prediction.predictChunk(Math.floorDiv(xx,16),Math.floorDiv(zz,16),5000);assertEquals(Prediction.Status.READY,p.status());int k=(zz&15)*16+(xx&15);
+                        int xx=x+dx,zz=z+dz;
+                        var saved=SAVED_FIXTURES.get(key(Math.floorDiv(xx,16),Math.floorDiv(zz,16)));
+                        var p=saved!=null&&saved.hasTerrain()?Prediction.ready(saved.columns())
+                                :prediction.predictChunk(Math.floorDiv(xx,16),Math.floorDiv(zz,16),5000);assertEquals(Prediction.Status.READY,p.status());int k=(zz&15)*16+(xx&15);
                         assertTrue(p.columns().water()[k],"real Tellus land collision "+xx+","+zz);assertEquals(a.getY(),p.columns().surfaceY()[k]+1);checked++;
                     }
                 }
