@@ -50,6 +50,16 @@ jobs:
           patch.write_bytes(b''.join(chunks))
           subprocess.run(['git','apply','--index','--check',str(patch)], check=True)
           subprocess.run(['git','apply','--index',str(patch)], check=True)
+          followup=Path('tools/destination-review/native-followup.patch').read_text()
+          # Correct one transcription character in an UNCHANGED test context line;
+          # validate the resulting complete patch against the reviewed local bytes.
+          followup=followup.replace('s.contains("terrain == null ? null : terrain::awaitProgress")));',
+                                    's.contains("terrain == null ? null : terrain::awaitProgress"));')
+          raw=followup.encode()
+          assert hashlib.sha1(b'blob '+str(len(raw)).encode()+b'\0'+raw).hexdigest()=='73649402d593d7b897f426dcb8bff60edb639999'
+          p=Path('/tmp/native-followup.patch');p.write_bytes(raw)
+          subprocess.run(['git','apply','--index','--check',str(p)],check=True)
+          subprocess.run(['git','apply','--index',str(p)],check=True)
           PY
       - name: Compile complete mod, regress and package both artifacts
         run: |
@@ -77,7 +87,7 @@ jobs:
           test "$(git rev-parse FETCH_HEAD)" = "${{ github.sha }}"
           git config user.name 'github-actions[bot]'
           git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
-          git commit -m 'feat: destination route infrastructure, monotonic boat following and bounded offshore quality'
+          git commit -m 'feat: reusable destination voyages, monotonic boat following and progressive offshore optimization'
           git push origin HEAD:fix/autoroute-candidates-flag-preview
       - name: Archive exact sources, reports and artifact identity
         if: always()

@@ -1,0 +1,214 @@
+diff --git a/src/main/java/com/monpai/sailboatmod/route/water/WaterRouteNetwork.java b/src/main/java/com/monpai/sailboatmod/route/water/WaterRouteNetwork.java
+--- a/src/main/java/com/monpai/sailboatmod/route/water/WaterRouteNetwork.java
++++ b/src/main/java/com/monpai/sailboatmod/route/water/WaterRouteNetwork.java
+@@ -158,5 +158,10 @@
+         result.sort(Comparator.comparingDouble(Anchor::distance));
+         List<Anchor> unique=new ArrayList<>();Set<PointKey> seen=new HashSet<>();
+-        for(Anchor a:result)if(seen.add(PointKey.of(a.point))) {unique.add(a);if(unique.size()==8)break;}
++        // An endpoint already on the infrastructure must not jump to a nearby leg
++        // merely to shave a corner. Such invented connectors defeat exact subset reuse.
++        boolean onNetwork=!result.isEmpty()&&result.getFirst().distance<=1e-6;
++        for(Anchor a:result)if((!onNetwork||a.distance<=1e-6)&&seen.add(PointKey.of(a.point))) {
++            unique.add(a);if(unique.size()==8)break;
++        }
+         return unique;
+     }
+diff --git a/src/main/java/com/monpai/sailboatmod/route/water/WaterRoutePostProcessor.java b/src/main/java/com/monpai/sailboatmod/route/water/WaterRoutePostProcessor.java
+--- a/src/main/java/com/monpai/sailboatmod/route/water/WaterRoutePostProcessor.java
++++ b/src/main/java/com/monpai/sailboatmod/route/water/WaterRoutePostProcessor.java
+@@ -31,4 +31,5 @@
+     private final Options options;
+     private long deadline;
++    private long phaseDeadline=Long.MAX_VALUE;
+     private final Map<Long, WaterColumn> cells = new LinkedHashMap<>(1024, .75f, true) {
+         @Override protected boolean removeEldestEntry(Map.Entry<Long,WaterColumn> e) { return size() > 262_144; }
+@@ -69,24 +70,22 @@
+         // evicted chunks; do not spend the optional geometry budget serially warming it.
+         deadline = System.nanoTime() + options.maxMillis() * 1_000_000L;
+-        try {
++        phase(.40, () -> {
+             safe = eraseRepeated(safe);
+             safe = eraseCrossings(safe);
+             progress.update(92, "航线后处理 · 全局裁剪/去回环");
+             safe = pull(safe);
+-            List<BlockPos> reverse = new ArrayList<>(safe); Collections.reverse(reverse);
+-            reverse = pull(reverse); Collections.reverse(reverse);
+-            if (cost(reverse) < cost(safe)) safe = List.copyOf(reverse);
++        });
++        phase(.40, () -> {
+             progress.update(94, "航线后处理 · 离岸移位");
+             safe = addControls(safe);
+-            for (int round=0; round<3; round++) safe = shift(safe);
+-            safe = eraseCrossings(safe);
++            for(int round=0;round<3;round++)safe=shift(safe);
++        });
++        phase(.15, () -> {
+             progress.update(97, "航线后处理 · 安全圆角");
+             safe = round(safe);
+             safe = eraseCrossings(safe);
+-            // Keep the clearance earned by offshore relocation. A plain endpoint-minimum
+-            // shortcut would otherwise connect two shore docks straight along the coast.
+-            safe = pull(safe, true);
+-            safe = compact(safe);
+-        } catch (Budget e) { limited = true; /* Only complete, checked edits were committed to safe. */ }
++        });
++        phase(.05, () -> safe=pull(safe,true));
++        safe=compact(safe);
+         // All edits kept original endpoints and each new edge was certified. Budget
+         // exhaustion only stops quality work, not safety validation or cancellation.
+@@ -98,4 +97,23 @@
+                 samples, unknown, limited);
+     }
++    /** Quality passes have separate slices: a cold long shortcut cannot consume
++     * all offshore/rounding time. Each completed edit checkpoints a certified route. */
++    private void phase(double fraction,Runnable work) {
++        phaseDeadline=Math.min(deadline,System.nanoTime()+Math.max(1L,(long)(options.maxMillis()*fraction))*1_000_000L);
++        try {work.run();} catch(Budget exhausted) {limited=true;}
++        finally {phaseDeadline=Long.MAX_VALUE;}
++    }
++    private void checkpoint(List<BlockPos> path) {
++        if(path.size()<2)return;
++        if(path.getFirst().equals(start)&&path.getLast().equals(goal))safe=List.copyOf(path);
++        else if(path.getFirst().equals(goal)&&path.getLast().equals(start)) {
++            var reversed=new ArrayList<>(path);Collections.reverse(reversed);safe=List.copyOf(reversed);
++        }
++    }
++    private void checkpointPrefix(List<BlockPos> prefix,List<BlockPos> original,int nextIndex) {
++        var complete=new ArrayList<>(prefix);complete.addAll(original.subList(nextIndex,original.size()));
++        checkpoint(complete);
++    }
++
+     /** Visit ALL missing cells in a pass, so bounded terrain workers can run in
+      * parallel. Short-circuiting at the first unknown serialized hundreds of evicted
+@@ -137,5 +155,5 @@
+     private void budget() {
+         WaterRouteCancellation.check();
+-        if (System.nanoTime() >= deadline || samples >= options.maxSamples()) throw new Budget();
++        if (System.nanoTime() >= Math.min(deadline,phaseDeadline) || samples >= options.maxSamples()) throw new Budget();
+     }
+     private WaterColumn sample(int x,int z) {
+@@ -170,6 +188,15 @@
+     private boolean edge(BlockPos a,BlockPos b,int margin) {
+         if(a.getY()!=b.getY())return false;
+-        return WaterGridTraversal.all(a.getX(),a.getZ(),b.getX(),b.getZ(),(x,z)->
+-            water(x,z,a.getY()) && (margin<=0 || clearance(new BlockPos(x,a.getY(),z))>=margin));
++        boolean[] pending={false};Set<Long> deferred=new HashSet<>();
++        boolean knownClear=WaterGridTraversal.all(a.getX(),a.getZ(),b.getX(),b.getZ(),(x,z)->{
++            long chunk=((long)(x>>4)<<32)|((z>>4)&0xffffffffL);
++            if(deferred.contains(chunk)){pending[0]=true;return true;}
++            int missing=unknown;boolean clear=water(x,z,a.getY());
++            if(clear&&margin>0)clear=clearance(new BlockPos(x,a.getY(),z))>=margin;
++            if(unknown!=missing){pending[0]=true;deferred.add(chunk);return true;}
++            return clear;
++        });
++        // Visiting unknown cells only schedules bounded IO; it NEVER certifies them.
++        return knownClear&&!pending[0];
+     }
+     /** Optional candidate waits are bounded; retain original route if unavailable.
+@@ -212,5 +239,5 @@
+                 next=compact(next);
+                 if(length(next)>=length(out)-1e-6)continue;
+-                out=next;loops++;changed=true;break outer;
++                out=next;checkpoint(out);loops++;changed=true;break outer;
+             }
+             if(!changed)break;
+@@ -233,34 +260,33 @@
+     private List<BlockPos> pull(List<BlockPos> input, boolean preserveOffshore) {
+         if(input.size()<3)return new ArrayList<>(input);
++        double[] prefixLength=new double[input.size()];
++        for(int k=1;k<input.size();k++)prefixLength[k]=prefixLength[k-1]+dist(input.get(k-1),input.get(k));
+         List<BlockPos> out=new ArrayList<>();out.add(input.getFirst());
+         for(int i=0;i<input.size()-1;) {
+             budget();int chosen=i+1;
+-            // A bounded set of long and short skips: try the destination and progressively
+-            // nearer vertices, then a local window. No quadratic scan of thousands of edges.
+             NavigableSet<Integer> candidates=new TreeSet<>(Comparator.reverseOrder());
+             candidates.add(input.size()-1);
+             for(int k=2;k<=256;k*=2)if(i+k<input.size())candidates.add(i+k);
+-            for(int k=2;k<=32 && i+k<input.size();k++)candidates.add(i+k);
+-            double bestGain=0;
++            for(int k=2;k<=32&&i+k<input.size();k++)candidates.add(i+k);
+             for(int j:candidates) {
+                 if(j<=i+1)continue;
+                 BlockPos a=input.get(i),b=input.get(j);
+-                double old=0;int margin=options.offshoreTarget();
+-                for(int k=i;k<j;k++) {
+-                    old+=dist(input.get(k),input.get(k+1));
+-                    if (!preserveOffshore || k>i) margin=Math.min(margin,Math.max(0,clearance(input.get(k))));
++                if(dist(a,b)>prefixLength[j]-prefixLength[i]+1e-6)continue;
++                // First remove grid detours using strict hull checks, before expensive
++                // shore-distance scoring. Offshore relocation runs as a separate pass.
++                int margin=0;
++                if(preserveOffshore) {
++                    margin=options.offshoreTarget();
++                    for(int k=i+1;k<j;k++)margin=Math.min(margin,Math.max(0,clearance(input.get(k))));
+                 }
+-                if (!preserveOffshore) margin=Math.min(margin,Math.max(0,clearance(b)));
+-                double direct=dist(a,b);
+-                if(direct>old+1e-6)continue;
+-                double gain=old-direct;
+-                if(gain+1e-6<bestGain)continue;
+-                int required=Math.max(0,margin);
+-                if(settle(()->preserveOffshore?taperedEdge(a,b,required):edge(a,b,required),100)) {
+-                    if(gain>bestGain+1e-6||j>chosen){chosen=j;bestGain=gain;}
++                int required=margin;
++                long wait=preserveOffshore?100:Math.min(600,50+(long)(dist(a,b)/8));
++                if(settle(()->preserveOffshore?taperedEdge(a,b,required):edge(a,b,0),wait)) {
++                    chosen=j;shortcuts+=j-i-1;break;
+                 }
+             }
+-            if(chosen>i+1)shortcuts+=chosen-i-1;
+             out.add(input.get(chosen));i=chosen;
++            // Do not discard all earlier valid shortcuts when a later edge exhausts a slice.
++            checkpointPrefix(out,input,i+1);
+         }
+         return new ArrayList<>(compact(out));
+@@ -306,5 +332,5 @@
+                 }
+             }
+-            if(!best.equals(p)){total+=dist(a,best)+dist(best,b)-oldLocal;out.set(i,best);moved++;}
++            if(!best.equals(p)){total+=dist(a,best)+dist(best,b)-oldLocal;out.set(i,best);moved++;checkpoint(out);}
+         }
+         return List.copyOf(out);
+@@ -336,5 +362,5 @@
+             }
+             if(best==null)out.add(p);
+-            else {out.addAll(best.subList(1,best.size()-1));rounded++;}
++            else {out.addAll(best.subList(1,best.size()-1));rounded++;checkpointPrefix(out,input,i+1);}
+         }
+         out.add(input.getLast());return List.copyOf(out);
+diff --git a/src/test/java/com/monpai/sailboatmod/route/water/WaterRouteNetworkTest.java b/src/test/java/com/monpai/sailboatmod/route/water/WaterRouteNetworkTest.java
+--- a/src/test/java/com/monpai/sailboatmod/route/water/WaterRouteNetworkTest.java
++++ b/src/test/java/com/monpai/sailboatmod/route/water/WaterRouteNetworkTest.java
+@@ -32,3 +32,10 @@
+     @Test void nonFiniteDataNeverPublishesPlan(){assertTrue(WaterRouteNetwork.plan(List.of(route("a",0,7000,true)),new Vec3(Double.NaN,65,0),p(7000,0)).isEmpty());}
+     @Test void noUnsafeStraighteningOfIslandDetour(){var path=List.of(p(0,0),p(3000,800),p(5000,800),p(7000,0));var a=new WaterRouteNetwork.Route("around-island",BlockPos.ZERO,new BlockPos(7000,65,0),path,true);var q=WaterRouteNetwork.plan(List.of(a),path.getFirst(),path.getLast()).orElseThrow();assertEquals(path,q.legs().getFirst().points());assertTrue(q.reusedLength()>7000);}
++    @Test void interiorEndpointsOnBentRouteDoNotInventShorterOffNetworkConnectors() {
++        var points=List.of(p(0,0),p(1000,0),p(1000,100),p(1100,100),p(1100,0),p(3000,0));
++        var r=new WaterRouteNetwork.Route("bent",BlockPos.ZERO,new BlockPos(3000,65,0),points,true);
++        var plan=WaterRouteNetwork.plan(List.of(r),p(1100,0),p(1000,0)).orElseThrow();
++        assertEquals(0,plan.newLength(),1e-6);assertEquals(300,plan.reusedLength(),1e-6);
++        assertTrue(plan.legs().stream().allMatch(WaterRouteNetwork.Leg::reused));
++    }
+ }
+diff --git a/src/test/java/com/monpai/sailboatmod/route/water/WaterRoutePostProcessorTest.java b/src/test/java/com/monpai/sailboatmod/route/water/WaterRoutePostProcessorTest.java
+--- a/src/test/java/com/monpai/sailboatmod/route/water/WaterRoutePostProcessorTest.java
++++ b/src/test/java/com/monpai/sailboatmod/route/water/WaterRoutePostProcessorTest.java
+@@ -56,5 +56,5 @@
+     @Test void cancellationIsNeverConvertedToSafeFallback(){assertThrows(CancellationException.class,()->WaterRouteCancellation.run(()->true,()->run((x,z)->true,p(0,0),p(100,0))));}
+     @Test void tinyBudgetDoesNotClaimInputWasValidated(){assertThrows(IllegalArgumentException.class,()->WaterRoutePostProcessor.optimize(hull((x,z)->true),List.of(p(0,0),p(100,0)),null,null,new WaterRoutePostProcessor.Options(8,24,1000,1)));}
+-    @Test void optionalBudgetKeepsCertifiedPath(){var input=List.of(p(0,0),p(20,20),p(40,0));var r=WaterRoutePostProcessor.optimize(hull((x,z)->true),input,null,null,new WaterRoutePostProcessor.Options(8,24,1000,200));assertTrue(r.budgetLimited());assertEquals(input.getFirst(),r.path().getFirst());check(r.path(),(x,z)->true);}
++    @Test void optionalBudgetKeepsCertifiedPath(){var input=List.of(p(0,0),p(40,40),p(80,0));var r=WaterRoutePostProcessor.optimize(hull((x,z)->true),input,null,null,new WaterRoutePostProcessor.Options(8,24,1000,330));assertTrue(r.budgetLimited());assertEquals(input.getFirst(),r.path().getFirst());check(r.path(),(x,z)->true);}
+     @Test void invalidArgumentsRejected(){assertThrows(IllegalArgumentException.class,()->new WaterRoutePostProcessor.Options(17,24,100,10));assertThrows(IllegalArgumentException.class,()->run((x,z)->true,p(0,0)));}
+     @Test void exactCompactionKeepsObliqueCorners(){assertEquals(3,WaterRoutePostProcessor.compact(List.of(p(0,0),p(10,1),p(20,5))).size());}
+@@ -87,3 +87,10 @@
+     }
+     @Test void finalStageIsWiredAfterStitchingAndBeforeMetadata()throws Exception{String s=Files.readString(Path.of("src/main/java/com/monpai/sailboatmod/route/water/WaterAutoRouteService.java"));int a=s.indexOf("path = finishWholeRoute(map, planner.path()");assertTrue(a>0);assertTrue(s.indexOf("metasOut.set(buildMetas(path",a)>a);assertTrue(s.contains("terrain == null ? null : terrain::awaitProgress")));}
++    @Test void cheapInitialPruningDoesNotSpendBudgetScoringEveryOffshoreRing() {
++        var input=List.of(p(0,0),p(100,100),p(200,0),p(300,100),p(400,0));
++        var r=WaterRoutePostProcessor.optimize(hull((x,z)->true),input,null,null,
++                new WaterRoutePostProcessor.Options(12,32,2000,2000));
++        assertEquals(400,r.after().length(),1e-6);
++        assertEquals(input.getFirst(),r.path().getFirst());assertEquals(input.getLast(),r.path().getLast());
++    }
+ }
