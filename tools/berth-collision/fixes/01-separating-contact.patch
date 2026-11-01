@@ -1,0 +1,100 @@
+diff --git a/src/main/java/com/monpai/sailboatmod/route/water/local/BoatCollisionField.java b/src/main/java/com/monpai/sailboatmod/route/water/local/BoatCollisionField.java
+--- a/src/main/java/com/monpai/sailboatmod/route/water/local/BoatCollisionField.java
++++ b/src/main/java/com/monpai/sailboatmod/route/water/local/BoatCollisionField.java
+@@ -52,23 +52,36 @@
+             if (c==null || !c.known) { if(touched)unknown=true; continue; }
+             if(touched&&!c.water)return Check.BLOCKED;
+             for(AABB obstacle:c.shapes) if(obstacle.maxY>hull.minY+1e-6&&obstacle.minY<hull.maxY-1e-6
+-                    &&hit(a,b,obstacle,hull.halfX-1e-6,hull.halfZ-1e-6))return Check.BLOCKED;
++                    &&hit(a,b,obstacle,hull.halfX-1e-6,hull.halfZ-1e-6)
++                    &&!separatingOverlap(a,b,obstacle,hull.halfX-1e-6,hull.halfZ-1e-6))return Check.BLOCKED;
+         }
+         for(AABB obstacle:entities) {
+             if(obstacle.maxY<=hull.minY || obstacle.minY>=hull.maxY)continue;
+             // A small traffic clearance; permit moving AWAY from an already touched margin,
+             // never crossing the real other vessel, deleting it, or pushing it off its berth.
+-            if(hit(a,b,obstacle,hull.halfX-1e-6,hull.halfZ-1e-6))return Check.BLOCKED;
++            if(hit(a,b,obstacle,hull.halfX-1e-6,hull.halfZ-1e-6)
++                    &&!separatingOverlap(a,b,obstacle,hull.halfX-1e-6,hull.halfZ-1e-6))return Check.BLOCKED;
+             if(hit(a,b,obstacle,hull.halfX+.35,hull.halfZ+.35)
+                     && !escapingMargin(a,b,obstacle))return Check.BLOCKED;
+         }
+         return unknown?Check.UNKNOWN:Check.CLEAR;
+     }
+     private boolean escapingMargin(Vec3 a,Vec3 b,AABB obstacle) {
+-        if(!hit(a,a,obstacle,hull.halfX+.35,hull.halfZ+.35))return false;
++        return separatingOverlap(a,b,obstacle,hull.halfX+.35,hull.halfZ+.35);
++    }
++    /** A stranded hull can already touch a shape/draft margin. Permit only monotonic separation
++     * from that initial overlap, never crossing the obstacle centre or increasing penetration on
++     * either axis. Vanilla collision still controls actual movement; this is not noclip/teleport.
++     */
++    private static boolean separatingOverlap(Vec3 a,Vec3 b,AABB obstacle,double hx,double hz) {
++        if(!hit(a,a,obstacle,hx,hz))return false;
+         double cx=(obstacle.minX+obstacle.maxX)/2,cz=(obstacle.minZ+obstacle.maxZ)/2;
+-        double ax=Math.abs(a.x-cx),az=Math.abs(a.z-cz),bx=Math.abs(b.x-cx),bz=Math.abs(b.z-cz);
+-        return bx+1e-8>=ax&&bz+1e-8>=az&&(bx>ax+1e-8||bz>az+1e-8);
++        double ax=a.x-cx,az=a.z-cz,bx=b.x-cx,bz=b.z-cz;
++        return away(ax,bx)&&away(az,bz)
++                &&(Math.abs(bx)>Math.abs(ax)+1e-8||Math.abs(bz)>Math.abs(az)+1e-8);
++    }
++    private static boolean away(double before,double after) {
++        return Math.abs(before)<1e-9 || before*after>=0&&Math.abs(after)+1e-9>=Math.abs(before);
+     }
+     /** Exact horizontal swept-AABB intersection, rather than an overlarge diagonal bounding rectangle. */
+     static boolean hit(Vec3 a,Vec3 b,AABB obstacle,double hx,double hz) {
+diff --git a/src/test/java/com/monpai/sailboatmod/route/water/local/BoatCollisionFieldTest.java b/src/test/java/com/monpai/sailboatmod/route/water/local/BoatCollisionFieldTest.java
+--- a/src/test/java/com/monpai/sailboatmod/route/water/local/BoatCollisionFieldTest.java
++++ b/src/test/java/com/monpai/sailboatmod/route/water/local/BoatCollisionFieldTest.java
+@@ -109,4 +109,51 @@
+         assertTrue(result.successful());
+         assertEquals(p(16,0),result.value().detour().getLast());assertEquals(2,result.value().tailIndex());
+     }
++    @Test void alreadyCaughtOnPickleCanSeparateButCannotMoveDeeperOrAcrossIt(){
++        var field=withShapes(List.of(new AABB(0,64.8,0,1,65.2,1)));
++        assertEquals(BoatCollisionField.Check.CLEAR,field.segment(p(-.8,.5),p(-2,.5)));
++        assertEquals(BoatCollisionField.Check.BLOCKED,field.segment(p(-.8,.5),p(2,.5)));
++        assertEquals(BoatCollisionField.Check.BLOCKED,field.segment(p(-.8,.5),p(-.2,.5)));
++        assertEquals(BoatCollisionField.Check.BLOCKED,field.segment(p(-2,.5),p(2,.5)));
++    }
++    @Test void hullTouchingPickleTopStillFindsASeparatingRescue(){
++        var boxes=Blocks.SEA_PICKLE.defaultBlockState().setValue(SeaPickleBlock.PICKLES,4)
++                .getCollisionShape(EmptyBlockGetter.INSTANCE,BlockPos.ZERO,CollisionContext.empty()).toAabbs();
++        double top=boxes.stream().mapToDouble(b->b.maxY).max().orElseThrow()+64;
++        var hull=BoatCollisionField.Hull.at(new AABB(7.5,top,-.5,9.5,top+1.6,1.5),65);
++        var physical=boxes.stream().map(b->b.move(8,64,0)).toList();
++        var field=new BoatCollisionField(hull,(x,z)->new BoatCollisionField.Cell(true,true,x==8&&z==0?physical:List.of()),List.of());
++        var result=BoatLocalDetour.plan(field,p(8.5,.5),List.of(p(8.5,.5),p(1000,.5)),1);
++        assertTrue(result.successful(),result.reason().toString());
++        for(int i=1;i<result.value().detour().size();i++)assertEquals(BoatCollisionField.Check.CLEAR,
++                field.segment(result.value().detour().get(i-1),result.value().detour().get(i)));
++    }
++
++    @Test void detourIsFollowableWithoutRepeatedCollisionsOrWaypointStalls() throws Exception {
++        var field=new BoatCollisionField(HULL,(x,z)->WATER,List.of(new AABB(8,64.9,-1,10,66.5,1)));
++        Vec3 at=p(0,0),last=at,end=p(40,0);
++        var original=List.of(at,end);var plan=BoatLocalDetour.plan(field,at,original,1);
++        assertTrue(plan.successful());var route=new ArrayList<>(plan.value().detour());
++        route.addAll(original.subList(plan.value().tailIndex(),original.size()));
++        // Kinematic smoke test of the production follower; not a Minecraft physics integration.
++        int index=1,ticks=0;double heading=0;
++        while(com.monpai.sailboatmod.route.WaterPolylineFollower.horizontal(at,end)>1&&ticks++<1000) {
++            index=com.monpai.sailboatmod.route.WaterPolylineFollower.advance(route,index,last,at,1.25,3,
++                    (a,b)->field.segment(a,b)==BoatCollisionField.Check.CLEAR);
++            var aim=com.monpai.sailboatmod.route.WaterPolylineFollower.aim(route,index,at,4,
++                    (a,b)->field.segment(a,b)==BoatCollisionField.Check.CLEAR);
++            assertFalse(aim.blocked(),"Detour follower stalled at "+at);
++            double angle=Math.atan2(aim.point().z-at.z,aim.point().x-at.x);
++            double diff=Math.atan2(Math.sin(angle-heading),Math.cos(angle-heading));
++            heading+=Math.clamp(diff,-Math.toRadians(2),Math.toRadians(2));
++            double speed=Math.abs(diff)>Math.toRadians(50)?0:.12;
++            Vec3 next=at.add(Math.cos(heading)*speed,0,Math.sin(heading)*speed);
++            assertEquals(BoatCollisionField.Check.CLEAR,field.segment(at,next));last=at;at=next;
++        }
++        assertTrue(ticks<1000,"Follower never reached destination");
++        var out=java.nio.file.Path.of("build/verification/parked-boat-detour.csv");
++        java.nio.file.Files.createDirectories(out.getParent());
++        java.nio.file.Files.writeString(out,"x,y,z\n"+route.stream().map(p->p.x+","+p.y+","+p.z).collect(java.util.stream.Collectors.joining("\n"))+"\n");
++    }
++
+ }
