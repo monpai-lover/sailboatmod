@@ -1,0 +1,121 @@
+-        super(Component.translatable(baseKey(terminalKind) + ".title"));
++        this(sourceDockPos, terminalKind, docks, Component.translatable(baseKey(terminalKind) + ".title"));
++    }
++
++    private AutoRouteDockSelectionScreen(BlockPos sourceDockPos, TransportTerminalKind terminalKind, List<AvailableDockEntry> docks,
++                                         Component title) {
++        super(title);
+         this.sourceDockPos = sourceDockPos;
+         this.terminalKind = terminalKind == null ? TransportTerminalKind.PORT : terminalKind;
+         this.docks = docks == null ? List.of() : docks;
+@@ -68,7 +93,8 @@ public class AutoRouteDockSelectionScreen extends ThemedScreen {
+     @Override
+     protected UIElement buildBody() {
+         UIElement body = Ui.column();
+-        body.addChild(Ui.paragraph(destinationVessel==null?autoRouteText("subtitle"):Component.literal("自动复用已有航段，只补算缺口；路线准备好后发船。"), "sm-muted"));
++        body.addChild(Ui.paragraph(destinationVessel==null?autoRouteText("subtitle")
++                :Component.translatable("screen.sailboatmod.destination.subtitle"), "sm-muted"));
+ 
+         dockList = Ui.scroller();
+         dockList.layout(l -> l.height(150).flexGrow(0));
+@@ -81,6 +107,18 @@ public class AutoRouteDockSelectionScreen extends ThemedScreen {
+ 
+ 
+         if (terminalKind == TransportTerminalKind.PORT) {
++            // 规划方式:最优(完整重新规划) / 优先复用(沿已建航线,只补缺口)。两种意图各有默认值,玩家可切换。
++            UIElement preferenceRow = Ui.row();
++            preferenceRow.layout(l -> l.widthPercent(100).minWidth(0).gapAll(Ui.GAP_S).alignItems(AlignItems.CENTER));
++            preferenceTabs = TabBar.horizontal(next -> { preference = next; refresh(); });
++            preferenceTabs.add(RoutePlanningPreference.OPTIMAL, new ItemStack(Items.COMPASS),
++                            Component.translatable("screen.sailboatmod.route_preference.optimal"))
++                    .add(RoutePlanningPreference.REUSE_FIRST, new ItemStack(Items.FILLED_MAP),
++                            Component.translatable("screen.sailboatmod.route_preference.reuse_first"));
++            preferenceRow.addChildren(Ui.clippedText(Component.translatable("screen.sailboatmod.route_preference.label"), "sm-muted"),
++                    preferenceTabs.element());
++            preferenceDescription = Ui.text(Component.empty(), "sm-muted");
++            body.addChildren(preferenceRow, preferenceDescription);
+             body.addChild(Ui.paragraph(Component.literal("后台异步规划：真实方块 / NBT 优先，Tellus 补足未生成地形。"),"sm-muted"));
+             if (net.neoforged.fml.ModList.get() != null
+                     && net.neoforged.fml.ModList.get().isLoaded(com.monpai.sailboatmod.route.terrain.TellusWorlds.MOD_ID)) {
+@@ -89,7 +127,8 @@ public class AutoRouteDockSelectionScreen extends ThemedScreen {
+             }
+         }
+ 
+-        createButton = Ui.button(destinationVessel==null?autoRouteText("create"):Component.literal("出发到此目的地"), Ui.Tone.PRIMARY, this::createRoute);
++        createButton = Ui.button(destinationVessel==null?autoRouteText("create")
++                :Component.translatable("screen.sailboatmod.destination.depart"), Ui.Tone.PRIMARY, this::createRoute);
+         UIElement actions = Ui.row();
+         actions.layout(l -> l.widthPercent(100).minWidth(0).gapAll(Ui.GAP_S)
+                 .flexWrap(dev.vfyjxf.taffy.style.FlexWrap.WRAP).flexShrink(0));
+@@ -161,6 +200,11 @@ public class AutoRouteDockSelectionScreen extends ThemedScreen {
+             modeTabs.select(selectedMode);
+             modeDescription.setValue(Component.literal(selectedMode.label()));
+         }
++        if (preferenceTabs != null) {
++            preferenceTabs.select(preference);
++            preferenceDescription.setValue(Component.translatable(preference == RoutePlanningPreference.OPTIMAL
++                    ? "screen.sailboatmod.route_preference.optimal.desc" : "screen.sailboatmod.route_preference.reuse_first.desc"));
++        }
+         if (createButton != null) {
+             createButton.setActive(!building && selectedIndex >= 0 && selectedIndex < docks.size());
+         }
+@@ -175,9 +219,10 @@ public class AutoRouteDockSelectionScreen extends ThemedScreen {
+             listRequest=java.util.UUID.randomUUID();
+             routeRequest=java.util.UUID.randomUUID();building=true;progressStarted=ticks();
+             progressPercent=0;progressState=0;progressStage="排队 / 异步载入码头";
+-            if(destinationVessel==null)ModNetwork.CHANNEL.sendToServer(new CreateAutoRoutePacket(sourceDockPos,docks.get(selectedIndex).pos(),selectedMode,routeRequest));
++            if(destinationVessel==null)ModNetwork.CHANNEL.sendToServer(new CreateAutoRoutePacket(sourceDockPos,docks.get(selectedIndex).pos(),
++                    selectedMode,routeRequest,preference));
+             else ModNetwork.CHANNEL.sendToServer(new com.monpai.sailboatmod.network.packet.DepartForDestinationPacket(
+-                    sourceDockPos,docks.get(selectedIndex).pos(),destinationVessel,destinationCargoIndex,routeRequest));
++                    sourceDockPos,docks.get(selectedIndex).pos(),destinationVessel,destinationCargoIndex,routeRequest,preference));
+             refreshProgress();refresh();
+             return;
+         }
+diff --git a/src/main/java/com/monpai/sailboatmod/client/screen/DockScreen.java b/src/main/java/com/monpai/sailboatmod/client/screen/DockScreen.java
+index e3b4032..bee39b2 100644
+--- a/src/main/java/com/monpai/sailboatmod/client/screen/DockScreen.java
++++ b/src/main/java/com/monpai/sailboatmod/client/screen/DockScreen.java
+@@ -225,11 +225,11 @@ public class DockScreen<T extends DockMenu> extends TransportTerminalScreen<T> {
+         boats.addChildren(panelHeading(screenText("boats_title")), boatList);
+         UIElement routes = Ui.column();
+         routes.layout(l -> l.width(100).flexGrow(1).flexShrink(0).minWidth(90).height(100).gapAll(Ui.GAP_XS));
+-        routes.addChildren(panelHeading(Component.literal("目的地调度")),
+-                Ui.paragraph(Component.literal("选择船只后选择目的港。航路是共享基础设施，不需要手工选择或反转路线。"),"sm-muted"));
++        routes.addChildren(panelHeading(Component.translatable("screen.sailboatmod.destination.heading")),
++                Ui.paragraph(Component.translatable("screen.sailboatmod.destination.explain"),"sm-muted"));
+         lists.addChildren(boats, routes);
+ 
+-        assignButton = new ActionButton(Component.literal("选择目的地并出发"), Ui.Tone.PRIMARY,
++        assignButton = new ActionButton(Component.translatable("screen.sailboatmod.destination.choose"), Ui.Tone.PRIMARY,
+                 () -> openDestination(-1));
+         autoReturnButton = new ActionButton(Component.empty(), Ui.Tone.SECONDARY, () -> send(KEY_ACTION, DockGuiActionPacket.Action.TOGGLE_NON_ORDER_AUTO_RETURN));
+         autoUnloadButton = new ActionButton(Component.empty(), Ui.Tone.SECONDARY, () -> send(KEY_ACTION, DockGuiActionPacket.Action.TOGGLE_NON_ORDER_AUTO_UNLOAD));
+diff --git a/src/main/java/com/monpai/sailboatmod/compat/tellus/TellusLandMaskSampler.java b/src/main/java/com/monpai/sailboatmod/compat/tellus/TellusLandMaskSampler.java
+new file mode 100644
+index 0000000..e19f381
+--- /dev/null
++++ b/src/main/java/com/monpai/sailboatmod/compat/tellus/TellusLandMaskSampler.java
+@@ -0,0 +1,98 @@
++package com.monpai.sailboatmod.compat.tellus;
++
++import com.monpai.sailboatmod.route.terrain.LandMaskTiling;
++import com.monpai.sailboatmod.route.terrain.SurfaceSample;
++import com.monpai.sailboatmod.route.terrain.TerrainSurfaceSampler;
++import com.yucareux.tellus.world.data.mask.TellusLandMaskSource;
++import com.yucareux.tellus.worldgen.EarthChunkGenerator;
++import com.yucareux.tellus.worldgen.TellusWorldgenSources;
++import net.minecraft.server.level.ServerLevel;
++import net.minecraft.world.level.block.Blocks;
++
++import java.util.Optional;
++import java.util.Set;
++import java.util.concurrent.ConcurrentHashMap;
++import java.util.concurrent.ExecutorService;
++import java.util.concurrent.LinkedBlockingQueue;
++import java.util.concurrent.ThreadPoolExecutor;
++import java.util.concurrent.TimeUnit;
++
++/**
++ * 远航寻路专用的 Tellus 海陆取样:只读 Tellus 自己的陆地遮罩({@code samplePreloadTerrain} 判陆/海用的同一份资料),
++ * 不碰高程/土地覆盖/完整解析度地形预取。按取样间距选遮罩层级({@link LandMaskTiling}),并在后台并行预取

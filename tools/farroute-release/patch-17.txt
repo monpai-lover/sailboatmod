@@ -1,0 +1,128 @@
++    public static WaterRouteResult<List<BlockPos>> planReusing(List<BlockPos> existing, BlockPos existingSourceDock,
++                                                               BlockPos existingTargetDock, BlockPos source, BlockPos target,
++                                                               int seaY, TerrainPredictor predictor, TerrainSurfaceSampler surface,
++                                                               long limitMillis, double tellusWorldScale) {
++        install(surface, tellusWorldScale);
++        List<Vec3> points = new ArrayList<>();
++        for (BlockPos p : existing) points.add(new Vec3(p.getX() + .5, p.getY(), p.getZ() + .5));
++        List<WaterRouteNetwork.Route> network = List.of(new WaterRouteNetwork.Route("stored", existingSourceDock,
++                existingTargetDock, points, true));
++        long deadline = System.currentTimeMillis() + limitMillis;
++        try {
++            return WaterRouteCancellation.run(() -> System.currentTimeMillis() > deadline,
++                    () -> WaterAutoRouteService.tryReuseNetwork(null, source, target, seaY,
++                            Math.max(1, WaterRoutePolicy.defaults().boatHalfWidth()), WaterRoutePolicy.defaults(),
++                            new AtomicReference<>(List.of()), new WaterRouteProgressBar(null, null, "", ""),
++                            predictor, Map.of(), network));
++        } catch (CancellationException e) {
++            return WaterRouteResult.failure(WaterRouteFailureReason.TIMEOUT);
++        } finally {
++            WaterAutoRouteService.farTerrainOverride = null;
++        }
++    }
++}
+diff --git a/src/test/java/com/monpai/sailboatmod/route/water/WaterRoutePostProcessorTest.java b/src/test/java/com/monpai/sailboatmod/route/water/WaterRoutePostProcessorTest.java
+index 4329db9..7bd7079 100644
+--- a/src/test/java/com/monpai/sailboatmod/route/water/WaterRoutePostProcessorTest.java
++++ b/src/test/java/com/monpai/sailboatmod/route/water/WaterRoutePostProcessorTest.java
+@@ -85,7 +85,9 @@ class WaterRoutePostProcessorTest {
+             return x==12?WaterColumn.blocked():WaterColumn.passable(p(x,z),0);
+         },List.of(p(0,0),p(32,0)),millis->ready[0]=true,null,WaterRoutePostProcessor.Options.defaults()));
+     }
+-    @Test void finalStageIsWiredAfterStitchingAndBeforeMetadata()throws Exception{String s=Files.readString(Path.of("src/main/java/com/monpai/sailboatmod/route/water/WaterAutoRouteService.java"));int a=s.indexOf("path = finishWholeRoute(map, planner.path()");assertTrue(a>0);assertTrue(s.indexOf("metasOut.set(buildMetas(path",a)>a);assertTrue(s.contains("terrain == null ? null : terrain::awaitProgress"));}
++    @Test void finalStageIsWiredAfterStitchingAndBeforeMetadata()throws Exception{String s=Files.readString(Path.of("src/main/java/com/monpai/sailboatmod/route/water/WaterAutoRouteService.java"));int a=s.indexOf("path = finishGuidedRoute(map, planner.path(), planner.directEdges()");assertTrue(a>0);assertTrue(s.indexOf("metasOut.set(buildMetas(path",a)>a);assertTrue(s.contains("terrain == null ? null : terrain::awaitProgress"));
++        int g=s.indexOf("static List<BlockPos> finishGuidedRoute(");assertTrue(g>0);String guided=s.substring(g,s.indexOf("private static boolean strictSegmentClear",g));
++        assertTrue(guided.contains("finishWholeRoute(map, path, halfWidth, await, progress)"));assertTrue(guided.contains("finishWholeRoute(map, new ArrayList<>(section)"));}
+     @Test void cheapInitialPruningDoesNotSpendBudgetScoringEveryOffshoreRing() {
+         var input=List.of(p(0,0),p(100,100),p(200,0),p(300,100),p(400,0));
+         var r=WaterRoutePostProcessor.optimize(hull((x,z)->true),input,null,null,
+diff --git a/src/test/java/com/monpai/sailboatmod/route/water/WorldWaterOverviewTest.java b/src/test/java/com/monpai/sailboatmod/route/water/WorldWaterOverviewTest.java
+new file mode 100644
+index 0000000..76044d1
+--- /dev/null
++++ b/src/test/java/com/monpai/sailboatmod/route/water/WorldWaterOverviewTest.java
+@@ -0,0 +1,49 @@
++package com.monpai.sailboatmod.route.water;
++
++import org.junit.jupiter.api.Test;
++
++import static org.junit.jupiter.api.Assertions.*;
++
++class WorldWaterOverviewTest {
++    private static final double SCALE = 100;
++
++    private static int bx(double lon) { return (int) Math.round(lon * 111319.49166666667D / SCALE); }
++    private static int bz(double lat) {
++        return (int) Math.round(-6378137.050041738D * Math.log(Math.tan(Math.PI / 4 + Math.toRadians(lat) / 2)) / SCALE);
++    }
++
++    @Test
++    void bundledOverviewKnowsOceansContinentsAndStraits() {
++        WorldWaterOverview overview = WorldWaterOverview.get();
++        assertNotNull(overview, "the bundled overview resource must load");
++        assertTrue(overview.water(75, -10), "Indian Ocean");
++        assertTrue(overview.water(-30, 30), "Atlantic");
++        assertFalse(overview.water(15, 20), "Sahara");
++        assertFalse(overview.water(100, 45), "Mongolia");
++        assertTrue(overview.water(1.4, 50.9), "Strait of Dover");
++        assertTrue(overview.water(105.8, -6.0), "Sunda Strait");
++        assertTrue(overview.water(-5.6, 35.95), "Strait of Gibraltar");
++        assertFalse(overview.water(32.3, 30.0), "the Suez isthmus is closed at overview resolution");
++    }
++
++    @Test
++    void seaDistanceDoesNotLeakThroughIsthmuses() {
++        WorldWaterOverview overview = WorldWaterOverview.get();
++        // Port Said (Mediterranean) to Suez (Red Sea): ~150 km apart, but by sea it is around Africa.
++        GlobalWaterGridPlanner.SeaDistance field = overview.seaDistance(SCALE, bx(32.35), bz(31.35), bx(32.6), bz(29.8));
++        double d = field.distance(bx(32.6), bz(29.8));
++        assertTrue(d > 150_000, "Mediterranean -> Red Sea must not cross Suez in the overview, got " + d);
++        // Taipei -> IJmuiden: about 280k blocks at 1:100 by sea.
++        GlobalWaterGridPlanner.SeaDistance far = overview.seaDistance(SCALE, bx(4.55), bz(52.465), bx(121.37), bz(25.16));
++        double route = far.distance(bx(121.37), bz(25.16));
++        assertTrue(route > 230_000 && route < 330_000, "Taipei -> Amsterdam sea distance " + route);
++    }
++
++    @Test
++    void tellusBlockRectanglesMapToTheSamePlaces() {
++        GlobalWaterGridPlanner.OverviewWater water = WorldWaterOverview.get().forTellusScale(SCALE);
++        assertTrue(water.anyWater(bx(75), bz(-10), bx(75) + 1023, bz(-10) + 1023), "Indian Ocean");
++        assertFalse(water.anyWater(bx(15), bz(20), bx(15) + 1023, bz(20) + 1023), "Sahara");
++        assertFalse(water.anyWater(bx(100), bz(45), bx(100) + 1023, bz(45) + 1023), "Mongolia");
++    }
++}
+diff --git a/src/test/java/com/monpai/sailboatmod/route/water/tellus/PmTilesLandMask.java b/src/test/java/com/monpai/sailboatmod/route/water/tellus/PmTilesLandMask.java
+new file mode 100644
+index 0000000..7e307c6
+--- /dev/null
++++ b/src/test/java/com/monpai/sailboatmod/route/water/tellus/PmTilesLandMask.java
+@@ -0,0 +1,255 @@
++package com.monpai.sailboatmod.route.water.tellus;
++
++import javax.imageio.ImageIO;
++import java.awt.image.BufferedImage;
++import java.awt.image.Raster;
++import java.io.ByteArrayInputStream;
++import java.io.ByteArrayOutputStream;
++import java.io.IOException;
++import java.io.InputStream;
++import java.io.RandomAccessFile;
++import java.nio.ByteBuffer;
++import java.nio.ByteOrder;
++import java.nio.file.Path;
++import java.util.ArrayList;
++import java.util.List;
++import java.util.concurrent.ConcurrentHashMap;
++import java.util.zip.GZIPInputStream;
++
++/**
++ * Offline reader for Tellus' own land mask ({@code tellus_landmask.pmtiles}, the same file Tellus downloads at runtime).
++ * Mirrors {@code TellusLandMaskSource}: raster PNG tiles, sample &gt; 0 = land, missing tile = water, zoom chosen from the
++ * world scale, block coordinates projected with Tellus' Web-Mercator {@code EarthProjection}.
++ */
++public final class PmTilesLandMask {
++    static final double METERS_PER_DEGREE = 111319.49166666667D;
++    static final double EARTH_RADIUS = 6378137.050041738D;
++    private static final double EQUATOR = 4.0075017E7D;
++
++    private record Entry(long tileId, long offset, int length, int runLength) { }

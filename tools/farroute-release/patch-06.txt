@@ -1,0 +1,178 @@
++            towardStart = seaSource != null ? seaSource.toward(sc, gc) : new Overview(overviewCell, sc, gc);
++            LOGGER.info("[WaterPath] 全局概览 cell={} 距离场 目标侧={}格 起点侧={}格 耗时={}ms", overviewCell,
++                    towardGoal.settled(), towardStart.settled(), (System.nanoTime() - t0) / 1_000_000L);
++            Side fwd = new Side(kx(g), kz(g), towardGoal), bwd = new Side(kx(s), kz(s), towardStart);
++            fwd.seed(s);
++            bwd.seed(g);
++            int[] dx = {1, -1, 0, 0, 1, 1, -1, -1};
++            int[] dz = {0, 0, 1, -1, 1, -1, 1, -1};
++            while (true) {
++                if (expanded >= expansionLimit) { failure = WaterRouteFailureReason.NODE_BUDGET_EXCEEDED; return null; }
++                // 任一侧开集耗尽 = 该侧连通水域已全部扩展仍未相遇 → 此解析度下不连通(快速失败)。
++                if (!fwd.clean() || !bwd.clean()) { failure = WaterRouteFailureReason.NO_WATER_PATH; return null; }
++                // 严格交替:加权启发下「扩 f 小的一侧」会让一侧独占(f 一路下降),两前沿永不相遇。
++                Side self = (expanded & 1) == 0 ? fwd : bwd;
++                Side other = self == fwd ? bwd : fwd;
++                int node = self.pop();
++                self.closed[node] = true;
++                expanded++;
++                long nodeKey = self.keys[node];
++                int otherNode = other.index.get(nodeKey);
++                if (otherNode >= 0 && other.closed[otherNode]) {
++                    return self == fwd ? join(fwd, node, bwd, otherNode) : join(fwd, otherNode, bwd, node);
++                }
++                int cx = kx(nodeKey), cz = kz(nodeKey);
++                for (int d = 0; d < 8; d++) {
++                    int nx = cx + dx[d], nz = cz + dz[d];
++                    long nk = key(nx, nz);
++                    int existing = self.index.get(nk);
++                    if (existing >= 0 && self.closed[existing]) continue;
++                    int across = other.index.get(nk);
++                    if (across >= 0 && other.closed[across] && cellWater(nx, nz) && edge(cx, cz, nx, nz)) {
++                        // 邻格已被对侧确定:直接拼接(self 链 → 邻格 → 对侧链)。
++                        int linked = self.size;
++                        self.push(nk, self.g[node] + (d < 4 ? 1.0D : SQRT2), node, existing);
++                        int selfNode = existing >= 0 ? existing : linked;
++                        return self == fwd ? join(fwd, selfNode, bwd, across) : join(fwd, across, bwd, selfNode);
++                    }
++                    double ng = self.g[node] + (d < 4 ? 1.0D : SQRT2) + (coastal(nx, nz) ? COAST_PENALTY : 0);
++                    if (existing >= 0 && self.g[existing] <= ng) continue;
++                    if (!cellWater(nx, nz) || !edge(cx, cz, nx, nz)) continue;
++                    if (d >= 4 && !cellWater(cx, nz) && !cellWater(nx, cz)) continue; // 两侧都是陆:不切角穿过
++                    self.push(nk, ng, node, existing);
++                }
++            }
++        }
++
++        private List<BlockPos> join(Side fwd, int fNode, Side bwd, int bNode) {
++            List<BlockPos> out = new ArrayList<>();
++            for (int n = fNode; n >= 0; n = fwd.parent[n]) out.add(pos(fwd.keys[n]));
++            java.util.Collections.reverse(out);
++            for (int n = bwd.parent[bNode]; n >= 0; n = bwd.parent[n]) out.add(pos(bwd.keys[n]));
++            return out;
++        }
++
++        private BlockPos pos(long key) {
++            return new BlockPos(center(kx(key)), seaY, center(kz(key)));
++        }
++
++        private final class Side {
++            final int tx, tz;
++            final SeaDistance overview;
++            final LongIntMap index = new LongIntMap();
++            long[] keys = new long[1024];
++            double[] g = new double[1024];
++            int[] parent = new int[1024];
++            boolean[] closed = new boolean[1024];
++            int size;
++            double[] heapF = new double[1024];
++            int[] heapN = new int[1024];
++            int heapSize;
++
++            Side(int tx, int tz, SeaDistance overview) { this.tx = tx; this.tz = tz; this.overview = overview; }
++
++            void seed(long key) { push(key, 0, -1, -1); }
++
++            double h(long key) {
++                double dx = kx(key) - tx, dz = kz(key) - tz;
++                double straight = Math.sqrt(dx * dx + dz * dz);
++                // 概览距离场 = 绕开大陆的海路距离(以细格为单位):让搜索沿海路走廊推进,而不是对着大陆另一侧的目标
++                // 把整片大洋扩展完。概览格比细格粗 OVERVIEW_RATIO 倍,减一格的量化误差后再与直线距离取大。
++                double sea = overview == null ? -1 : overview.distance(center(kx(key)), center(kz(key)));
++                return (sea < 0 ? straight : Math.max(straight, sea / cell - OVERVIEW_RATIO)) * WEIGHT;
++            }
++
++            void push(long key, double gCost, int parentNode, int existing) {
++                int node = existing;
++                if (node < 0) {
++                    if (size == keys.length) grow();
++                    node = size++;
++                    keys[node] = key;
++                    index.put(key, node);
++                }
++                g[node] = gCost;
++                parent[node] = parentNode;
++                heapPush(gCost + h(key), node);
++            }
++
++            /** Drops stale heap entries; false when the open set is empty. */
++            boolean clean() {
++                while (heapSize > 0) {
++                    int n = heapN[0];
++                    if (!closed[n] && Math.abs(heapF[0] - (g[n] + h(keys[n]))) < 1.0E-9D) return true;
++                    heapPop();
++                }
++                return false;
++            }
++
++            int pop() {
++                int n = heapN[0];
++                heapPop();
++                return n;
++            }
++
++            private void grow() {
++                int cap = keys.length * 2;
++                keys = Arrays.copyOf(keys, cap);
++                g = Arrays.copyOf(g, cap);
++                parent = Arrays.copyOf(parent, cap);
++                closed = Arrays.copyOf(closed, cap);
++            }
++
++            private void heapPush(double f, int n) {
++                if (heapSize == heapF.length) {
++                    heapF = Arrays.copyOf(heapF, heapSize * 2);
++                    heapN = Arrays.copyOf(heapN, heapSize * 2);
++                }
++                int i = heapSize++;
++                while (i > 0) {
++                    int p = (i - 1) >>> 1;
++                    if (heapF[p] <= f) break;
++                    heapF[i] = heapF[p];
++                    heapN[i] = heapN[p];
++                    i = p;
++                }
++                heapF[i] = f;
++                heapN[i] = n;
++            }
++
++            private void heapPop() {
++                double f = heapF[--heapSize];
++                int n = heapN[heapSize];
++                int i = 0;
++                while (true) {
++                    int c = 2 * i + 1;
++                    if (c >= heapSize) break;
++                    if (c + 1 < heapSize && heapF[c + 1] < heapF[c]) c++;
++                    if (heapF[c] >= f) break;
++                    heapF[i] = heapF[c];
++                    heapN[i] = heapN[c];
++                    i = c;
++                }
++                if (heapSize > 0) {
++                    heapF[i] = f;
++                    heapN[i] = n;
++                }
++            }
++        }
++    }
++
++    static final int OVERVIEW_RATIO = 8;
++    private static final int OVERVIEW_MAX_SETTLED = 200_000;
++
++    /**
++     * 概览距离场:比细格粗 {@link #OVERVIEW_RATIO} 倍的乐观水网(格内 3×3 任一取样是水即可航,邻格直接相连),
++     * 从 {@code target} 朝 {@code other} 跑 A*(一致启发,已确定格的距离精确),直到 other 确定后继续到 f ≤ 1.3×最优,
++     * 只确定航线走廊一带,不铺满整个大洋。
++     * 取样解析度很粗(Tellus 只用最低几级遮罩瓦片,整条航线几十张),是细搜索的启发式,不决定可航性。
++     */
++    private final class Overview implements SeaDistance {
++        private final int cell;
++        private final LongIntMap index = new LongIntMap();
++        private final LongByteMap water = new LongByteMap();
++        private double[] dist = new double[1024];
++        private int size;
++
++        Overview(int cell, BlockPos target, BlockPos other) {
++            this.cell = cell;
++            long t = key(Math.floorDiv(target.getX(), cell), Math.floorDiv(target.getZ(), cell));

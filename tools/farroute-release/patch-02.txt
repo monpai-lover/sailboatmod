@@ -1,0 +1,143 @@
++ * 相邻瓦片(Tellus 本身逐瓦片同步下载,冷缓存时顺序下载是远航的主要等待)。只在后台线程调用。
++ */
++public final class TellusLandMaskSampler implements TerrainSurfaceSampler {
++    private static final int PREFETCH_THREADS = 6;
++    private static final int PREFETCH_QUEUE = 512;
++    private static final ExecutorService PREFETCH = new ThreadPoolExecutor(PREFETCH_THREADS, PREFETCH_THREADS,
++            30, TimeUnit.SECONDS, new LinkedBlockingQueue<>(PREFETCH_QUEUE), runnable -> {
++                Thread thread = new Thread(runnable, "sailboat-landmask-prefetch");
++                thread.setDaemon(true);
++                return thread;
++            }, new ThreadPoolExecutor.DiscardPolicy());
++
++    static {
++        ((ThreadPoolExecutor) PREFETCH).allowCoreThreadTimeOut(true);
++    }
++
++    private final TellusLandMaskSource mask;
++    private final double worldScale;
++    private final int seaLevel;
++    private final Set<Long> requestedTiles = ConcurrentHashMap.newKeySet();
++
++    public TellusLandMaskSampler(ServerLevel level) {
++        this.mask = TellusWorldgenSources.landMask();
++        this.worldScale = ((EarthChunkGenerator) level.getChunkSource().getGenerator()).settings().worldScale();
++        this.seaLevel = level.getSeaLevel();
++    }
++
++    /** 不触发下载,只用反射确认用到的 Tellus API 都还在。 */
++    public static void checkApi() throws ReflectiveOperationException {
++        TellusWorldgenSources.class.getMethod("landMask");
++        TellusLandMaskSource.class.getMethod("sampleLandMask", double.class, double.class, double.class);
++        TellusLandMaskSource.LandMaskSample.class.getMethod("known");
++        TellusLandMaskSource.LandMaskSample.class.getMethod("land");
++        TellusSurfaceSampler.checkApi();
++    }
++
++    @Override
++    public Optional<SurfaceSample> sample(int x, int z, int blocksPerSample) {
++        int k = LandMaskTiling.coarsening(blocksPerSample);
++        prefetchAround(x, z, k);
++        Boolean land = land(x, z, k);
++        if (land == null) return Optional.empty();
++        return Optional.of(land
++                ? new SurfaceSample(seaLevel + 1, Blocks.STONE.defaultBlockState(), false, 0)
++                : new SurfaceSample(seaLevel, Blocks.WATER.defaultBlockState(), true, 1));
++    }
++
++    private Boolean land(double x, double z, int k) {
++        try {
++            TellusLandMaskSource.LandMaskSample sample = mask.sampleLandMask((x + 0.5D) / k, (z + 0.5D) / k, worldScale * k);
++            return sample.known() ? sample.land() : null;
++        } catch (RuntimeException e) {
++            return null;
++        }
++    }
++
++    /** 第一次碰到某瓦片时,把它周围 8 张瓦片交给后台并行下载(进 Tellus 自己的磁盘/内存缓存)。 */
++    private void prefetchAround(int x, int z, int k) {
++        double tile = LandMaskTiling.tileBlocks(worldScale, LandMaskTiling.zoomFor(worldScale, k));
++        long tx = (long) Math.floor(x / tile), tz = (long) Math.floor(z / tile);
++        if (!requestedTiles.add(tileKey(k, tx, tz))) return;
++        for (int dx = -1; dx <= 1; dx++) {
++            for (int dz = -1; dz <= 1; dz++) {
++                if (dx == 0 && dz == 0) continue;
++                long nx = tx + dx, nz = tz + dz;
++                if (!requestedTiles.add(tileKey(k, nx, nz))) continue;
++                double cx = (nx + 0.5D) * tile, cz = (nz + 0.5D) * tile;
++                PREFETCH.execute(() -> land(cx, cz, k)); // 丢弃满队列的请求无妨:真正用到时会同步下载
++            }
++        }
++    }
++
++    private static long tileKey(int k, long tx, long tz) {
++        return ((long) Integer.numberOfTrailingZeros(Integer.highestOneBit(k)) << 56) ^ ((tx & 0xFFFFFFFL) << 28) ^ (tz & 0xFFFFFFFL);
++    }
++}
+diff --git a/src/main/java/com/monpai/sailboatmod/network/ModNetwork.java b/src/main/java/com/monpai/sailboatmod/network/ModNetwork.java
+index e096c47..2635ded 100644
+--- a/src/main/java/com/monpai/sailboatmod/network/ModNetwork.java
++++ b/src/main/java/com/monpai/sailboatmod/network/ModNetwork.java
+@@ -110,7 +110,7 @@ import net.neoforged.bus.api.IEventBus;
+ import java.util.Optional;
+ 
+ public final class ModNetwork {
+-    private static final String PROTOCOL_VERSION = "20"; // Live market updates plus aircraft actions and airport terminals.
++    private static final String PROTOCOL_VERSION = "21"; // 20 + route planning preference (optimal / reuse-first) on route and destination requests.
+     public static final PayloadChannel CHANNEL = new PayloadChannel(PROTOCOL_VERSION);
+ 
+     private static int packetId = 0;
+diff --git a/src/main/java/com/monpai/sailboatmod/network/packet/CreateAutoRoutePacket.java b/src/main/java/com/monpai/sailboatmod/network/packet/CreateAutoRoutePacket.java
+index cedfc88..2197f4b 100644
+--- a/src/main/java/com/monpai/sailboatmod/network/packet/CreateAutoRoutePacket.java
++++ b/src/main/java/com/monpai/sailboatmod/network/packet/CreateAutoRoutePacket.java
+@@ -20,6 +20,7 @@ public class CreateAutoRoutePacket {
+     private final java.util.UUID requestId;
+     private final BlockPos targetDockPos;
+     private final WaterMidMode midMode; // 中段寻路模式(noise/nbt/hybrid),仅水路用
++    private final com.monpai.sailboatmod.route.water.RoutePlanningPreference preference; // 最优 / 复用优先
+ 
+     public CreateAutoRoutePacket(BlockPos sourceDockPos, BlockPos targetDockPos) {
+         this(sourceDockPos, targetDockPos, WaterMidMode.current());
+@@ -29,6 +30,11 @@ public class CreateAutoRoutePacket {
+         this(sourceDockPos,targetDockPos,midMode,java.util.UUID.randomUUID());
+     }
+     public CreateAutoRoutePacket(BlockPos sourceDockPos,BlockPos targetDockPos,WaterMidMode midMode,java.util.UUID requestId) {
++        this(sourceDockPos,targetDockPos,midMode,requestId,com.monpai.sailboatmod.route.water.RoutePlanningPreference.OPTIMAL);
++    }
++    public CreateAutoRoutePacket(BlockPos sourceDockPos,BlockPos targetDockPos,WaterMidMode midMode,java.util.UUID requestId,
++                                 com.monpai.sailboatmod.route.water.RoutePlanningPreference preference) {
++        this.preference=preference==null?com.monpai.sailboatmod.route.water.RoutePlanningPreference.OPTIMAL:preference;
+         this.requestId=requestId;
+         this.sourceDockPos = sourceDockPos;
+         this.targetDockPos = targetDockPos;
+@@ -40,6 +46,7 @@ public class CreateAutoRoutePacket {
+         buf.writeUUID(msg.requestId);
+         buf.writeBlockPos(msg.targetDockPos);
+         buf.writeByte(msg.midMode.id());
++        buf.writeByte(msg.preference.id());
+     }
+ 
+     public static CreateAutoRoutePacket decode(FriendlyByteBuf buf) {
+@@ -47,7 +54,8 @@ public class CreateAutoRoutePacket {
+         java.util.UUID requestId=buf.readUUID();
+         BlockPos tgt = buf.readBlockPos();
+         WaterMidMode mode = WaterMidMode.fromId(buf.readByte());
+-        return new CreateAutoRoutePacket(src, tgt, mode,requestId);
++        var preference = com.monpai.sailboatmod.route.water.RoutePlanningPreference.fromId(buf.readByte());
++        return new CreateAutoRoutePacket(src, tgt, mode,requestId,preference);
+     }
+ 
+     public static void handle(CreateAutoRoutePacket msg, Supplier<NetworkEvent.Context> ctx) {
+@@ -75,7 +83,7 @@ public class CreateAutoRoutePacket {
+                         if(error!=null||current!=sourceDock||!com.monpai.sailboatmod.route.water.PortDockSnapshot.isPort(target)){
+                             session.end(0,RouteWorkProgressPacket.FAILED,"码头加载失败，请重试");return;
+                         }
+-                        WaterRouteResult<Void> result=WaterAutoRouteService.submitAutoRoute(serverLevel,sourceDock,target,player,msg.midMode);
++                        WaterRouteResult<Void> result=WaterAutoRouteService.submitAutoRoute(serverLevel,sourceDock,target,player,msg.midMode,msg.preference);
+                         if(!result.successful())session.end(0,RouteWorkProgressPacket.FAILED,WaterAutoRouteService.messageFor(result.reason()).getString());
+                     }));
+                 return;
+diff --git a/src/main/java/com/monpai/sailboatmod/network/packet/DepartForDestinationPacket.java b/src/main/java/com/monpai/sailboatmod/network/packet/DepartForDestinationPacket.java
+index 142c4d4..7582732 100644
+--- a/src/main/java/com/monpai/sailboatmod/network/packet/DepartForDestinationPacket.java

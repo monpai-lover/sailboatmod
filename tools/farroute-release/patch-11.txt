@@ -1,0 +1,126 @@
++            HierarchicalWaterRoutePlanner planner;
++            if (far != null) {
++                // Tellus:全局水域网格(陆地遮罩 + 内置海路概览启发)直接给出导向与开阔直航段,取代逐点 LOD 粗寻。
++                bar.update(4, "全局水域走向");
++                long guidanceStart = System.nanoTime();
++                GlobalWaterGridPlanner.Guidance guidance = GlobalWaterGridPlanner.plan(
++                        landMaskWorld(far.landMask(), source.getY()), far.seaDistances(), source, target, source.getY());
++                LOGGER.info("[WaterPath] 远航全局导向 {} cell={} 扩展={} 航段={} 耗时={}ms", guidance.successful() ? "成功" : guidance.failure(),
++                        guidance.cellSize(), guidance.expandedNodes(), guidance.legs().size(), (System.nanoTime() - guidanceStart) / 1_000_000L);
++                if (!guidance.successful()) return WaterRouteResult.failure(guidance.failure());
++                planner = HierarchicalWaterRoutePlanner.withGuidance(detailed, source, target,
++                        WaterRoutePolicy.nbtRefine(), raw -> finishDetailedSegment(map, raw, seaY, boatHalfWidth), guidance.legs());
++            } else {
++                planner = new HierarchicalWaterRoutePlanner(coarse, detailed, source, target,
++                        WaterRoutePolicy.nbtRefine(), raw -> finishDetailedSegment(map, raw, seaY, boatHalfWidth));
++            }
+             int previousCompleted = -1;
+             long nextProgress = 0, nextDiagnostic = 0;
+             LOGGER.info("[WaterPath] 地形分层规划: coarse={} detail=FULL_NBT/GENERATOR 严格船宽=2×2 距离={}格",
+@@ -618,8 +710,8 @@ public final class WaterAutoRouteService {
+                 if (status == HierarchicalWaterRoutePlanner.Status.SUCCESS) {
+                     List<BlockPos> path;
+                     try {
+-                        path = finishWholeRoute(map, planner.path(), boatHalfWidth,
+-                                terrain == null ? null : terrain::awaitProgress, bar::update).path();
++                        path = finishGuidedRoute(map, planner.path(), planner.directEdges(), boatHalfWidth,
++                                terrain == null ? null : terrain::awaitProgress, bar::update, true);
+                     } catch (IllegalArgumentException unverified) {
+                         LOGGER.warn("[WaterPath] 航线后处理输入不能验证: {}", unverified.getMessage());
+                         return WaterRouteResult.failure(WaterRouteFailureReason.TERRAIN_NOT_READY);
+@@ -659,7 +751,7 @@ public final class WaterAutoRouteService {
+             WaterRoutePostProcessor.Progress progress) {
+         WaterRouteCancellation.check();
+         var result = WaterRoutePostProcessor.optimize((x, z) -> map.sampleHullStrict(x, z, halfWidth),
+-                path, await, progress, WaterRoutePostProcessor.Options.defaults());
++                path, await, progress, postProcessOptions(path));
+         LOGGER.info("[WaterPath] 全局离岸后处理 points={}->{} length={}->{} turnDegrees={}->{} hairpins={}->{} loops={} moved={} rounded={} samples={} unknown={} limited={}",
+                 result.before().points(), result.after().points(), Math.round(result.before().length()),
+                 Math.round(result.after().length()), Math.round(result.before().turnDegrees()),
+@@ -668,6 +760,129 @@ public final class WaterAutoRouteService {
+         return result;
+     }
+ 
++    static final int REUSE_JOINT_BLOCKS = 256;
++    /** 直航段若有端点落在码头这么近的范围(生成器真实地形而非陆地遮罩)就再做一次严格船宽校验。 */
++    static final int DIRECT_NEAR_PORT_BLOCKS = 2048;
++
++    /** 去掉 {@link #splitLongEdges} 插入、后处理也没动过的切分点(它们仍在原直边上,偏离 ≤1.5 格)。 */
++    static List<BlockPos> dropSplitPoints(List<BlockPos> path, java.util.Set<BlockPos> original) {
++        List<BlockPos> out = new ArrayList<>(path);
++        for (int i = out.size() - 2; i >= 1; i--) {
++            BlockPos p = out.get(i);
++            if (original.contains(p)) continue;
++            BlockPos a = out.get(i - 1), c = out.get(i + 1);
++            double dx = c.getX() - a.getX(), dz = c.getZ() - a.getZ(), len = Math.sqrt(dx * dx + dz * dz);
++            if (len < 1e-6 || a.getY() != p.getY() || p.getY() != c.getY()) continue;
++            double deviation = Math.abs((p.getX() - a.getX()) * dz - (p.getZ() - a.getZ()) * dx) / len;
++            double t = ((p.getX() - a.getX()) * dx + (p.getZ() - a.getZ()) * dz) / (len * len);
++            if (deviation <= 1.5 && t > 0 && t < 1) out.remove(i);
++        }
++        return out;
++    }
++
++    /** 全部边保留,只有「复用段/新补段」交界两侧 window 格以内的边交给后处理。 */
++    static List<Boolean> jointWindows(List<BlockPos> path, List<Boolean> reused, int window) {
++        List<Boolean> keep = new ArrayList<>(java.util.Collections.nCopies(reused.size(), Boolean.TRUE));
++        for (int joint = 1; joint < reused.size(); joint++) {
++            if (reused.get(joint).equals(reused.get(joint - 1))) continue;
++            double run = 0;
++            for (int j = joint - 1; j >= 0 && run < window; j--) { keep.set(j, false); run += Math.sqrt(path.get(j).distSqr(path.get(j + 1))); }
++            run = 0;
++            for (int j = joint; j < reused.size() && run < window; j++) { keep.set(j, false); run += Math.sqrt(path.get(j).distSqr(path.get(j + 1))); }
++        }
++        return keep;
++    }
++
++    /** 把长边沿直线切成 ≤ maxEdge 的小段(点在已验证的直线水域上),让接口窗口只覆盖接口附近。 */
++    static List<BlockPos> splitLongEdges(List<BlockPos> path, List<Boolean> keepIn, List<Boolean> keepOut, int maxEdge) {
++        List<BlockPos> out = new ArrayList<>();
++        out.add(path.getFirst());
++        for (int i = 0; i < keepIn.size(); i++) {
++            BlockPos a = path.get(i), b = path.get(i + 1);
++            int pieces = Math.max(1, (int) Math.ceil(Math.sqrt(a.distSqr(b)) / maxEdge));
++            for (int k = 1; k <= pieces; k++) {
++                out.add(k == pieces ? b : new BlockPos((int) Math.round(a.getX() + (b.getX() - a.getX()) * (double) k / pieces), a.getY(),
++                        (int) Math.round(a.getZ() + (b.getZ() - a.getZ()) * (double) k / pieces)));
++                keepOut.add(keepIn.get(i));
++            }
++        }
++        return out;
++    }
++
++    /**
++     * 分段后处理:keep=true 的边(开阔直航段/已验证的复用段)原样保留,只对其余连续区段(港口两端、近岸精寻段、
++     * 复用接口)跑 {@link #finishWholeRoute}。区段两端是固定接点,后处理不会移动。对整条远洋航线逐格做离岸优化
++     * 既慢(实测 66s/1100 万取样)又几乎不改变直航段。{@code verifyNearPorts} 时,靠近码头的直航段先做严格船宽校验
++     * (那里是生成器真实地形,与陆地遮罩可能不同);不过则整条退回全程后处理。
++     */
++    static List<BlockPos> finishGuidedRoute(RealBlockWaterMap map, List<BlockPos> path, List<Boolean> keep, int halfWidth,
++                                            WaterRoutePostProcessor.AwaitTerrain await, WaterRoutePostProcessor.Progress progress,
++                                            boolean verifyNearPorts) {
++        if (keep == null || keep.size() != path.size() - 1 || !keep.contains(Boolean.TRUE)) {
++            LOGGER.info("[WaterPath] 全程后处理(无可保留边) points={} keep={} kept={}", path.size(),
++                    keep == null ? -1 : keep.size(), keep == null ? 0 : keep.stream().filter(Boolean::booleanValue).count());
++            return finishWholeRoute(map, path, halfWidth, await, progress).path();
++        }
++        if (verifyNearPorts) {
++            BlockPos first = path.getFirst(), last = path.getLast();
++            long nearSq = (long) DIRECT_NEAR_PORT_BLOCKS * DIRECT_NEAR_PORT_BLOCKS;
++            for (int i = 0; i < keep.size(); i++) {
++                if (!keep.get(i)) continue;
++                BlockPos a = path.get(i), b = path.get(i + 1);
++                boolean nearPort = a.distSqr(first) <= nearSq || a.distSqr(last) <= nearSq || b.distSqr(first) <= nearSq || b.distSqr(last) <= nearSq;
++                if (nearPort && !strictSegmentClear(map, a, b, halfWidth, await)) {
++                    LOGGER.info("[WaterPath] 近港直航段严格校验未过 {}->{},整条航线改为全程后处理", a, b);
++                    return finishWholeRoute(map, path, halfWidth, await, progress).path();
++                }
++            }
++        }
++        List<BlockPos> out = new ArrayList<>();
++        int i = 0, sections = 0;
++        while (i < keep.size()) {
++            WaterRouteCancellation.check();
++            if (keep.get(i)) {
++                HierarchicalWaterRoutePlanner.appendCompacted(out, List.of(path.get(i), path.get(i + 1)));
++                i++;

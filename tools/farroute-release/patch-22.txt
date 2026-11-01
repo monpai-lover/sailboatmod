@@ -1,0 +1,14 @@
+ fix_13 讓市場即時更新：遊戲內終端畫面開著時，其他玩家的成交、上下架與訂單進度會直接推送過來，變動的價格會閃爍提示；網頁商城改用 `/api/events` 即時推送。另新增求購出價的綠寶石換算、盤口深度、24 小時漲跌、自選 ★、拼音首字母搜尋（Ctrl+F）、訂單進度時間軸與倒數；網頁端另有防重複下單、ETag／gzip 快取壓縮、訂單追蹤與 Tellus 3D 地球。原始補丁的驗證記錄見 [fix_13 交付說明](docs/handoff/MARKET_LIVE_FIX_13.md)，合併版需以當前分支的協定與驗證為準。
+ 
+diff --git a/START_HERE.md b/START_HERE.md
+index 3c8722e6..bb1ce86a 100644
+--- a/START_HERE.md
++++ b/START_HERE.md
+@@ -1,6 +1,6 @@
+ # SailboatMod 開發入口
+ 
+-本專案目標 Minecraft 1.21.1、NeoForge 21.1.259、Java 21；網路協定為 **17**。
++本專案目標 Minecraft 1.21.1、NeoForge 21.1.259、Java 21；網路協定為 **21**。
+ 
+ 先讀 [README.md](README.md) 的建置與安裝方式，再讀 [AGENTS.md](AGENTS.md) 的架構與 [LDLib2 接入說明](docs/handoff/LDLIB2_INTEGRATION.md)。GeckoLib 4.9.3 與 LDLib2 2.2.42 為必要外置模組；Tellus 0.8.3、Create 6.0.10 是可選整合，其編譯用 JAR 在 `libs/compile-only/`。
+ 

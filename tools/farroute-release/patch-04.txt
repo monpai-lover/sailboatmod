@@ -1,0 +1,177 @@
+     @FunctionalInterface
+     public interface ApiCheck {
+diff --git a/src/main/java/com/monpai/sailboatmod/route/water/GlobalWaterGridPlanner.java b/src/main/java/com/monpai/sailboatmod/route/water/GlobalWaterGridPlanner.java
+new file mode 100644
+index 0000000..6db7253
+--- /dev/null
++++ b/src/main/java/com/monpai/sailboatmod/route/water/GlobalWaterGridPlanner.java
+@@ -0,0 +1,673 @@
++package com.monpai.sailboatmod.route.water;
++
++import com.mojang.logging.LogUtils;
++import net.minecraft.core.BlockPos;
++import org.slf4j.Logger;
++
++import java.util.ArrayList;
++import java.util.Arrays;
++import java.util.List;
++
++/**
++ * 远航全局导向(2026-11,治「台北→阿姆斯特丹」类超远航线算不出):
++ * <ol>
++ *   <li><b>全局水域网格 A*</b>:格边长 {@code cell}(随距离取 16~128,不通再逐级减半)。原始数组 + 开放寻址哈希,
++ *       百万级节点也只需几秒;双向搜索,<b>任一侧开集耗尽 = 该侧水域在此解析度下封闭</b>,立即判不通换更细格,
++ *       不再像旧版那样在一侧封闭时让另一侧把整个大洋扩展完、耗尽预算。</li>
++ *   <li><b>任意角拉直</b>:沿网格路径做视线(line-of-sight)拉直,得到大洋上的长直航段。</li>
++ *   <li><b>航段分级</b>:每条拉直航段用全解析度水图检查「船宽 + 余量」走廊;全水 = 开阔水域,直接采用(不读区块、
++ *       不跑精寻);碰到陆地/近岸 = 沿原网格中心点切成 ≤{@link #DETAIL_PIECE_BLOCKS} 格的小段交给精寻 A*。
++ *       起终两端(泊位 ↔ 网格)永远精寻。</li>
++ * </ol>
++ * 水判定只经由传入的 {@link WaterRouteWorld}(stepSize 当作可接受的数据解析度),本类不碰任何区块/网络 API。
++ */
++public final class GlobalWaterGridPlanner {
++    private static final Logger LOGGER = LogUtils.getLogger();
++    public static final int DETAIL_PIECE_BLOCKS = 2048;
++    public static final int MIN_CELL = 16;
++    public static final int MAX_CELL = 128;
++    static final int MAX_EXPANSIONS = 1_500_000; // 台北→阿姆斯特丹实测 0.82M;内存约 200MB 以内
++    /** 加权 A*:实测(台北→阿姆斯特丹)2.0 比 1.25 扩展少 35%、拉直后航线反而更短。 */
++    private static final double WEIGHT = 2.0D;
++    private static final double SQRT2 = Math.sqrt(2.0D);
++    /** 开阔水域判定:航段两侧各此格数内全是水(船半宽 1 + 海岸线误差余量)。 */
++    static final int DIRECT_CLEARANCE = 4;
++    /** 优先的离岸距离:开阔航段尽量两侧各留这么多格水,只有窄处才退到 {@link #DIRECT_CLEARANCE}。 */
++    static final int PREFERRED_CLEARANCE = 24;
++    /** 贴岸网格格(8 邻有陆)的额外代价(以格为单位):有余地时走廊离岸一格,海峡里各格同价不影响通过。 */
++    private static final double COAST_PENALTY = 0.6D;
++
++    public record Leg(BlockPos from, BlockPos to, boolean direct) { }
++
++    /** 概览用的「方块矩形内是否有水」(按地形源取样的概览;Tellus 世界改用 {@link SeaDistanceSource})。 */
++    @FunctionalInterface
++    public interface OverviewWater {
++        boolean anyWater(int minX, int minZ, int maxX, int maxZ);
++    }
++
++    /** 到某端点的海路距离场(方块);-1 = 未知(调用方退回直线距离)。 */
++    public interface SeaDistance {
++        double distance(int x, int z);
++        int settled();
++    }
++
++    /** 为一对端点建距离场(target 方向);Tellus 世界由内置全球概览提供,零下载。 */
++    @FunctionalInterface
++    public interface SeaDistanceSource {
++        SeaDistance toward(BlockPos target, BlockPos other);
++    }
++
++    public record Guidance(List<Leg> legs, int cellSize, int expandedNodes, WaterRouteFailureReason failure) {
++        public boolean successful() { return failure == WaterRouteFailureReason.NONE; }
++    }
++
++    private final WaterRouteWorld world;
++    private final SeaDistanceSource seaSource;
++    private final int seaY;
++    private final WaterRoutePolicy[] policies = new WaterRoutePolicy[32];
++    private final LongIntMap[] sampleCache = new LongIntMap[32];
++    private static final int SAMPLE_CACHE_LIMIT = 1 << 20;
++    private int expanded;
++
++    private GlobalWaterGridPlanner(WaterRouteWorld world, SeaDistanceSource seaSource, int seaY) {
++        this.world = world;
++        this.seaSource = seaSource;
++        this.seaY = seaY;
++    }
++
++    public static int initialCell(BlockPos start, BlockPos goal) {
++        double distance = Math.hypot((double) goal.getX() - start.getX(), (double) goal.getZ() - start.getZ());
++        int cell = MIN_CELL;
++        while (cell < MAX_CELL && distance / cell > 2048) cell *= 2;
++        return cell;
++    }
++
++    /** 全局导向 + 航段分级。不通时格边长逐级减半直到 {@link #MIN_CELL}。 */
++    public static Guidance plan(WaterRouteWorld world, BlockPos start, BlockPos goal, int seaY) {
++        return plan(world, null, start, goal, seaY);
++    }
++
++    public static Guidance plan(WaterRouteWorld world, SeaDistanceSource overview, BlockPos start, BlockPos goal, int seaY) {
++        return start == null || goal == null ? plan(world, overview, start, goal, seaY, MIN_CELL)
++                : plan(world, overview, start, goal, seaY, initialCell(start, goal));
++    }
++
++    static Guidance plan(WaterRouteWorld world, BlockPos start, BlockPos goal, int seaY, int firstCell) {
++        return plan(world, null, start, goal, seaY, firstCell);
++    }
++
++    static Guidance plan(WaterRouteWorld world, SeaDistanceSource overview, BlockPos start, BlockPos goal, int seaY, int firstCell) {
++        if (world == null || start == null || goal == null) {
++            return new Guidance(List.of(), 0, 0, WaterRouteFailureReason.NO_WATER_PATH);
++        }
++        GlobalWaterGridPlanner planner = new GlobalWaterGridPlanner(world, overview, seaY);
++        WaterRouteFailureReason failure = WaterRouteFailureReason.NO_WATER_PATH;
++        for (int cell = firstCell; cell >= MIN_CELL; cell /= 2) {
++            long t0 = System.nanoTime();
++            int before = planner.expanded;
++            Grid grid = planner.new Grid(cell, before + MAX_EXPANSIONS);
++            List<BlockPos> centers = grid.search(start, goal);
++            LOGGER.info("[WaterPath] 全局水域网格 cell={} 扩展={} 结果={} 耗时={}ms", cell, planner.expanded - before,
++                    centers == null ? grid.failure : "航点" + centers.size(), (System.nanoTime() - t0) / 1_000_000L);
++            if (centers != null) {
++                List<Leg> legs = planner.classify(start, goal, centers, cell);
++                return new Guidance(legs, cell, planner.expanded, WaterRouteFailureReason.NONE);
++            }
++            failure = grid.failure;
++            if (failure != WaterRouteFailureReason.NO_WATER_PATH) break;
++        }
++        return new Guidance(List.of(), 0, planner.expanded, failure);
++    }
++
++    // ---------------------------------------------------------------------------------------------------------------
++    // Water sampling
++
++    private boolean water(int x, int z, int resolution) {
++        WaterRouteCancellation.check();
++        int r = Math.max(1, resolution);
++        int slot = 31 - Integer.numberOfLeadingZeros(r);
++        // 网格边/视线的取样点落在同一格点阵上大量重复:每个(解析度, x, z)只问一次地形源(Tellus 每次取样含投影换算与缓存查找)。
++        LongIntMap cache = sampleCache[slot];
++        if (cache == null || cache.size() > SAMPLE_CACHE_LIMIT) sampleCache[slot] = cache = new LongIntMap();
++        long key = key(x, z);
++        int cached = cache.get(key);
++        if (cached >= 0) return cached == 1;
++        boolean result = sampleWorld(x, z, slot);
++        cache.put(key, result ? 1 : 0);
++        return result;
++    }
++
++    private boolean sampleWorld(int x, int z, int slot) {
++        WaterRoutePolicy policy = policies[slot];
++        if (policy == null) {
++            policy = new WaterRoutePolicy(1 << slot, 2, 0, 3, Integer.MAX_VALUE, Integer.MAX_VALUE, 0, 1, 0, 1);
++            policies[slot] = policy;
++        }
++        WaterColumn column = world.sample(x, z, policy);
++        return column != null && column.passable();
++    }
++
++    private boolean lineClear(int ax, int az, int bx, int bz, int spacing, int lateral, int resolution) {
++        return lineClear(ax, az, bx, bz, spacing, lateral, resolution, Math.max(1, lateral / 2));
++    }
++
++    private boolean lineClear(int ax, int az, int bx, int bz, int spacing, int lateral, int resolution, int lateralStep) {
++        double dx = bx - ax, dz = bz - az;
++        double length = Math.sqrt(dx * dx + dz * dz);
++        int samples = Math.max(1, (int) Math.ceil(length / spacing));
++        double nx = length == 0 ? 0 : -dz / length, nz = length == 0 ? 0 : dx / length;
++        for (int s = 0; s <= samples; s++) {
++            double t = s / (double) samples;
++            double x = ax + dx * t, z = az + dz * t;
++            for (int o = -lateral; o <= lateral; o += Math.max(1, lateralStep)) {
++                if (!water((int) Math.round(x + nx * o), (int) Math.round(z + nz * o), resolution)) return false;
++                if (lateral == 0) break;
++            }
++        }
++        return true;
++    }
++
