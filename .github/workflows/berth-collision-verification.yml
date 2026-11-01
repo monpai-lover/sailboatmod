@@ -7,7 +7,7 @@ on:
 permissions:
   contents: write
 concurrency:
-  group: berth-collision-${{ github.ref }}
+  group: berth-collision-motion-${{ github.ref }}
   cancel-in-progress: true
 jobs:
   verify:
