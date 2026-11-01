@@ -85,7 +85,9 @@ class WaterRoutePostProcessorTest {
             return x==12?WaterColumn.blocked():WaterColumn.passable(p(x,z),0);
         },List.of(p(0,0),p(32,0)),millis->ready[0]=true,null,WaterRoutePostProcessor.Options.defaults()));
     }
-    @Test void finalStageIsWiredAfterStitchingAndBeforeMetadata()throws Exception{String s=Files.readString(Path.of("src/main/java/com/monpai/sailboatmod/route/water/WaterAutoRouteService.java"));int a=s.indexOf("path = finishWholeRoute(map, planner.path()");assertTrue(a>0);assertTrue(s.indexOf("metasOut.set(buildMetas(path",a)>a);assertTrue(s.contains("terrain == null ? null : terrain::awaitProgress"));}
+    @Test void finalStageIsWiredAfterStitchingAndBeforeMetadata()throws Exception{String s=Files.readString(Path.of("src/main/java/com/monpai/sailboatmod/route/water/WaterAutoRouteService.java"));int a=s.indexOf("path = finishGuidedRoute(map, planner.path(), planner.directEdges()");assertTrue(a>0);assertTrue(s.indexOf("metasOut.set(buildMetas(path",a)>a);assertTrue(s.contains("terrain == null ? null : terrain::awaitProgress"));
+        int g=s.indexOf("static List<BlockPos> finishGuidedRoute(");assertTrue(g>0);String guided=s.substring(g,s.indexOf("private static boolean strictSegmentClear",g));
+        assertTrue(guided.contains("finishWholeRoute(map, path, halfWidth, await, progress)"));assertTrue(guided.contains("finishWholeRoute(map, new ArrayList<>(section)"));}
     @Test void cheapInitialPruningDoesNotSpendBudgetScoringEveryOffshoreRing() {
         var input=List.of(p(0,0),p(100,100),p(200,0),p(300,100),p(400,0));
         var r=WaterRoutePostProcessor.optimize(hull((x,z)->true),input,null,null,

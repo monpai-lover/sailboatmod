@@ -37,6 +37,9 @@ public final class HierarchicalWaterRoutePlanner {
     private final UnaryOperator<List<BlockPos>> finishSegment;
     private final List<Segment> segments = new ArrayList<>();
     private final List<BlockPos> accumulated = new ArrayList<>();
+    /** edgeDirect.get(i): edge accumulated[i] -> accumulated[i+1] came entirely from direct (open-water) legs. */
+    private final List<Boolean> edgeDirect = new ArrayList<>();
+    private List<Boolean> resultDirect = List.of();
     private Status status = Status.RUNNING;
     private WaterRouteFailureReason failure = WaterRouteFailureReason.NONE;
     private WaterRoutePathfinder search;
@@ -84,6 +87,28 @@ public final class HierarchicalWaterRoutePlanner {
         if (coarseWorld == null || detailedWorld == null || start == null || goal == null) fail(WaterRouteFailureReason.NO_WATER_PATH);
     }
 
+    /**
+     * Guidance already planned by {@link GlobalWaterGridPlanner}: open-water legs (verified with coastal clearance
+     * against the native land mask) are appended as-is; the rest go through the normal detailed search below.
+     * The whole route is still verified by the post-processor before it is published.
+     */
+    static HierarchicalWaterRoutePlanner withGuidance(WaterRouteWorld detailedWorld, BlockPos start, BlockPos goal,
+                                                      WaterRoutePolicy detailedPolicy, UnaryOperator<List<BlockPos>> finishSegment,
+                                                      List<GlobalWaterGridPlanner.Leg> legs) {
+        HierarchicalWaterRoutePlanner planner = new HierarchicalWaterRoutePlanner(detailedWorld, detailedWorld, start, goal,
+                detailedPolicy, finishSegment);
+        planner.coarse = false;
+        List<BlockPos> guidance = new ArrayList<>();
+        for (GlobalWaterGridPlanner.Leg leg : legs) {
+            planner.segments.add(new Segment(leg.from(), leg.to(), leg.direct()));
+            if (guidance.isEmpty()) guidance.add(leg.from());
+            guidance.add(leg.to());
+        }
+        planner.coarseGuidance = List.copyOf(guidance);
+        if (planner.segments.isEmpty()) planner.fail(WaterRouteFailureReason.NO_WATER_PATH);
+        return planner;
+    }
+
     /** One bounded search slice. No unfinished route is published; the caller may poll WAITING and cancel at any time. */
     public Status step(int nodeBudget) {
         if (status == Status.SUCCESS || status == Status.FAILED || status == Status.CANCELLED || nodeBudget <= 0) return status;
@@ -94,6 +119,17 @@ public final class HierarchicalWaterRoutePlanner {
             return status;
         }
         status = Status.RUNNING;
+        if (!coarse && search == null && completedSegments < segments.size() && segments.get(completedSegments).direct()) {
+            Segment leg = segments.get(completedSegments);
+            appendTracked(List.of(leg.from(), leg.to()), true);
+            completedSegments++;
+            if (completedSegments == segments.size()) {
+                result = List.copyOf(accumulated);
+                resultDirect = List.copyOf(edgeDirect);
+                status = Status.SUCCESS;
+            }
+            return status;
+        }
         TrackingWorld world = coarse ? coarseWorld : detailedWorld;
         WaterRoutePolicy policy = coarse ? coarsePolicy : detailWithStep(detailStep);
         if (stageBudget == null) {
@@ -138,10 +174,11 @@ public final class HierarchicalWaterRoutePlanner {
                     stageBudget.advance(true); status = Status.WAITING; return status;
                 }
                 if (finished == null || finished.size() < 2) { fail(WaterRouteFailureReason.NO_WATER_PATH); return status; }
-                appendCompacted(accumulated, finished);
+                appendTracked(finished, false);
                 completedSegments++;
                 if (completedSegments == segments.size()) {
                     result = List.copyOf(accumulated);
+                    resultDirect = List.copyOf(edgeDirect);
                     status = Status.SUCCESS;
                 }
             }
@@ -173,11 +210,35 @@ public final class HierarchicalWaterRoutePlanner {
         status = Status.CANCELLED;
         search = null;
         accumulated.clear();
+        edgeDirect.clear();
         segments.clear();
         result = List.of();
     }
 
     public List<BlockPos> path() { return status == Status.SUCCESS ? result : List.of(); }
+    /** Per edge of {@link #path()}: true when it is an unmodified direct (open-water) guidance leg. */
+    public List<Boolean> directEdges() { return status == Status.SUCCESS ? resultDirect : List.of(); }
+
+    /** {@link #appendCompacted} that also tracks which edges came from direct legs (merged edges keep AND). */
+    private void appendTracked(List<BlockPos> incoming, boolean direct) {
+        for (BlockPos point : incoming) {
+            if (!accumulated.isEmpty() && accumulated.getLast().equals(point)) continue;
+            boolean flag = direct;
+            while (accumulated.size() >= 2 && collinearForward(accumulated.get(accumulated.size() - 2), accumulated.getLast(), point)) {
+                accumulated.removeLast();
+                boolean mergedDirect = edgeDirect.removeLast(); // always remove; do not short-circuit
+                flag = flag && mergedDirect;
+            }
+            if (!accumulated.isEmpty()) edgeDirect.add(flag);
+            accumulated.add(point);
+        }
+    }
+
+    private static boolean collinearForward(BlockPos a, BlockPos b, BlockPos point) {
+        long abx = (long) b.getX() - a.getX(), abz = (long) b.getZ() - a.getZ();
+        long bcx = (long) point.getX() - b.getX(), bcz = (long) point.getZ() - b.getZ();
+        return a.getY() == b.getY() && b.getY() == point.getY() && abx * bcz == abz * bcx && abx * bcx + abz * bcz > 0;
+    }
     public Progress progress() { return new Progress(status, completedSegments, segments.size(), expandedNodes); }
     public WaterRouteFailureReason failureReason() { return failure; }
     public int currentStepSize() { return coarse ? coarsePolicy.stepSize() : detailStep; }
@@ -216,10 +277,10 @@ public final class HierarchicalWaterRoutePlanner {
                     return false;
                 }
                 if (!exact.equals(hint)) {
-                    segments.set(completedSegments, new Segment(segment.from(), exact));
+                    segments.set(completedSegments, new Segment(segment.from(), exact, false));
                     if (!finalEndpoint) {
                         Segment next = segments.get(completedSegments + 1);
-                        segments.set(completedSegments + 1, new Segment(exact, next.to()));
+                        segments.set(completedSegments + 1, new Segment(exact, next.to(), false));
                     }
                 }
                 return true;
@@ -231,7 +292,7 @@ public final class HierarchicalWaterRoutePlanner {
             Segment next = segments.remove(completedSegments + 1);
             // Do not jump over terrain: the merged segment is still searched at
             // full precision, then checked by finishSegment before it is appended.
-            segments.set(completedSegments, new Segment(segment.from(), next.to()));
+            segments.set(completedSegments, new Segment(segment.from(), next.to(), false));
             skippedGuidanceAnchors++;
         }
         return false; // RUNNING: bounded preparation continues on the next slice.
@@ -302,6 +363,7 @@ public final class HierarchicalWaterRoutePlanner {
         failure = reason;
         search = null;
         accumulated.clear();
+        edgeDirect.clear();
     }
 
     private void splitGuidance(List<BlockPos> guidance) {
@@ -313,11 +375,11 @@ public final class HierarchicalWaterRoutePlanner {
                 BlockPos next = part == pieces ? b : new BlockPos(
                         (int) Math.round(a.getX() + (b.getX() - (double) a.getX()) * part / pieces), a.getY(),
                         (int) Math.round(a.getZ() + (b.getZ() - (double) a.getZ()) * part / pieces));
-                if (!next.equals(previous)) segments.add(new Segment(previous, next));
+                if (!next.equals(previous)) segments.add(new Segment(previous, next, false));
                 previous = next;
             }
         }
-        if (segments.isEmpty()) segments.add(new Segment(start, goal));
+        if (segments.isEmpty()) segments.add(new Segment(start, goal, false));
     }
 
     /** Removes only exactly collinear, forward points; no verified corner or edge is shortened across terrain. */
@@ -335,7 +397,7 @@ public final class HierarchicalWaterRoutePlanner {
         }
     }
 
-    private record Segment(BlockPos from, BlockPos to) { }
+    private record Segment(BlockPos from, BlockPos to, boolean direct) { }
 
     private static final class TrackingWorld implements WaterRouteWorld {
         private final WaterRouteWorld delegate;

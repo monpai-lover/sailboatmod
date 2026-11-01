@@ -105,6 +105,16 @@ public final class WaterAutoRouteService {
                                                          DockBlockEntity target,
                                                          @Nullable ServerPlayer player,
                                                          WaterMidMode midMode) {
+        return submitAutoRoute(level, source, target, player, midMode, RoutePlanningPreference.OPTIMAL);
+    }
+
+    /** 建立(存进码头的)航线。preference 只影响 Tellus/NBT 路径是否复用航路网络。 */
+    public static WaterRouteResult<Void> submitAutoRoute(ServerLevel level,
+                                                         DockBlockEntity source,
+                                                         DockBlockEntity target,
+                                                         @Nullable ServerPlayer player,
+                                                         WaterMidMode midMode,
+                                                         RoutePlanningPreference preference) {
         if (level == null) {
             return WaterRouteResult.failure(WaterRouteFailureReason.NO_WATER_PATH);
         }
@@ -122,7 +132,8 @@ public final class WaterAutoRouteService {
         WaterRoutePolicy policy = WaterRoutePolicy.defaults();
         // Resolve Tellus endpoints inside the cancellable worker task, not on the server thread.
         if (com.monpai.sailboatmod.route.terrain.TellusWorlds.isTellusLevel(level) || midMode == WaterMidMode.NBT) {
-            return submitTellusAutoRoute(level, source, target, sourceSnapshot, targetSnapshot, player);
+            return submitTellusAutoRoute(level, source, target, sourceSnapshot, targetSnapshot, player, true, null,
+                    preference == null ? RoutePlanningPreference.OPTIMAL : preference);
         }
         // Tellus 地球世界:未生成区块用 Tellus 地形预测(NBT 优先),一律走单段 NBT,忽略 UI 选的模式。
         final com.monpai.sailboatmod.route.terrain.TerrainPredictor predictor =
@@ -283,22 +294,24 @@ public final class WaterAutoRouteService {
     public static WaterRouteResult<Void> submitDestinationRoute(ServerLevel level, DockBlockEntity source,
             DockBlockEntity target, @Nullable ServerPlayer player,
             java.util.function.Consumer<WaterRouteResult<RouteDefinition>> completion) {
+        return submitDestinationRoute(level, source, target, player, completion, RoutePlanningPreference.REUSE_FIRST);
+    }
+
+    public static WaterRouteResult<Void> submitDestinationRoute(ServerLevel level, DockBlockEntity source,
+            DockBlockEntity target, @Nullable ServerPlayer player,
+            java.util.function.Consumer<WaterRouteResult<RouteDefinition>> completion, RoutePlanningPreference preference) {
         if (level == null || !PortDockSnapshot.isPort(source) || !PortDockSnapshot.isPort(target))
             return WaterRouteResult.failure(WaterRouteFailureReason.INVALID_TERMINAL_KIND);
-        return submitTellusAutoRoute(level, source, target, snapshot(source), snapshot(target), player, false, completion);
+        return submitTellusAutoRoute(level, source, target, snapshot(source), snapshot(target), player, false, completion,
+                preference == null ? RoutePlanningPreference.REUSE_FIRST : preference);
     }
 
     /** Tellus: real-first berth validation (including unsaved edits), then full background routing. */
     private static WaterRouteResult<Void> submitTellusAutoRoute(ServerLevel level, DockBlockEntity source,
             DockBlockEntity target, DockSnapshot sourceSnapshot, DockSnapshot targetSnapshot,
-            @Nullable ServerPlayer player) {
-        return submitTellusAutoRoute(level, source, target, sourceSnapshot, targetSnapshot, player, true, null);
-    }
-
-    private static WaterRouteResult<Void> submitTellusAutoRoute(ServerLevel level, DockBlockEntity source,
-            DockBlockEntity target, DockSnapshot sourceSnapshot, DockSnapshot targetSnapshot,
             @Nullable ServerPlayer player, boolean requireManagement,
-            java.util.function.Consumer<WaterRouteResult<RouteDefinition>> completion) {
+            java.util.function.Consumer<WaterRouteResult<RouteDefinition>> completion,
+            RoutePlanningPreference preference) {
         WaterRouteResult<Void> permission = WaterRouteCandidateService.canListCandidate(level, source, target);
         if (!permission.successful()) return permission;
         var predictor = com.monpai.sailboatmod.route.terrain.TellusTerrain.forLevel(level).orElse(null);
@@ -306,7 +319,8 @@ public final class WaterAutoRouteService {
         WaterRouteNetworkSavedData infrastructure = WaterRouteNetworkSavedData.get(level);
         infrastructure.importDock(source);
         infrastructure.importDock(target);
-        List<WaterRouteNetwork.Route> network = infrastructure.snapshot();
+        // 最优:不复用航路网络(建立基础设施时避免把别条航线的绕行固化进新航线);复用优先:先拼既有航段。
+        List<WaterRouteNetwork.Route> network = preference.reuseNetwork() ? infrastructure.snapshot() : List.of();
         var sourceZone = PortTerrainProbe.zone(sourceSnapshot.zone());
         var targetZone = PortTerrainProbe.zone(targetSnapshot.zone());
         var probe = PortTerrainProbe.capture(level, List.of(sourceZone, targetZone), predictor);
@@ -389,7 +403,7 @@ public final class WaterAutoRouteService {
     /** Reuse geometry, not a dock's selected route index. Gaps still run the real solver.
      * A rejected cache never publishes a route; the caller falls back to ordinary planning.
      */
-    private static WaterRouteResult<List<BlockPos>> tryReuseNetwork(ServerLevel level, BlockPos source, BlockPos target,
+    static WaterRouteResult<List<BlockPos>> tryReuseNetwork(@Nullable ServerLevel level, BlockPos source, BlockPos target,
             int seaY, int halfWidth, WaterRoutePolicy policy,
             java.util.concurrent.atomic.AtomicReference<List<WaypointMeta>> metas, WaterRouteProgressBar bar,
             @Nullable com.monpai.sailboatmod.route.terrain.TerrainPredictor predictor,
@@ -401,13 +415,16 @@ public final class WaterAutoRouteService {
         bar.update(3,"复用航路 "+Math.round(plan.reusedLength())+"格 · 待补算 "+Math.round(plan.newLength())+"格");
         LOGGER.info("[WaterPath] 航路网络复用 routes={} reused={} gaps={} legs={}",plan.routeIds().size(),
                 Math.round(plan.reusedLength()),Math.round(plan.newLength()),plan.legs().size());
+        // 复用段整段重验:中段区块走陆地遮罩预测(秒级),不再为上万个远方区块逐个跑生成器预测(常超 60s 回退全量规划)。
+        var validationPredictor=farRoutePredictor(farRouteTerrain(level),predictor,source,target,seaY);
         RealBlockWaterMap map=new RealBlockWaterMap(level,seaY).enableOnDemand().retryUnknownPrediction()
-                .withPredictor(predictor,com.monpai.sailboatmod.route.terrain.PredictionBudget.sixtySeconds());
+                .withPredictor(validationPredictor,com.monpai.sailboatmod.route.terrain.PredictionBudget.sixtySeconds());
         snapshots.forEach((k,v)->map.seedChunk(net.minecraft.world.level.ChunkPos.getX(k),net.minecraft.world.level.ChunkPos.getZ(k),v));
-        try(RouteTerrainSource terrain=new RouteTerrainSource(level,predictor,
+        try(RouteTerrainSource terrain=level==null?null:new RouteTerrainSource(level,validationPredictor,
                 ()->com.monpai.sailboatmod.route.terrain.TellusSurfaceSamplers.forLevel(level).orElse(null))) {
-            map.withAsyncTerrain(terrain);
-            List<BlockPos> joined=new ArrayList<>();int completed=0;
+            if(terrain!=null)map.withAsyncTerrain(terrain);
+            long reuseStart=System.nanoTime();
+            List<BlockPos> joined=new ArrayList<>();List<Boolean> joinedReused=new ArrayList<>();int completed=0;
             for(var leg:plan.legs()) {
                 WaterRouteCancellation.check();
                 List<BlockPos> points=new ArrayList<>();
@@ -426,7 +443,7 @@ public final class WaterAutoRouteService {
                             if(!clear) {LOGGER.info("[WaterPath] 缓存航段已改变，退回完整规划");return null;}
                             checked[i]=true;remaining--;
                         }
-                        if(remaining>0)terrain.awaitProgress(20);
+                        if(remaining>0){if(terrain!=null)terrain.awaitProgress(20);else java.util.concurrent.locks.LockSupport.parkNanos(20_000_000L);}
                     }
                     if(remaining>0)return null;
                 } else {
@@ -437,15 +454,27 @@ public final class WaterAutoRouteService {
                     points=new ArrayList<>(fresh.value());
                 }
                 if(!joined.isEmpty()&&!joined.getLast().equals(points.getFirst()))return null;
-                HierarchicalWaterRoutePlanner.appendCompacted(joined,points);
+                for(BlockPos p:points){
+                    if(!joined.isEmpty()&&joined.getLast().equals(p))continue;
+                    if(!joined.isEmpty())joinedReused.add(leg.reused());
+                    joined.add(p);
+                }
                 bar.update(5+80*++completed/plan.legs().size(),"航路复用 / 补段 "+completed+"/"+plan.legs().size());
             }
             if(joined.size()<2||!joined.getFirst().equals(source)||!joined.getLast().equals(target))return null;
-            WaterRoutePostProcessor.Result finished;
-            try { finished=finishWholeRoute(map,joined,halfWidth,terrain::awaitProgress,bar::update); }
+            LOGGER.info("[WaterPath] 航路网络复用 校验+补段耗时={}ms",(System.nanoTime()-reuseStart)/1_000_000L);
+            // 复用段已在建线时后处理过、刚才也整段重验过;新补段由 runSingleSegmentNbt 处理过。只把段与段的接口
+            // 两侧各 REUSE_JOINT_BLOCKS 格重新后处理(消除接驳急弯),不对整条航线或补段重跑。
+            List<Boolean> legOf=new ArrayList<>(joinedReused), split=new ArrayList<>();
+            java.util.Set<BlockPos> original=new java.util.HashSet<>(joined);
+            joined=splitLongEdges(joined,legOf,split,REUSE_JOINT_BLOCKS);
+            List<Boolean> keep=jointWindows(joined,split,REUSE_JOINT_BLOCKS);
+            List<BlockPos> result;
+            try { result=finishGuidedRoute(map,joined,keep,halfWidth,terrain==null?null:terrain::awaitProgress,bar::update,false); }
             catch (IllegalArgumentException invalidCachedGeometry) { return null; }
-            if(finished==null||finished.path().size()<2)return null;
-            List<BlockPos> result=finished.path();metas.set(buildMetas(result,null,result,-1,result.size()));
+            if(result==null||result.size()<2)return null;
+            result=dropSplitPoints(result,original);
+            metas.set(buildMetas(result,null,result,-1,result.size()));
             return WaterRouteResult.success(result);
         }
     }
@@ -461,7 +490,7 @@ public final class WaterAutoRouteService {
                 bar, predictor, budget, java.util.Map.of());
     }
 
-    private static WaterRouteResult<List<BlockPos>> runSingleSegmentNbt(
+    static WaterRouteResult<List<BlockPos>> runSingleSegmentNbt(
             ServerLevel level, BlockPos sourceBerth, BlockPos targetBerth, int seaY, int boatHalfWidth,
             WaterRoutePolicy policy, java.util.concurrent.atomic.AtomicReference<List<WaypointMeta>> metasOut,
             WaterRouteProgressBar bar, @Nullable com.monpai.sailboatmod.route.terrain.TerrainPredictor predictor,
@@ -559,6 +588,53 @@ public final class WaterAutoRouteService {
         return WaterRouteResult.success(smoothed);
     }
 
+    /**
+     * Tellus 远航专用地形:陆地遮罩取样(全局网格与开阔航段判定)+ 内置全球海路概览(搜索启发,零下载)。
+     * 非 Tellus 世界为 null,沿用原有的 LOD/真实地形粗寻。
+     */
+    record FarRouteTerrain(com.monpai.sailboatmod.route.terrain.TerrainSurfaceSampler landMask,
+                           @Nullable GlobalWaterGridPlanner.SeaDistanceSource seaDistances) { }
+
+    /** Tests only: supplies the far-route terrain when there is no ServerLevel. */
+    static volatile java.util.function.Supplier<FarRouteTerrain> farTerrainOverride;
+
+    @Nullable
+    static FarRouteTerrain farRouteTerrain(@Nullable ServerLevel level) {
+        if (level == null) {
+            java.util.function.Supplier<FarRouteTerrain> override = farTerrainOverride;
+            return override == null ? null : override.get();
+        }
+        var mask = com.monpai.sailboatmod.route.terrain.TellusSurfaceSamplers.landMaskForLevel(level).orElse(null);
+        if (mask == null) return null;
+        java.util.OptionalDouble scale = com.monpai.sailboatmod.route.terrain.TellusSurfaceSamplers.worldScale(level);
+        WorldWaterOverview overview = scale.isPresent() ? WorldWaterOverview.get() : null;
+        return new FarRouteTerrain(mask, overview == null ? null : overview.seaDistances(scale.getAsDouble()));
+    }
+
+    /** 航线中段区块只读陆地遮罩;两端港口(1024 格内)仍走原预测器。 */
+    @Nullable
+    static com.monpai.sailboatmod.route.terrain.TerrainPredictor farRoutePredictor(
+            @Nullable FarRouteTerrain far, @Nullable com.monpai.sailboatmod.route.terrain.TerrainPredictor predictor,
+            BlockPos source, BlockPos target, int seaY) {
+        if (far == null || predictor == null) return predictor;
+        return new com.monpai.sailboatmod.route.terrain.SurfaceSamplerPredictor(far.landMask(), predictor, source, target,
+                com.monpai.sailboatmod.route.terrain.SurfaceSamplerPredictor.DEFAULT_NEAR_BLOCKS, seaY);
+    }
+
+    /** 同步的陆地遮罩世界(全局网格搜索在路线 worker 线程上运行;遮罩瓦片由 Tellus 缓存,取不到当陆)。 */
+    static WaterRouteWorld landMaskWorld(com.monpai.sailboatmod.route.terrain.TerrainSurfaceSampler mask, int seaY) {
+        return new WaterRouteWorld() {
+            @Override public WaterColumn sample(int x, int z, WaterRoutePolicy policy) {
+                WaterRouteCancellation.check();
+                return mask.sample(x, z, Math.max(2, policy.stepSize()))
+                        .map(s -> s.water() ? WaterColumn.passable(new BlockPos(x, seaY, z), 0) : WaterColumn.blocked())
+                        .orElse(null);
+            }
+            @Override public boolean canLoadMoreChunks(int requested) { return false; }
+            @Override public int consumedChunkLoads() { return 0; }
+        };
+    }
+
     /** Far routes use global guidance and independent detailed/verified stages, never a larger fine A* radius. */
     private static WaterRouteResult<List<BlockPos>> runHierarchicalNbt(
             @Nullable ServerLevel level, BlockPos source, BlockPos target, int seaY, int boatHalfWidth,
@@ -566,6 +642,8 @@ public final class WaterAutoRouteService {
             @Nullable com.monpai.sailboatmod.route.terrain.TerrainPredictor predictor,
             @Nullable com.monpai.sailboatmod.route.terrain.PredictionBudget budget,
             java.util.Map<Long, NbtChunkWaterReader.ChunkColumns> portSnapshots) {
+        FarRouteTerrain far = farRouteTerrain(level);
+        predictor = farRoutePredictor(far, predictor, source, target, seaY);
         RealBlockWaterMap map = new RealBlockWaterMap(level, seaY).enableOnDemand().retryUnknownPrediction().withPredictor(predictor, budget);
         portSnapshots.forEach((key, columns) -> map.seedChunk(net.minecraft.world.level.ChunkPos.getX(key),
                 net.minecraft.world.level.ChunkPos.getZ(key), columns));
@@ -592,8 +670,22 @@ public final class WaterAutoRouteService {
                                 ? NbtChunkWaterReader.ReadResult.ready(portSnapshots.get(net.minecraft.world.level.ChunkPos.asLong(cx, cz)))
                                 : (terrain == null ? NbtChunkWaterReader.readForRouting(level, cx, cz, 200) : terrain.read(cx, cz)), null, seaY);
             }
-            HierarchicalWaterRoutePlanner planner = new HierarchicalWaterRoutePlanner(coarse, detailed, source, target,
-                    WaterRoutePolicy.nbtRefine(), raw -> finishDetailedSegment(map, raw, seaY, boatHalfWidth));
+            HierarchicalWaterRoutePlanner planner;
+            if (far != null) {
+                // Tellus:全局水域网格(陆地遮罩 + 内置海路概览启发)直接给出导向与开阔直航段,取代逐点 LOD 粗寻。
+                bar.update(4, "全局水域走向");
+                long guidanceStart = System.nanoTime();
+                GlobalWaterGridPlanner.Guidance guidance = GlobalWaterGridPlanner.plan(
+                        landMaskWorld(far.landMask(), source.getY()), far.seaDistances(), source, target, source.getY());
+                LOGGER.info("[WaterPath] 远航全局导向 {} cell={} 扩展={} 航段={} 耗时={}ms", guidance.successful() ? "成功" : guidance.failure(),
+                        guidance.cellSize(), guidance.expandedNodes(), guidance.legs().size(), (System.nanoTime() - guidanceStart) / 1_000_000L);
+                if (!guidance.successful()) return WaterRouteResult.failure(guidance.failure());
+                planner = HierarchicalWaterRoutePlanner.withGuidance(detailed, source, target,
+                        WaterRoutePolicy.nbtRefine(), raw -> finishDetailedSegment(map, raw, seaY, boatHalfWidth), guidance.legs());
+            } else {
+                planner = new HierarchicalWaterRoutePlanner(coarse, detailed, source, target,
+                        WaterRoutePolicy.nbtRefine(), raw -> finishDetailedSegment(map, raw, seaY, boatHalfWidth));
+            }
             int previousCompleted = -1;
             long nextProgress = 0, nextDiagnostic = 0;
             LOGGER.info("[WaterPath] 地形分层规划: coarse={} detail=FULL_NBT/GENERATOR 严格船宽=2×2 距离={}格",
@@ -618,8 +710,8 @@ public final class WaterAutoRouteService {
                 if (status == HierarchicalWaterRoutePlanner.Status.SUCCESS) {
                     List<BlockPos> path;
                     try {
-                        path = finishWholeRoute(map, planner.path(), boatHalfWidth,
-                                terrain == null ? null : terrain::awaitProgress, bar::update).path();
+                        path = finishGuidedRoute(map, planner.path(), planner.directEdges(), boatHalfWidth,
+                                terrain == null ? null : terrain::awaitProgress, bar::update, true);
                     } catch (IllegalArgumentException unverified) {
                         LOGGER.warn("[WaterPath] 航线后处理输入不能验证: {}", unverified.getMessage());
                         return WaterRouteResult.failure(WaterRouteFailureReason.TERRAIN_NOT_READY);
@@ -659,13 +751,136 @@ public final class WaterAutoRouteService {
             WaterRoutePostProcessor.Progress progress) {
         WaterRouteCancellation.check();
         var result = WaterRoutePostProcessor.optimize((x, z) -> map.sampleHullStrict(x, z, halfWidth),
-                path, await, progress, WaterRoutePostProcessor.Options.defaults());
+                path, await, progress, postProcessOptions(path));
         LOGGER.info("[WaterPath] 全局离岸后处理 points={}->{} length={}->{} turnDegrees={}->{} hairpins={}->{} loops={} moved={} rounded={} samples={} unknown={} limited={}",
                 result.before().points(), result.after().points(), Math.round(result.before().length()),
                 Math.round(result.after().length()), Math.round(result.before().turnDegrees()),
                 Math.round(result.after().turnDegrees()), result.before().hairpins(), result.after().hairpins(),
                 result.loopsRemoved(), result.moved(), result.rounded(), result.samples(), result.unknown(), result.budgetLimited());
         return result;
+    }
+
+    static final int REUSE_JOINT_BLOCKS = 256;
+    /** 直航段若有端点落在码头这么近的范围(生成器真实地形而非陆地遮罩)就再做一次严格船宽校验。 */
+    static final int DIRECT_NEAR_PORT_BLOCKS = 2048;
+
+    /** 去掉 {@link #splitLongEdges} 插入、后处理也没动过的切分点(它们仍在原直边上,偏离 ≤1.5 格)。 */
+    static List<BlockPos> dropSplitPoints(List<BlockPos> path, java.util.Set<BlockPos> original) {
+        List<BlockPos> out = new ArrayList<>(path);
+        for (int i = out.size() - 2; i >= 1; i--) {
+            BlockPos p = out.get(i);
+            if (original.contains(p)) continue;
+            BlockPos a = out.get(i - 1), c = out.get(i + 1);
+            double dx = c.getX() - a.getX(), dz = c.getZ() - a.getZ(), len = Math.sqrt(dx * dx + dz * dz);
+            if (len < 1e-6 || a.getY() != p.getY() || p.getY() != c.getY()) continue;
+            double deviation = Math.abs((p.getX() - a.getX()) * dz - (p.getZ() - a.getZ()) * dx) / len;
+            double t = ((p.getX() - a.getX()) * dx + (p.getZ() - a.getZ()) * dz) / (len * len);
+            if (deviation <= 1.5 && t > 0 && t < 1) out.remove(i);
+        }
+        return out;
+    }
+
+    /** 全部边保留,只有「复用段/新补段」交界两侧 window 格以内的边交给后处理。 */
+    static List<Boolean> jointWindows(List<BlockPos> path, List<Boolean> reused, int window) {
+        List<Boolean> keep = new ArrayList<>(java.util.Collections.nCopies(reused.size(), Boolean.TRUE));
+        for (int joint = 1; joint < reused.size(); joint++) {
+            if (reused.get(joint).equals(reused.get(joint - 1))) continue;
+            double run = 0;
+            for (int j = joint - 1; j >= 0 && run < window; j--) { keep.set(j, false); run += Math.sqrt(path.get(j).distSqr(path.get(j + 1))); }
+            run = 0;
+            for (int j = joint; j < reused.size() && run < window; j++) { keep.set(j, false); run += Math.sqrt(path.get(j).distSqr(path.get(j + 1))); }
+        }
+        return keep;
+    }
+
+    /** 把长边沿直线切成 ≤ maxEdge 的小段(点在已验证的直线水域上),让接口窗口只覆盖接口附近。 */
+    static List<BlockPos> splitLongEdges(List<BlockPos> path, List<Boolean> keepIn, List<Boolean> keepOut, int maxEdge) {
+        List<BlockPos> out = new ArrayList<>();
+        out.add(path.getFirst());
+        for (int i = 0; i < keepIn.size(); i++) {
+            BlockPos a = path.get(i), b = path.get(i + 1);
+            int pieces = Math.max(1, (int) Math.ceil(Math.sqrt(a.distSqr(b)) / maxEdge));
+            for (int k = 1; k <= pieces; k++) {
+                out.add(k == pieces ? b : new BlockPos((int) Math.round(a.getX() + (b.getX() - a.getX()) * (double) k / pieces), a.getY(),
+                        (int) Math.round(a.getZ() + (b.getZ() - a.getZ()) * (double) k / pieces)));
+                keepOut.add(keepIn.get(i));
+            }
+        }
+        return out;
+    }
+
+    /**
+     * 分段后处理:keep=true 的边(开阔直航段/已验证的复用段)原样保留,只对其余连续区段(港口两端、近岸精寻段、
+     * 复用接口)跑 {@link #finishWholeRoute}。区段两端是固定接点,后处理不会移动。对整条远洋航线逐格做离岸优化
+     * 既慢(实测 66s/1100 万取样)又几乎不改变直航段。{@code verifyNearPorts} 时,靠近码头的直航段先做严格船宽校验
+     * (那里是生成器真实地形,与陆地遮罩可能不同);不过则整条退回全程后处理。
+     */
+    static List<BlockPos> finishGuidedRoute(RealBlockWaterMap map, List<BlockPos> path, List<Boolean> keep, int halfWidth,
+                                            WaterRoutePostProcessor.AwaitTerrain await, WaterRoutePostProcessor.Progress progress,
+                                            boolean verifyNearPorts) {
+        if (keep == null || keep.size() != path.size() - 1 || !keep.contains(Boolean.TRUE)) {
+            LOGGER.info("[WaterPath] 全程后处理(无可保留边) points={} keep={} kept={}", path.size(),
+                    keep == null ? -1 : keep.size(), keep == null ? 0 : keep.stream().filter(Boolean::booleanValue).count());
+            return finishWholeRoute(map, path, halfWidth, await, progress).path();
+        }
+        if (verifyNearPorts) {
+            BlockPos first = path.getFirst(), last = path.getLast();
+            long nearSq = (long) DIRECT_NEAR_PORT_BLOCKS * DIRECT_NEAR_PORT_BLOCKS;
+            for (int i = 0; i < keep.size(); i++) {
+                if (!keep.get(i)) continue;
+                BlockPos a = path.get(i), b = path.get(i + 1);
+                boolean nearPort = a.distSqr(first) <= nearSq || a.distSqr(last) <= nearSq || b.distSqr(first) <= nearSq || b.distSqr(last) <= nearSq;
+                if (nearPort && !strictSegmentClear(map, a, b, halfWidth, await)) {
+                    LOGGER.info("[WaterPath] 近港直航段严格校验未过 {}->{},整条航线改为全程后处理", a, b);
+                    return finishWholeRoute(map, path, halfWidth, await, progress).path();
+                }
+            }
+        }
+        List<BlockPos> out = new ArrayList<>();
+        int i = 0, sections = 0;
+        while (i < keep.size()) {
+            WaterRouteCancellation.check();
+            if (keep.get(i)) {
+                HierarchicalWaterRoutePlanner.appendCompacted(out, List.of(path.get(i), path.get(i + 1)));
+                i++;
+                continue;
+            }
+            int j = i;
+            while (j < keep.size() && !keep.get(j)) j++;
+            List<BlockPos> section = path.subList(i, j + 1);
+            HierarchicalWaterRoutePlanner.appendCompacted(out, section.size() < 2 ? section
+                    : finishWholeRoute(map, new ArrayList<>(section), halfWidth, await, progress).path());
+            sections++;
+            i = j;
+        }
+        LOGGER.info("[WaterPath] 分段后处理:保留直航/复用边={} 后处理区段={} 航点 {}->{}",
+                keep.stream().filter(Boolean::booleanValue).count(), sections, path.size(), out.size());
+        return out;
+    }
+
+    /** 严格船宽校验一条边,等待异步地形(最多 60s)。 */
+    private static boolean strictSegmentClear(RealBlockWaterMap map, BlockPos a, BlockPos b, int halfWidth,
+                                              WaterRoutePostProcessor.AwaitTerrain await) {
+        long deadline = System.nanoTime() + 60_000_000_000L;
+        while (System.nanoTime() < deadline) {
+            WaterRouteCancellation.check();
+            int before = map.terrainMisses();
+            boolean clear = map.segmentHullClear(a, b, halfWidth);
+            if (map.terrainMisses() == before) return clear;
+            if (await != null) await.await(20); else java.util.concurrent.locks.LockSupport.parkNanos(20_000_000L);
+        }
+        return false;
+    }
+
+    /** 默认预算(30s / 200 万取样)只够数万格航线;远洋航线按长度放大,否则整条输入验证会超预算直接判失败。 */
+    static WaterRoutePostProcessor.Options postProcessOptions(List<BlockPos> path) {
+        WaterRoutePostProcessor.Options base = WaterRoutePostProcessor.Options.defaults();
+        double length = 0;
+        for (int i = 1; i < path.size(); i++) length += Math.sqrt(path.get(i - 1).distSqr(path.get(i)));
+        long samples = Math.max(base.maxSamples(), Math.min(40_000_000L, Math.round(length * 40)));
+        long millis = Math.max(base.maxMillis(), Math.min(240_000L, Math.round(length / 2)));
+        // 离岸目标 8→12 格、最大平移 24→32 格:近岸精寻段尽量远离海岸(选项上限 16/64)。
+        return new WaterRoutePostProcessor.Options(12, 32, millis, (int) samples);
     }
 
     static boolean useHierarchicalTerrain(boolean tellusPrediction, double distance) {
