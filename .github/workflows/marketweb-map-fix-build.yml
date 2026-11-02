@@ -25,13 +25,13 @@ jobs:
         uses: gradle/actions/setup-gradle@v4
       - name: Run map regression tests
         run: ./gradlew test --tests '*MarketWebMapNonBlockingChunkAccessTest' --tests '*MarketWebMapRegionWatcherTest' --no-daemon
-      - name: Build distributable mod jars
-        run: ./gradlew releaseMod --no-daemon
+      - name: Build MarketWeb addon only
+        run: ./gradlew marketWebJar --no-daemon
       - name: Upload NeoForge jars
         uses: actions/upload-artifact@v4
         with:
           name: sailboatmod-marketweb-map-fix-neoforge-1.21.1
           path: |
-            build/libs/*-neoforge-1.21.1.jar
+            build/libs/*-marketweb-*-neoforge-1.21.1.jar
           if-no-files-found: error
           retention-days: 14
