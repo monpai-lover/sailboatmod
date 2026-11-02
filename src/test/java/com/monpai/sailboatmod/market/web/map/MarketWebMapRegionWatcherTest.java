@@ -45,6 +45,16 @@ class MarketWebMapRegionWatcherTest {
     }
 
     @Test
+    void capsPendingRegionEvents() {
+        MarketWebMapRegionWatcher watcher = new MarketWebMapRegionWatcher();
+        for (int i = 0; i < MarketWebMapRegionWatcher.MAX_DIRTY_REGIONS + 100; i++) {
+            watcher.addDirtyRegion(MarketWebMapRegionWatcher.packRegion(i, 0));
+        }
+        assertEquals(MarketWebMapRegionWatcher.MAX_DIRTY_REGIONS,
+                watcher.drainDirtyRegions(Integer.MAX_VALUE).size());
+    }
+
+    @Test
     void packRoundTripsAcrossSignedRange() {
         int[] samples = {0, 1, -1, 123, -123, Integer.MAX_VALUE, Integer.MIN_VALUE};
         for (int x : samples) {
