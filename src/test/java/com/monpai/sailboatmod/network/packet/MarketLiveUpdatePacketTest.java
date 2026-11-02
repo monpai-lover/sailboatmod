@@ -48,7 +48,7 @@ class MarketLiveUpdatePacketTest {
         assertTrue(network.indexOf("KnownVoyageMenuPacket.class") > payload, "navigation packets append without reordering market payload");
         String last = network.substring(at, network.indexOf(");", network.indexOf("Optional.of(", at)) + 2);
         assertTrue(last.contains("MarketLiveUpdatePacket.class") && last.contains("PLAY_TO_CLIENT"), last);
-        assertTrue(network.contains("PROTOCOL_VERSION = \"22\""), "the combined market and aircraft protocol must differ from either standalone protocol 16");
+        assertTrue(network.contains("PROTOCOL_VERSION = \"23\""), "the combined market and aircraft protocol must differ from either standalone protocol 16");
     }
 
     private static MarketOverviewData overview() {

@@ -224,10 +224,18 @@ public class RoadPlannerTile implements AutoCloseable {
     }
 
     public synchronized boolean setPredictionPixels(int[] pixels) {
-        if (pixels == null || pixels.length != TILE_PIXEL_SIZE * TILE_PIXEL_SIZE) return false;
-        if (predictionPixels == null) predictionPixels = new int[pixels.length];
-        for (int i = 0; i < pixels.length; i++) {
-            if ((pixels[i] >>> 24) != 0) predictionPixels[i] = pixels[i];
+        return applyPredictionPatch(0, 0, TILE_PIXEL_SIZE, TILE_PIXEL_SIZE, pixels);
+    }
+
+    /** Merge strips directly into the underlay; never replace actual terrain or clone the full tile per strip. */
+    public synchronized boolean applyPredictionPatch(int offsetX, int offsetZ, int width, int height, int[] pixels) {
+        if (offsetX < 0 || offsetZ < 0 || width < 1 || height < 1
+                || offsetX + (long) width > TILE_PIXEL_SIZE || offsetZ + (long) height > TILE_PIXEL_SIZE
+                || pixels == null || pixels.length != (long) width * height) return false;
+        if (predictionPixels == null) predictionPixels = new int[TILE_PIXEL_SIZE * TILE_PIXEL_SIZE];
+        for (int z = 0; z < height; z++) for (int x = 0; x < width; x++) {
+            int color = pixels[z * width + x];
+            if ((color >>> 24) != 0) predictionPixels[(offsetZ + z) * TILE_PIXEL_SIZE + offsetX + x] = color;
         }
         dirty = true;
         return true;

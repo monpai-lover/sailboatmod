@@ -65,7 +65,7 @@ class MarketWebAppResourceTest {
     void mapTileEndpointIsPublicCacheReadOnly() throws IOException {
         String source = Files.readString(MARKET_WEB_SERVER, StandardCharsets.UTF_8);
         int start = source.indexOf("private void handleMapTile");
-        int end = source.indexOf("private void handleMapFlag", start);
+        int end = source.indexOf("private void handleSquareMapTile", start);
         assertTrue(start >= 0 && end > start, "handleMapTile method should be present");
         String method = source.substring(start, end);
 
@@ -73,8 +73,15 @@ class MarketWebAppResourceTest {
                 "cached map tile PNGs should be readable without market web login");
         assertTrue(method.contains("\"GET\".equalsIgnoreCase"),
                 "map tile endpoint should remain read-only");
-        assertTrue(method.contains("service.mapTile"),
+        assertTrue(method.contains("service.readMapTile"),
                 "map tile endpoint should only read cached tile bytes");
+        int scheduledWorkEnd = method.indexOf("});");
+        assertTrue(scheduledWorkEnd >= 0 && method.indexOf("service.readMapTile(") > scheduledWorkEnd,
+                "cached PNG disk reads must remain outside the server-thread callback");
+        String square = methodBody(source, "handleSquareMapTile", "handleMapWorld");
+        assertTrue(square.contains("service.readSquareMapTile("));
+        assertFalse(square.contains("callOnServerThread("),
+                "square-tile cached reads must not wait on the game thread");
     }
 
     @Test

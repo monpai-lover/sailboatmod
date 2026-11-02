@@ -110,7 +110,7 @@ import net.neoforged.bus.api.IEventBus;
 import java.util.Optional;
 
 public final class ModNetwork {
-    private static final String PROTOCOL_VERSION = "22"; // 22: known-network menu leases plus explicit server navigation phases.
+    private static final String PROTOCOL_VERSION = "23"; // 23: bounded prediction strips; update clients and server together.
     public static final PayloadChannel CHANNEL = new PayloadChannel(PROTOCOL_VERSION);
 
     private static int packetId = 0;

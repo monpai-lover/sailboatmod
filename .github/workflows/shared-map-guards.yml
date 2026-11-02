@@ -1,0 +1,55 @@
+name: Shared map resource guards
+on:
+  push:
+    branches: [fix/shared-map-stream-bounds]
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: shared-map-guards-${{ github.ref }}
+  cancel-in-progress: true
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Record exact source commit
+        run: |
+          git rev-parse HEAD > build-commit.txt
+          git archive --format=zip HEAD -o /tmp/shared-map-source.zip
+      - uses: actions/upload-artifact@v4
+        with:
+          name: shared-map-source
+          path: /tmp/shared-map-source.zip
+          retention-days: 7
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
+      - uses: gradle/actions/setup-gradle@v4
+      - name: Run full test suite and build main mod
+        run: |
+          chmod +x gradlew
+          ./gradlew test jar -PfixIndex=mapguard_1 -PneoForge.disableRecompilation=true --no-daemon --console=plain
+          sha256sum build/libs/sailboatmod-*-fix_mapguard_1-neoforge-1.21.1.jar > build/libs/SHA256SUMS
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: shared-map-test-results
+          path: |
+            build/test-results/test/
+            build/reports/tests/test/
+          if-no-files-found: ignore
+          retention-days: 14
+      - uses: actions/upload-artifact@v4
+        with:
+          name: sailboatmod-shared-map-guards-neoforge-1.21.1
+          path: |
+            build/libs/sailboatmod-*-fix_mapguard_1-neoforge-1.21.1.jar
+            build/libs/SHA256SUMS
+            build-commit.txt
+          if-no-files-found: error
+          retention-days: 14
