@@ -173,6 +173,48 @@ public final class MarketWebService {
         return out;
     }
 
+    /** Queue map tile work on the server thread; disk reads must happen on the HTTP worker. */
+    public void requestMapTile(MinecraftServer server, String lod, int tileX, int tileZ) {
+        if (server != null && "lod_1".equals(lod)) {
+            MarketWebMapRenderService.global().enqueueTileRequest(server, lod, tileX, tileZ);
+        }
+    }
+
+    /** Reads the already-rendered PNG without touching Minecraft world state. */
+    public byte[] readMapTile(MinecraftServer server, String lod, int tileX, int tileZ) {
+        if (server == null || !"lod_1".equals(lod)) {
+            return null;
+        }
+        return MarketWebMapTileCache.forServer(server)
+                .readPng(MarketWebMapConstants.OVERWORLD, tileX, tileZ)
+                .orElse(null);
+    }
+
+    /** Queue square-tile discovery on the server thread; cached file IO stays on the HTTP worker. */
+    public void requestSquareMapTile(MinecraftServer server, String dimension, int zoom, int tileX, int tileZ) {
+        if (server == null || zoom < 0 || zoom > MarketWebMapPyramidWriter.MAX_ZOOM) {
+            return;
+        }
+        String dimensionId = "overworld".equals(dimension) ? MarketWebMapConstants.OVERWORLD : dimension;
+        if (MarketWebMapConstants.OVERWORLD.equals(dimensionId)) {
+            MarketWebMapRenderService.global().enqueueSquareTileRequest(server, dimensionId, zoom, tileX, tileZ);
+        }
+    }
+
+    /** Reads cached square PNG bytes on the HTTP worker, never on the game thread. */
+    public byte[] readSquareMapTile(MinecraftServer server, String dimension, int zoom, int tileX, int tileZ) {
+        if (server == null || zoom < 0 || zoom > MarketWebMapPyramidWriter.MAX_ZOOM) {
+            return null;
+        }
+        String dimensionId = "overworld".equals(dimension) ? MarketWebMapConstants.OVERWORLD : dimension;
+        if (!MarketWebMapConstants.OVERWORLD.equals(dimensionId)) {
+            return null;
+        }
+        return MarketWebMapTileCache.forServer(server)
+                .readSquareTile(dimensionId, zoom, tileX, tileZ)
+                .orElse(null);
+    }
+
     public byte[] mapTile(MinecraftServer server, String lod, int tileX, int tileZ) {
         if (server == null || !"lod_1".equals(lod)) {
             return null;
