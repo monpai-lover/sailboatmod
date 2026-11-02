@@ -540,7 +540,7 @@ public final class MarketWebMapRenderService {
 
     private static boolean isChunkLoaded(ServerLevel level, int chunkX, int chunkZ) {
         try {
-            return level != null && level.getChunkSource().getChunk(chunkX, chunkZ, false) != null;
+            return level != null && level.getChunkSource().getChunkNow(chunkX, chunkZ) != null;
         } catch (RuntimeException ignored) {
             return false;
         }
