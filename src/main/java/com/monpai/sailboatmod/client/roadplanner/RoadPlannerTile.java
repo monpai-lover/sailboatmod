@@ -9,6 +9,7 @@ import com.monpai.sailboatmod.roadplanner.map.RoadMapTileSpec;
 
 import java.io.File;
 import java.io.IOException;
+import java.io.InputStream;
 import java.nio.file.Files;
 import java.util.Locale;
 
@@ -46,7 +47,11 @@ public class RoadPlannerTile implements AutoCloseable {
         closeTextureOnly();
         try {
             if (file.exists()) {
-                image = NativeImage.read(Files.readAllBytes(file.toPath()));
+                // The byte[] overload copies the whole PNG into LWJGL's small thread-local stack.
+                // Valid terrain tiles can exceed that stack; stream decoding uses a separate native buffer.
+                try (InputStream input = Files.newInputStream(file.toPath())) {
+                    image = NativeImage.read(input);
+                }
                 loadedFromCache = !looksLikePlaceholder(image);
                 if (!loadedFromCache) {
                     image.close();
