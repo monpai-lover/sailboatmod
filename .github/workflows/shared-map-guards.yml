@@ -14,18 +14,18 @@ jobs:
     timeout-minutes: 45
     steps:
       - uses: actions/checkout@v4
-      - name: Apply verified resource-guard changes
+      - name: Apply verified mailbox guard
         run: |
           set -euo pipefail
           test "$GITHUB_REF" = refs/heads/fix/shared-map-stream-bounds
-          if [ -f .github/patches/shared-map-guards.part1 ]; then
-            cat .github/patches/shared-map-guards.part1 .github/patches/shared-map-guards.part2 | gzip -dc > /tmp/shared-map-guards.patch
-            echo '9b343d385360dd75f71f0c700277fce103d2fb770f44e009e330ea0a81c13245  /tmp/shared-map-guards.patch' | sha256sum -c -
-            git apply --check /tmp/shared-map-guards.patch
-            git apply /tmp/shared-map-guards.patch
-            git rm .github/patches/shared-map-guards.part1 .github/patches/shared-map-guards.part2
-            git add -- src AGENTS.md
-            git -c user.name='github-actions[bot]' -c user.email='41898282+github-actions[bot]@users.noreply.github.com' commit -m 'Bound shared-map packets, admission, streaming and preload work'
+          if [ -f .github/patches/shared-map-mailbox.gz ]; then
+            gzip -dc .github/patches/shared-map-mailbox.gz > /tmp/shared-map-mailbox.patch
+            echo 'efa4c94fda5fdb6154008bf3ca2227b065e16950191e8f22cbf4327b8d22f63e  /tmp/shared-map-mailbox.patch' | sha256sum -c -
+            git apply --check /tmp/shared-map-mailbox.patch
+            git apply /tmp/shared-map-mailbox.patch
+            git rm .github/patches/shared-map-mailbox.gz
+            git add -- src
+            git -c user.name='github-actions[bot]' -c user.email='41898282+github-actions[bot]@users.noreply.github.com' commit -m 'Bound main-thread request backlog and isolate preload tickets'
             git push origin HEAD:fix/shared-map-stream-bounds
           fi
           git rev-parse HEAD > build-commit.txt
