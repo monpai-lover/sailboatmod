@@ -33,4 +33,16 @@ class ManualRoadPlannerServiceTest {
         assertTrue(ManualRoadPlannerService.allowsPierlessDetourCrossingForTest(8));
         assertFalse(ManualRoadPlannerService.allowsPierlessDetourCrossingForTest(9));
     }
+
+    @Test
+    void cancellingUsesTheExistingPhysicalRollbackInsteadOfDeletingOnlyTheRoadRecord() throws Exception {
+        String source = java.nio.file.Files.readString(java.nio.file.Path.of(
+                "src/main/java/com/monpai/sailboatmod/nation/service/ManualRoadPlannerService.java"));
+        String cancel = source.substring(source.indexOf("private static Component previewOrCancelRoad("),
+                source.indexOf("static boolean isVisibleRoadPreviewStep("));
+        assertTrue(cancel.contains("StructureConstructionManager.demolishRoadById("),
+                "Cancel must stop the actual pending construction and restore owned blocks");
+        assertFalse(cancel.contains("removeRoadNetwork("),
+                "The construction lifecycle owns record removal after rollback, not the UI");
+    }
 }

@@ -87,6 +87,7 @@ public final class ManualRoadPlannerService {
     private static final double NETWORK_ANCHOR_CORRIDOR_DISTANCE = 32.0D;
     private static final double BRIDGE_ANCHOR_CORRIDOR_DISTANCE = 20.0D;
     private static final Map<UUID, PlannedPreviewState> READY_PREVIEWS = new ConcurrentHashMap<>();
+    private static final ManualRoadPreviewRequests PREVIEW_REQUESTS = new ManualRoadPreviewRequests();
     private static final AtomicLong MANUAL_PLANNING_REQUEST_IDS = new AtomicLong();
     private static final Map<UUID, ManualRoadPlannerConfig> PLAYER_ROAD_CONFIGS = new ConcurrentHashMap<>();
 
@@ -104,6 +105,8 @@ public final class ManualRoadPlannerService {
                 config.materialPreset(),
                 config.tunnelEnabled()
         );
+        PREVIEW_REQUESTS.invalidate(player.getUUID());
+        markPlanningPending(stack, false);
         PLAYER_ROAD_CONFIGS.put(player.getUUID(), normalized);
         LOGGER.debug("Road config applied for {}: width={}, material={}, tunnel={}",
                 player.getName().getString(), normalized.width(), normalized.materialPreset(), normalized.tunnelEnabled());
@@ -176,6 +179,7 @@ public final class ManualRoadPlannerService {
         }
         if (offhand) {
             PlannerMode next = readPlannerMode(stack).next();
+            PREVIEW_REQUESTS.invalidate(player.getUUID());
             READY_PREVIEWS.remove(player.getUUID());
             clearPreviewState(stack);
             stack.getOrCreateTag().putString(TAG_MODE, next.name());
@@ -249,6 +253,7 @@ public final class ManualRoadPlannerService {
 
         for (TownRecord target : targets) {
             if (target.townId().equalsIgnoreCase(selectedTownId)) {
+                PREVIEW_REQUESTS.invalidate(player.getUUID());
                 stack.getOrCreateTag().putString(TAG_TARGET_TOWN_ID, target.townId());
                 READY_PREVIEWS.remove(player.getUUID());
                 markPlanningPending(stack, false);
@@ -276,15 +281,22 @@ public final class ManualRoadPlannerService {
         if (isPlanningPending(stack)) {
             return Component.translatable(PENDING_PREVIEW_MESSAGE_KEY);
         }
+        ManualRoadPreviewRequests.Context context = currentPlanningContext(player, stack);
+        if (context == null) return Component.translatable("message.sailboatmod.road_planner.unavailable");
+        ItemStack planningStack = stack.copy();
+        var ticket = PREVIEW_REQUESTS.begin(player.getUUID(), context);
         markPlanningPending(stack, true);
         long requestId = MANUAL_PLANNING_REQUEST_IDS.incrementAndGet();
-        PlanningRouteNames routeNames = resolvePlanningRouteNames(player, stack);
+        PlanningRouteNames routeNames = resolvePlanningRouteNames(player, planningStack);
         sendPlanningProgress(player, requestId, routeNames.sourceTownName(), routeNames.targetTownName(),
                 PlanningStage.PREPARING, 0, SyncManualRoadPlanningProgressPacket.Status.RUNNING);
-        CompletableFuture.supplyAsync(() -> buildPlanCandidates(player, stack))
-            .thenAcceptAsync(candidates -> {
-                markPlanningPending(stack, false);
-                if (candidates.isEmpty()) {
+        CompletableFuture<List<PlanCandidate>> computation = CompletableFuture.supplyAsync(
+                () -> buildPlanCandidates(player, planningStack));
+        PREVIEW_REQUESTS.watch(ticket, computation, player.server,
+                () -> currentPlanningContext(player, stack), () -> markPlanningPending(stack, false),
+                (candidates, error) -> {
+                if (error != null) LOGGER.warn("Manual road planning failed for {}", player.getUUID(), error);
+                if (error != null || candidates == null || candidates.isEmpty()) {
                     sendPlanningProgress(player, requestId, routeNames.sourceTownName(), routeNames.targetTownName(),
                             PlanningStage.BUILDING_PREVIEW, 0, SyncManualRoadPlanningProgressPacket.Status.FAILED);
                     clearPreviewState(stack);
@@ -305,8 +317,16 @@ public final class ManualRoadPlannerService {
                 sendPlanningProgress(player, requestId, routeNames.sourceTownName(), routeNames.targetTownName(),
                         PlanningStage.BUILDING_PREVIEW, 100, SyncManualRoadPlanningProgressPacket.Status.SUCCESS);
                 player.sendSystemMessage(Component.translatable("message.sailboatmod.road_planner.planning_complete"));
-            }, player.server);
+            });
         return Component.translatable(PENDING_PREVIEW_MESSAGE_KEY);
+    }
+
+    private static ManualRoadPreviewRequests.Context currentPlanningContext(ServerPlayer player, ItemStack stack) {
+        if (player.isRemoved() || !player.isAlive()
+                || (player.getMainHandItem() != stack && player.getOffhandItem() != stack)) return null;
+        return new ManualRoadPreviewRequests.Context(player.serverLevel(),
+                player.level().dimension().location().toString(), stack.getOrCreateTag().getString(TAG_TARGET_TOWN_ID),
+                readPlannerMode(stack).name(), stack);
     }
 
     private static Component previewOrCancelRoad(ServerPlayer player, ItemStack stack) {
@@ -321,9 +341,10 @@ public final class ManualRoadPlannerService {
         if (!manualRoadExists(level, route.roadId())) {
             return Component.translatable("message.sailboatmod.road_planner.nothing_to_cancel");
         }
-        NationSavedData data = NationSavedData.get(level);
-        data.removeRoadNetwork(route.roadId());
-        data.setDirty();
+        PREVIEW_REQUESTS.invalidate(player.getUUID());
+        if (!StructureConstructionManager.demolishRoadById(level, route.roadId())) {
+            return Component.translatable("message.sailboatmod.road_planner.nothing_to_cancel");
+        }
         clearPreviewState(stack);
         sendPreviewClear(player);
         READY_PREVIEWS.remove(player.getUUID());
