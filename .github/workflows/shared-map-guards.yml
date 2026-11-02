@@ -4,7 +4,7 @@ on:
     branches: [fix/shared-map-stream-bounds]
   workflow_dispatch:
 permissions:
-  contents: read
+  contents: write
 concurrency:
   group: shared-map-guards-${{ github.ref }}
   cancel-in-progress: true
@@ -14,8 +14,32 @@ jobs:
     timeout-minutes: 45
     steps:
       - uses: actions/checkout@v4
-        with:
-          persist-credentials: false
+      - name: Align cached-tile regression
+        run: |
+          set -euo pipefail
+          test "$GITHUB_REF" = refs/heads/fix/shared-map-stream-bounds
+          python - <<'PY'
+          from pathlib import Path
+          p = Path('src/test/java/com/monpai/sailboatmod/market/web/MarketWebAppResourceTest.java')
+          s = p.read_text()
+          assert s.count('assertTrue(method.contains("service.mapTile"),') == 1
+          s = s.replace('int end = source.indexOf("private void handleMapFlag", start);', 'int end = source.indexOf("private void handleSquareMapTile", start);', 1)
+          s = s.replace('assertTrue(method.contains("service.mapTile"),', 'assertTrue(method.contains("service.readMapTile"),', 1)
+          old = '                "map tile endpoint should only read cached tile bytes");'
+          assert s.count(old) == 1
+          s = s.replace(old, old + '\n        int scheduledWorkEnd = method.indexOf("});");\n        assertTrue(scheduledWorkEnd >= 0 && method.indexOf("service.readMapTile(") > scheduledWorkEnd,\n                "cached PNG disk reads must remain outside the server-thread callback");\n        String square = methodBody(source, "handleSquareMapTile", "handleMapWorld");\n        assertTrue(square.contains("service.readSquareMapTile("));\n        assertFalse(square.contains("callOnServerThread("),\n                "square-tile cached reads must not wait on the game thread");')
+          p.write_text(s)
+          workflow = Path('.github/workflows/shared-map-guards.yml')
+          w = workflow.read_text()
+          start = w.index('      - name: Align cached-tile regression\n')
+          end = w.index('      - name: Record exact source commit\n', start)
+          w = w[:start] + w[end:]
+          w = w.replace('contents: write', 'contents: read').replace('      - uses: actions/checkout@v4\n', '      - uses: actions/checkout@v4\n        with:\n          persist-credentials: false\n')
+          workflow.write_text(w)
+          PY
+          git add -- src/test/java/com/monpai/sailboatmod/market/web/MarketWebAppResourceTest.java .github/workflows/shared-map-guards.yml
+          git -c user.name='github-actions[bot]' -c user.email='41898282+github-actions[bot]@users.noreply.github.com' commit -m 'Verify cached tile reads stay off the game thread [skip ci]'
+          git push origin HEAD:fix/shared-map-stream-bounds
       - name: Record exact source commit
         run: |
           git rev-parse HEAD > build-commit.txt
