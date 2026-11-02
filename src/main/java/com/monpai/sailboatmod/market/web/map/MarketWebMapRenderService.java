@@ -23,6 +23,7 @@ public final class MarketWebMapRenderService {
     private static final int DEFAULT_SNAPSHOTS_PER_TICK = 96;
     private static final int DEFAULT_SAME_TILE_BURST_LIMIT = 8;
     private static final int REGION_CHUNK_CHECKS_PER_TICK = 128;
+    private static final int DIRTY_REGIONS_PER_TICK = 32;
     private static final int PLAYER_SCAN_INTERVAL_TICKS = 80;
     private static final int POINT_SCAN_INTERVAL_TICKS = 400;
     private static final int REGION_SCAN_INTERVAL_TICKS = 1200;
@@ -235,7 +236,7 @@ public final class MarketWebMapRenderService {
     }
 
     private void drainDirtyRegions() {
-        for (long packedRegion : regionWatcher.drainDirtyRegions()) {
+        for (long packedRegion : regionWatcher.drainDirtyRegions(DIRTY_REGIONS_PER_TICK)) {
             int regionX = MarketWebMapRegionWatcher.unpackRegionX(packedRegion);
             int regionZ = MarketWebMapRegionWatcher.unpackRegionZ(packedRegion);
             renderManager.markRegionDirty(regionX, regionZ);
