@@ -73,7 +73,7 @@ public record RoadPlannerMapPreloadRequestPacket(UUID sessionId,
         // This handler is registered on the network thread. Admission precedes scheduling main-thread work.
         if (player != null && packet != null && packet.validClientRequest()
                 && MapRequestLimiter.preload(player.getUUID(), System.nanoTime())) {
-            context.enqueueWork(() -> RoadPlannerMapPreloadService.global().enqueue(player, packet));
+            MapRequestLimiter.enqueue(player.getUUID(), context::enqueueWork, () -> RoadPlannerMapPreloadService.global().enqueue(player, packet));
         }
         context.setPacketHandled(true);
     }

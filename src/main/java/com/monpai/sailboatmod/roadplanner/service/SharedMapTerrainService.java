@@ -504,7 +504,7 @@ public final class SharedMapTerrainService {
         savedColors.clear();
         savedTouched.clear();
         outgoing.clear();
-        MapRequestLimiter.TERRAIN.clear();
+        MapRequestLimiter.clearAll();
         absentUntil.clear();
         samplers.clear();
     }

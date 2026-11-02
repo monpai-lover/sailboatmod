@@ -75,7 +75,7 @@ public final class RoadPlannerMapPreloadService {
         GLOBAL.jobs.clear();
         GLOBAL.created.clear();
         GLOBAL.sampling.clear();
-        MapRequestLimiter.PRELOAD.clear();
+        MapRequestLimiter.clearAll();
         GLOBAL.server = null;
     }
 
@@ -370,7 +370,7 @@ public final class RoadPlannerMapPreloadService {
         int tileStartChunkX = key.tileX() * (RoadMapTileSpec.TILE_BLOCKS / 16);
         int tileStartChunkZ = key.tileZ() * (RoadMapTileSpec.TILE_BLOCKS / 16);
         boolean allLoaded = true;
-        UUID owner = active.playerId;
+        UUID owner = active.ticketOwner();
         for (int dz = 0; dz < RoadMapTileSpec.TILE_BLOCKS / 16; dz++) {
             for (int dx = 0; dx < RoadMapTileSpec.TILE_BLOCKS / 16; dx++) {
                 int chunkX = tileStartChunkX + dx;
@@ -403,7 +403,7 @@ public final class RoadPlannerMapPreloadService {
         if (forced == null || forced.isEmpty()) {
             return;
         }
-        UUID owner = active.playerId;
+        UUID owner = active.ticketOwner();
         for (Long chunkKey : forced) {
             if (chunkKey == null) {
                 continue;
@@ -502,6 +502,12 @@ public final class RoadPlannerMapPreloadService {
                           String dimensionId,
                           RoadPlannerMapPreloadJob job) {
             this(playerId, sessionId, requestId, purpose, worldId, dimensionId, job, new LinkedHashMap<>());
+        }
+
+        private UUID ticketOwner() {
+            // Two jobs belonging to one player must not release each other's chunk tickets.
+            return UUID.nameUUIDFromBytes((playerId + "/" + sessionId + "/" + purpose + "/" + requestId)
+                    .getBytes(java.nio.charset.StandardCharsets.UTF_8));
         }
 
         private ActiveJob {

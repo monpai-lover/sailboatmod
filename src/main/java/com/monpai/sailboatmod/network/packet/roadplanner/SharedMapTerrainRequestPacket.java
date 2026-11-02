@@ -42,7 +42,7 @@ public record SharedMapTerrainRequestPacket(String worldId, String dimensionId, 
         var player = context.getSender();
         if (player != null && packet != null && packet.validClientRequest()
                 && MapRequestLimiter.terrain(player.getUUID(), System.nanoTime())) {
-            context.enqueueWork(() -> SharedMapTerrainService.global().request(player, packet));
+            MapRequestLimiter.enqueue(player.getUUID(), context::enqueueWork, () -> SharedMapTerrainService.global().request(player, packet));
         }
         context.setPacketHandled(true);
     }

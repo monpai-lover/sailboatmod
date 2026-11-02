@@ -12,6 +12,21 @@ public final class MapRequestLimiter {
     private static final MapRequestLimiter GLOBAL = new MapRequestLimiter(64, 256, 1);
     public static boolean terrain(UUID player, long now) { return TERRAIN.allow(player, now) && GLOBAL.allow(GLOBAL_KEY, now); }
     public static boolean preload(UUID player, long now) { return PRELOAD.allow(player, now) && GLOBAL.allow(GLOBAL_KEY, now); }
+    private static volatile MapRequestWorkQueue pending = new MapRequestWorkQueue(128, 16);
+
+    public static boolean enqueue(UUID player,
+            java.util.function.Function<Runnable, java.util.concurrent.CompletableFuture<Void>> dispatcher, Runnable action) {
+        return pending.enqueue(player, dispatcher, action);
+    }
+
+    public static void clearAll() {
+        TERRAIN.clear();
+        PRELOAD.clear();
+        GLOBAL.clear();
+        // Old leases release their old queue, not slots belonging to a newly started server.
+        pending = new MapRequestWorkQueue(128, 16);
+    }
+
     private static final long IDLE_NANOS = 60_000_000_000L;
     private final int burst;
     private final double perNano;
