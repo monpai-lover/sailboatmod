@@ -15,12 +15,13 @@ class SharedMapTerrainPacketTest {
     void actualChunkPatchAndPredictionTileRoundTripWithDistinctSource() throws Exception {
         Class<?> type = type();
         for (boolean prediction : new boolean[]{false, true}) {
-            int size = prediction ? 256 : 16;
+            int width = prediction ? 256 : 16;
+            int height = 16;
             int offset = prediction ? 0 : 240;
-            int[] pixels = new int[size * size];
+            int[] pixels = new int[width * height];
             Arrays.fill(pixels, 0xFF336699);
             Object packet = constructor(type).newInstance("earth", "minecraft:overworld", -1, -2,
-                    offset, offset, size, size, pixels, prediction);
+                    offset, offset, width, height, pixels, prediction);
             FriendlyByteBuf bytes = new FriendlyByteBuf(Unpooled.buffer());
             try {
                 type.getMethod("encode", type, FriendlyByteBuf.class).invoke(null, packet, bytes);

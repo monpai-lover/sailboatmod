@@ -85,9 +85,9 @@ class RoadPlannerMapPreloadServiceTest {
 
     private static Object newJobKey(UUID sessionId, RoadPlannerMapPreloadRequestPacket.Purpose purpose) throws Exception {
         Class<?> type = nestedClass("JobKey");
-        Constructor<?> constructor = type.getDeclaredConstructor(UUID.class, RoadPlannerMapPreloadRequestPacket.Purpose.class);
+        Constructor<?> constructor = type.getDeclaredConstructor(UUID.class, UUID.class, RoadPlannerMapPreloadRequestPacket.Purpose.class);
         constructor.setAccessible(true);
-        return constructor.newInstance(sessionId, purpose);
+        return constructor.newInstance(new UUID(0, 0), sessionId, purpose);
     }
 
     private static Object newActiveJob(UUID sessionId,

@@ -6,6 +6,7 @@ import com.monpai.sailboatmod.roadplanner.map.SharedMapTileGrid;
 import net.minecraft.network.FriendlyByteBuf;
 
 import java.util.function.Supplier;
+import com.monpai.sailboatmod.roadplanner.service.MapRequestLimiter;
 
 /** A map view requests existing terrain and an optional Tellus underlay; this never requests world generation. */
 public record SharedMapTerrainRequestPacket(String worldId, String dimensionId, int tileX, int tileZ, int blocksPerPixel) {
@@ -15,6 +16,15 @@ public record SharedMapTerrainRequestPacket(String worldId, String dimensionId, 
     public SharedMapTerrainRequestPacket(String worldId, String dimensionId, int tileX, int tileZ) {
         this(worldId, dimensionId, tileX, tileZ, 1);
     }
+    public boolean validClientRequest() {
+        if (worldId == null || worldId.isBlank() || worldId.length() > 128
+                || dimensionId == null || dimensionId.isBlank() || dimensionId.length() > 128
+                || !SharedMapTileGrid.validTile(tileX, tileZ, blocksPerPixel)) return false;
+        long span = SharedMapTileGrid.span(blocksPerPixel);
+        long x = tileX * span, z = tileZ * span;
+        return x < 30_000_000L && z < 30_000_000L && x + span > -30_000_000L && z + span > -30_000_000L;
+    }
+
     public static void encode(SharedMapTerrainRequestPacket packet, FriendlyByteBuf buffer) {
         RoadPlannerPacketCodec.writeString(buffer, packet.worldId, 128);
         RoadPlannerPacketCodec.writeString(buffer, packet.dimensionId, 128);
@@ -29,9 +39,11 @@ public record SharedMapTerrainRequestPacket(String worldId, String dimensionId, 
 
     public static void handle(SharedMapTerrainRequestPacket packet, Supplier<NetworkEvent.Context> contextSupplier) {
         NetworkEvent.Context context = contextSupplier.get();
-        context.enqueueWork(() -> {
-            if (context.getSender() != null) SharedMapTerrainService.global().request(context.getSender(), packet);
-        });
+        var player = context.getSender();
+        if (player != null && packet != null && packet.validClientRequest()
+                && MapRequestLimiter.terrain(player.getUUID(), System.nanoTime())) {
+            context.enqueueWork(() -> SharedMapTerrainService.global().request(player, packet));
+        }
         context.setPacketHandled(true);
     }
 }

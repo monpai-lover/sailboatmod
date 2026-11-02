@@ -16,6 +16,7 @@ import net.minecraft.server.level.ServerPlayer;
 import net.neoforged.neoforge.network.event.RegisterPayloadHandlersEvent;
 import net.neoforged.neoforge.network.handling.IPayloadContext;
 import net.neoforged.neoforge.network.registration.PayloadRegistrar;
+import net.neoforged.neoforge.network.registration.HandlerThread;
 
 /** NeoForge payload registrations backed by the mod's existing packet codecs. */
 public final class PayloadChannel {
@@ -63,6 +64,11 @@ public final class PayloadChannel {
             BiConsumer<T, FriendlyByteBuf> encoder, Function<FriendlyByteBuf, T> decoder,
             BiConsumer<T, Supplier<NetworkEvent.Context>> handler, NetworkDirection direction) {
         void register(PayloadRegistrar registrar) {
+            // Only map requests have network-safe admission handlers; other payloads retain main-thread dispatch.
+            String path = type.id().getPath();
+            if (path.equals("shared_map_terrain_request_packet") || path.equals("road_planner_map_preload_request_packet")) {
+                registrar = registrar.executesOn(HandlerThread.NETWORK);
+            }
             StreamCodec<RegistryFriendlyByteBuf, Envelope<T>> codec = new StreamCodec<>() {
                 @Override public Envelope<T> decode(RegistryFriendlyByteBuf buffer) {
                     return new Envelope<>(type, decoder.apply(buffer));
