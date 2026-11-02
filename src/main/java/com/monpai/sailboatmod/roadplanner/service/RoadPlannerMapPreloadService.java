@@ -1,9 +1,6 @@
 package com.monpai.sailboatmod.roadplanner.service;
 
 import com.monpai.sailboatmod.SailboatMod;
-import com.monpai.sailboatmod.client.roadplanner.RoadPlannerAutoCompleteResult;
-import com.monpai.sailboatmod.client.roadplanner.RoadPlannerAutoCompleteService;
-import com.monpai.sailboatmod.client.roadplanner.RoadPlannerPathfinderRunnerFactory;
 import com.monpai.sailboatmod.client.roadplanner.RoadPlannerTileKey;
 import com.monpai.sailboatmod.map.SharedMapServerState;
 import com.monpai.sailboatmod.network.ModNetwork;
@@ -257,14 +254,8 @@ public final class RoadPlannerMapPreloadService {
         if (!nodes.isEmpty()) {
             return nodes;
         }
-        RoadPlannerAutoCompleteService service = RoadPlannerPathfinderRunnerFactory.serverService(level);
-        if (service == null) {
-            service = new RoadPlannerAutoCompleteService();
-        }
-        RoadPlannerAutoCompleteResult result = service.complete(packet.start(), packet.destination(), List.of(), 8);
-        if (result.success() && !result.nodes().isEmpty()) {
-            return result.nodes();
-        }
+        // 这里在服务器主线程:不再同步跑完整道路寻路(超远两城会卡服)。没有节点时预载起终点直线走廊;
+        // 自动补全(后台线程)返回真实节点后,客户端会按节点重新请求预载。
         return List.of(packet.start(), packet.destination());
     }
 

@@ -1,6 +1,9 @@
 package com.monpai.sailboatmod.route.water;
 
 import net.minecraft.core.BlockPos;
+import com.mojang.logging.LogUtils;
+import org.slf4j.Logger;
+import java.util.function.LongSupplier;
 
 import java.util.ArrayList;
 import java.util.List;
@@ -10,8 +13,15 @@ import java.util.function.UnaryOperator;
 
 /** Bounded global water guidance followed by independently bounded detailed segments. */
 public final class HierarchicalWaterRoutePlanner {
+    private static final Logger LOGGER = LogUtils.getLogger();
+    static final long MAX_TASK_MILLIS = 600_000L;
+    private final LongSupplier clock;
+    private final long taskStarted;
+    private RouteSearchProgress searchProgress;
+    private long nextBudgetLog, loggedGrant;
+
     public static final int MAX_SAMPLES_PER_EXPANSION = 512;
-    public static final int DETAIL_SEGMENT_BLOCKS = 4096;
+    public static final int DETAIL_SEGMENT_BLOCKS = 2048;
     private static final int MAX_COARSE_NODES = 32_000;
     private static final int MAX_ADVANCE_NODES = 256;
     private static final int MAX_COARSE_STEP = 2048;
@@ -27,13 +37,19 @@ public final class HierarchicalWaterRoutePlanner {
     private final UnaryOperator<List<BlockPos>> finishSegment;
     private final List<Segment> segments = new ArrayList<>();
     private final List<BlockPos> accumulated = new ArrayList<>();
+    /** edgeDirect.get(i): edge accumulated[i] -> accumulated[i+1] came entirely from direct (open-water) legs. */
+    private final List<Boolean> edgeDirect = new ArrayList<>();
+    private List<Boolean> resultDirect = List.of();
     private Status status = Status.RUNNING;
     private WaterRouteFailureReason failure = WaterRouteFailureReason.NONE;
     private WaterRoutePathfinder search;
     private boolean coarse = true;
     private int completedSegments, expandedNodes, coarseExpandedNodes;
-    private long stageDeadline;
+    private RouteStageBudget stageBudget;
+    private int detailStep, detailExpandedNodes;
     private List<BlockPos> result = List.of();
+    private List<BlockPos> coarseGuidance = List.of();
+    private int skippedGuidanceAnchors;
 
     public HierarchicalWaterRoutePlanner(WaterRouteWorld coarseWorld, WaterRouteWorld detailedWorld,
                                          BlockPos start, BlockPos goal, WaterRoutePolicy detailedPolicy) {
@@ -43,6 +59,15 @@ public final class HierarchicalWaterRoutePlanner {
     HierarchicalWaterRoutePlanner(WaterRouteWorld coarseWorld, WaterRouteWorld detailedWorld,
                                    BlockPos start, BlockPos goal, WaterRoutePolicy detailedPolicy,
                                    UnaryOperator<List<BlockPos>> finishSegment) {
+        this(coarseWorld, detailedWorld, start, goal, detailedPolicy, finishSegment, System::nanoTime);
+    }
+
+    /** Injectable monotonic clock for deterministic slow-terrain and cap regressions. */
+    HierarchicalWaterRoutePlanner(WaterRouteWorld coarseWorld, WaterRouteWorld detailedWorld,
+                                   BlockPos start, BlockPos goal, WaterRoutePolicy detailedPolicy,
+                                   UnaryOperator<List<BlockPos>> finishSegment, LongSupplier clock) {
+        this.clock = clock;
+        this.taskStarted = clock.getAsLong();
         this.start = start;
         this.goal = goal;
         this.coarseWorld = new TrackingWorld(coarseWorld, start, goal);
@@ -56,60 +81,124 @@ public final class HierarchicalWaterRoutePlanner {
         int step = 128;
         while (step < MAX_COARSE_STEP && distance / step > 128) step *= 2;
         int radius = (int) Math.min(Integer.MAX_VALUE, Math.max(8192, Math.ceil(distance * 1.5 + 8192)));
+        this.detailStep = this.detailedPolicy.stepSize();
         this.coarsePolicy = new WaterRoutePolicy(step, fine.berthSearchStep(), fine.boatHalfWidth(), fine.clearanceHeight(),
                 radius, MAX_COARSE_NODES, 0, 128, 0, Math.max(1200, fine.timeoutTicks()));
         if (coarseWorld == null || detailedWorld == null || start == null || goal == null) fail(WaterRouteFailureReason.NO_WATER_PATH);
+    }
+
+    /**
+     * Guidance already planned by {@link GlobalWaterGridPlanner}: open-water legs (verified with coastal clearance
+     * against the native land mask) are appended as-is; the rest go through the normal detailed search below.
+     * The whole route is still verified by the post-processor before it is published.
+     */
+    static HierarchicalWaterRoutePlanner withGuidance(WaterRouteWorld detailedWorld, BlockPos start, BlockPos goal,
+                                                      WaterRoutePolicy detailedPolicy, UnaryOperator<List<BlockPos>> finishSegment,
+                                                      List<GlobalWaterGridPlanner.Leg> legs) {
+        HierarchicalWaterRoutePlanner planner = new HierarchicalWaterRoutePlanner(detailedWorld, detailedWorld, start, goal,
+                detailedPolicy, finishSegment);
+        planner.coarse = false;
+        List<BlockPos> guidance = new ArrayList<>();
+        for (GlobalWaterGridPlanner.Leg leg : legs) {
+            planner.segments.add(new Segment(leg.from(), leg.to(), leg.direct()));
+            if (guidance.isEmpty()) guidance.add(leg.from());
+            guidance.add(leg.to());
+        }
+        planner.coarseGuidance = List.copyOf(guidance);
+        if (planner.segments.isEmpty()) planner.fail(WaterRouteFailureReason.NO_WATER_PATH);
+        return planner;
     }
 
     /** One bounded search slice. No unfinished route is published; the caller may poll WAITING and cancel at any time. */
     public Status step(int nodeBudget) {
         if (status == Status.SUCCESS || status == Status.FAILED || status == Status.CANCELLED || nodeBudget <= 0) return status;
         if (WaterRouteCancellation.cancelled()) { cancel(); return status; }
+        if (Math.max(0, clock.getAsLong() - taskStarted) >= MAX_TASK_MILLIS * 1_000_000L) {
+            fail(WaterRouteFailureReason.TIMEOUT);
+            LOGGER.warn("[WaterPath] 全任务硬时限到达 {}ms; {}", MAX_TASK_MILLIS, budgetDiagnostic());
+            return status;
+        }
         status = Status.RUNNING;
+        if (!coarse && search == null && completedSegments < segments.size() && segments.get(completedSegments).direct()) {
+            Segment leg = segments.get(completedSegments);
+            appendTracked(List.of(leg.from(), leg.to()), true);
+            completedSegments++;
+            if (completedSegments == segments.size()) {
+                result = List.copyOf(accumulated);
+                resultDirect = List.copyOf(edgeDirect);
+                status = Status.SUCCESS;
+            }
+            return status;
+        }
         TrackingWorld world = coarse ? coarseWorld : detailedWorld;
-        WaterRoutePolicy policy = coarse ? coarsePolicy : detailedPolicy;
-        if (stageDeadline != 0 && System.nanoTime() >= stageDeadline) { fail(WaterRouteFailureReason.TIMEOUT); return status; }
+        WaterRoutePolicy policy = coarse ? coarsePolicy : detailWithStep(detailStep);
+        if (stageBudget == null) {
+            stageBudget = RouteStageBudget.adaptive((long) policy.timeoutTicks() * 50L, 60_000L, clock);
+            searchProgress = null;
+            nextBudgetLog = loggedGrant = 0;
+        }
+        WaterRouteFailureReason expired = stageBudget.advance(false);
+        if (expired != WaterRouteFailureReason.NONE) { fail(expired); return status; }
         if (search == null) {
             if (coarse && coarseExpandedNodes >= MAX_COARSE_NODES) { fail(WaterRouteFailureReason.NODE_BUDGET_EXCEEDED); return status; }
+            if (!coarse && !prepareDetailedEndpoint(policy)) return status;
             world.unknown = false;
             BlockPos a = coarse ? start : segments.get(completedSegments).from();
             BlockPos b = coarse ? goal : segments.get(completedSegments).to();
-            if (stageDeadline == 0) stageDeadline = System.nanoTime() + Math.max(1L, policy.timeoutTicks()) * 50_000_000L;
             if (coarse) policy = coarseWithStep(coarsePolicy.stepSize(), MAX_COARSE_NODES - coarseExpandedNodes);
-            search = new WaterRoutePathfinder(world, a, b, policy, coarse ? 64 : 2);
+            if (searchProgress == null)
+                searchProgress = new RouteSearchProgress(a.getX(), a.getZ(), b.getX(), b.getZ());
+            search = new WaterRoutePathfinder(world, a, b, policy,
+                    coarse ? Math.min(16, Math.max(2, policy.stepSize() / 4)) : 1, this::expandedNode);
+
         }
         world.unknown = false;
         int before = search.expandedNodes();
         WaterRoutePathfinder.Status current = search.step(Math.min(MAX_ADVANCE_NODES, nodeBudget), 0);
         expandedNodes += search.expandedNodes() - before;
         if (coarse) coarseExpandedNodes += search.expandedNodes() - before;
+        else detailExpandedNodes += search.expandedNodes() - before;
+        stageBudget.completedExpansions(coarse ? coarseExpandedNodes : detailExpandedNodes);
+        logBudget(false);
         if (current == WaterRoutePathfinder.Status.SUCCESS) {
             if (coarse) {
                 List<BlockPos> guidance = new ArrayList<>(search.path());
-                removeSnappedEndpoints(guidance);
+                coarseGuidance = List.copyOf(guidance);
                 splitGuidance(guidance);
                 coarse = false;
             } else {
                 List<BlockPos> finished;
                 try { finished = finishSegment.apply(search.path()); }
-                catch (TerrainNotReadyException waiting) { search = null; status = Status.WAITING; return status; }
+                catch (TerrainNotReadyException waiting) {
+                    // Keep the successful frontier/path; only retry the unfinished final validation.
+                    stageBudget.advance(true); status = Status.WAITING; return status;
+                }
                 if (finished == null || finished.size() < 2) { fail(WaterRouteFailureReason.NO_WATER_PATH); return status; }
-                appendCompacted(accumulated, finished);
+                appendTracked(finished, false);
                 completedSegments++;
                 if (completedSegments == segments.size()) {
                     result = List.copyOf(accumulated);
+                    resultDirect = List.copyOf(edgeDirect);
                     status = Status.SUCCESS;
                 }
             }
             search = null;
-            stageDeadline = 0;
+            stageBudget = null;
+            searchProgress = null;
+            detailStep = detailedPolicy.stepSize();
+            detailExpandedNodes = 0;
         } else if (current == WaterRoutePathfinder.Status.WAITING) {
             // Preserve both frontiers and the pending node; do not redo known terrain or charge it twice.
+            stageBudget.advance(true);
             status = Status.WAITING;
         } else if (current == WaterRoutePathfinder.Status.FAILED) {
-            if (coarse && search.failureReason() == WaterRouteFailureReason.NO_WATER_PATH && coarsePolicy.stepSize() > 8) {
+            if (coarse && search.failureReason() == WaterRouteFailureReason.NO_WATER_PATH && coarsePolicy.stepSize() > 1) {
                 // A coarse grid can miss a narrow strait or harbour. Retry finer guidance with the same total node/time budget.
                 coarsePolicy = coarseWithStep(coarsePolicy.stepSize() / 2, MAX_COARSE_NODES - coarseExpandedNodes);
+                search = null;
+            } else if (!coarse && search.failureReason() == WaterRouteFailureReason.NO_WATER_PATH
+                    && detailStep > 1 && detailExpandedNodes < detailedPolicy.maxExpandedNodes()) {
+                detailStep = Math.max(1, detailStep / 2);
                 search = null;
             } else fail(search.failureReason());
         }
@@ -121,13 +210,143 @@ public final class HierarchicalWaterRoutePlanner {
         status = Status.CANCELLED;
         search = null;
         accumulated.clear();
+        edgeDirect.clear();
         segments.clear();
         result = List.of();
     }
 
     public List<BlockPos> path() { return status == Status.SUCCESS ? result : List.of(); }
+    /** Per edge of {@link #path()}: true when it is an unmodified direct (open-water) guidance leg. */
+    public List<Boolean> directEdges() { return status == Status.SUCCESS ? resultDirect : List.of(); }
+
+    /** {@link #appendCompacted} that also tracks which edges came from direct legs (merged edges keep AND). */
+    private void appendTracked(List<BlockPos> incoming, boolean direct) {
+        for (BlockPos point : incoming) {
+            if (!accumulated.isEmpty() && accumulated.getLast().equals(point)) continue;
+            boolean flag = direct;
+            while (accumulated.size() >= 2 && collinearForward(accumulated.get(accumulated.size() - 2), accumulated.getLast(), point)) {
+                accumulated.removeLast();
+                boolean mergedDirect = edgeDirect.removeLast(); // always remove; do not short-circuit
+                flag = flag && mergedDirect;
+            }
+            if (!accumulated.isEmpty()) edgeDirect.add(flag);
+            accumulated.add(point);
+        }
+    }
+
+    private static boolean collinearForward(BlockPos a, BlockPos b, BlockPos point) {
+        long abx = (long) b.getX() - a.getX(), abz = (long) b.getZ() - a.getZ();
+        long bcx = (long) point.getX() - b.getX(), bcz = (long) point.getZ() - b.getZ();
+        return a.getY() == b.getY() && b.getY() == point.getY() && abx * bcz == abz * bcx && abx * bcx + abz * bcz > 0;
+    }
     public Progress progress() { return new Progress(status, completedSegments, segments.size(), expandedNodes); }
     public WaterRouteFailureReason failureReason() { return failure; }
+    public int currentStepSize() { return coarse ? coarsePolicy.stepSize() : detailStep; }
+    public int pendingEdges() { return search == null ? 0 : search.pendingEdges(); }
+    public boolean isCoarseStage() { return coarse; }
+    /** Guidance only, never a sailing route until all detailed segments are verified. */
+    public List<BlockPos> coarseGuidance() { return coarseGuidance; }
+    public int skippedGuidanceAnchors() { return skippedGuidanceAnchors; }
+
+    /**
+     * A LOD waypoint is a hint, not a mandatory docking position. Native LOD and
+     * actual generator columns differ at some shores. Never force a fine search
+     * to end on an intermediate hint which precise 2x2 sampling proves is land.
+     * Merge that hint into the following segment, preserving the already verified
+     * starting point. Real user endpoints are never moved or removed. Unknown data
+     * suspends this preparation; it is NOT interpreted as a bad hint or as water.
+     * Each poll is bounded so a long run of bad LOD hints remains cancellable.
+     */
+    private boolean prepareDetailedEndpoint(WaterRoutePolicy policy) {
+        for (int checks = 0; checks < 32; checks++) {
+            WaterRouteCancellation.check();
+            Segment segment = segments.get(completedSegments);
+            BlockPos hint = segment.to();
+            WaterColumn column = detailedWorld.sample(hint.getX(), hint.getZ(), policy);
+            if (column == null) {
+                WaterRouteFailureReason expired = stageBudget.advance(true);
+                if (expired != WaterRouteFailureReason.NONE) fail(expired);
+                else status = Status.WAITING;
+                return false;
+            }
+            boolean finalEndpoint = completedSegments == segments.size() - 1;
+            if (column.passable() && column.surfacePos() != null) {
+                BlockPos exact = column.surfacePos();
+                if (finalEndpoint && !exact.equals(goal)) {
+                    fail(WaterRouteFailureReason.NO_WATER_PATH);
+                    return false;
+                }
+                if (!exact.equals(hint)) {
+                    segments.set(completedSegments, new Segment(segment.from(), exact, false));
+                    if (!finalEndpoint) {
+                        Segment next = segments.get(completedSegments + 1);
+                        segments.set(completedSegments + 1, new Segment(exact, next.to(), false));
+                    }
+                }
+                return true;
+            }
+            if (finalEndpoint) {
+                fail(WaterRouteFailureReason.NO_WATER_PATH);
+                return false;
+            }
+            Segment next = segments.remove(completedSegments + 1);
+            // Do not jump over terrain: the merged segment is still searched at
+            // full precision, then checked by finishSegment before it is appended.
+            segments.set(completedSegments, new Segment(segment.from(), next.to(), false));
+            skippedGuidanceAnchors++;
+        }
+        return false; // RUNNING: bounded preparation continues on the next slice.
+    }
+
+    private WaterRouteFailureReason expandedNode(boolean forward, BlockPos point) {
+        // Evaluate the old deadline first: a result arriving after it cannot resurrect work.
+        WaterRouteFailureReason expired = stageBudget.advance(false);
+        if (expired != WaterRouteFailureReason.NONE) return expired;
+        searchProgress.expanded(forward, point.getX(), point.getZ());
+        stageBudget.reward(searchProgress.snapshot());
+        return stageBudget.advance(false);
+    }
+
+    public String budgetDiagnostic() {
+        String budget = stageBudget == null ? "stage_complete" : stageBudget.diagnostic();
+        if (searchProgress == null) return budget;
+        var p = searchProgress.snapshot();
+        return budget + " bestForwardRemaining=" + Math.round(p.bestForwardRemaining())
+                + " bestBackwardRemaining=" + Math.round(p.bestBackwardRemaining())
+                + " approachBlocks=" + Math.round(p.approachBlocks())
+                + " approachGrantMs=" + p.approachRewardMillis()
+                + " detourGrantMs=" + p.detourRewardMillis();
+    }
+
+    public String budgetSummary() {
+        if (stageBudget == null) return "阶段完成";
+        long taskLeft = Math.max(0, MAX_TASK_MILLIS - Math.max(0, clock.getAsLong() - taskStarted) / 1_000_000L);
+        return "奖励+" + stageBudget.awardedMillis() / 1000 + "s · 余量"
+                + Math.min(taskLeft, stageBudget.remainingMillis()) / 1000 + "s";
+    }
+
+    /** Keeps the existing progress packet format and the owner's recoverable task queue. */
+    public static String withBudget(String stage, HierarchicalWaterRoutePlanner planner) {
+        return stage + " · " + planner.budgetSummary();
+    }
+
+    private void logBudget(boolean force) {
+        if (stageBudget == null) return;
+        long now = clock.getAsLong();
+        if (force || now >= nextBudgetLog || stageBudget.awardedMillis() >= loggedGrant + 8_000L) {
+            LOGGER.info("[WaterPath] 推进奖励预算 stage={} step={} nodes={} {}",
+                    coarse ? "COARSE" : "DETAIL", currentStepSize(), expandedNodes, budgetDiagnostic());
+            nextBudgetLog = now + 10_000_000_000L;
+            loggedGrant = stageBudget.awardedMillis();
+        }
+    }
+
+    private WaterRoutePolicy detailWithStep(int step) {
+        WaterRoutePolicy p = detailedPolicy;
+        return new WaterRoutePolicy(step, p.berthSearchStep(), p.boatHalfWidth(), p.clearanceHeight(),
+                p.maxSearchRadius(), Math.max(1, p.maxExpandedNodes() - detailExpandedNodes),
+                0, p.nodesPerTick(), 0, p.timeoutTicks());
+    }
 
     static final class TerrainNotReadyException extends RuntimeException {
         TerrainNotReadyException() { super("Water terrain is not ready", null, false, false); }
@@ -139,17 +358,12 @@ public final class HierarchicalWaterRoutePlanner {
     }
 
     private void fail(WaterRouteFailureReason reason) {
+        logBudget(true);
         status = Status.FAILED;
         failure = reason;
         search = null;
         accumulated.clear();
-    }
-
-    private void removeSnappedEndpoints(List<BlockPos> guidance) {
-        if (guidance.size() > 2 && !start.equals(coarseWorld.snap(start, coarsePolicy))
-                && guidance.get(1).equals(coarseWorld.snap(start, coarsePolicy))) guidance.remove(1);
-        if (guidance.size() > 2 && !goal.equals(coarseWorld.snap(goal, coarsePolicy))
-                && guidance.get(guidance.size() - 2).equals(coarseWorld.snap(goal, coarsePolicy))) guidance.remove(guidance.size() - 2);
+        edgeDirect.clear();
     }
 
     private void splitGuidance(List<BlockPos> guidance) {
@@ -161,11 +375,11 @@ public final class HierarchicalWaterRoutePlanner {
                 BlockPos next = part == pieces ? b : new BlockPos(
                         (int) Math.round(a.getX() + (b.getX() - (double) a.getX()) * part / pieces), a.getY(),
                         (int) Math.round(a.getZ() + (b.getZ() - (double) a.getZ()) * part / pieces));
-                if (!next.equals(previous)) segments.add(new Segment(previous, next));
+                if (!next.equals(previous)) segments.add(new Segment(previous, next, false));
                 previous = next;
             }
         }
-        if (segments.isEmpty()) segments.add(new Segment(start, goal));
+        if (segments.isEmpty()) segments.add(new Segment(start, goal, false));
     }
 
     /** Removes only exactly collinear, forward points; no verified corner or edge is shortened across terrain. */
@@ -183,7 +397,7 @@ public final class HierarchicalWaterRoutePlanner {
         }
     }
 
-    private record Segment(BlockPos from, BlockPos to) { }
+    private record Segment(BlockPos from, BlockPos to, boolean direct) { }
 
     private static final class TrackingWorld implements WaterRouteWorld {
         private final WaterRouteWorld delegate;
@@ -193,18 +407,13 @@ public final class HierarchicalWaterRoutePlanner {
         };
         private boolean unknown;
         private TrackingWorld(WaterRouteWorld delegate, BlockPos start, BlockPos goal) { this.delegate = delegate; this.start = start; this.goal = goal; }
-        private BlockPos snap(BlockPos p, WaterRoutePolicy policy) {
-            int step = policy.stepSize();
-            return new BlockPos(Math.floorDiv(p.getX(), step) * step, p.getY(), Math.floorDiv(p.getZ(), step) * step);
-        }
         @Override public WaterColumn sample(int x, int z, WaterRoutePolicy policy) {
-            BlockPos endpoint = start != null && snap(start, policy).getX() == x && snap(start, policy).getZ() == z ? start
-                    : goal != null && snap(goal, policy).getX() == x && snap(goal, policy).getZ() == z ? goal : null;
-            int sampleX = endpoint == null ? x : endpoint.getX(), sampleZ = endpoint == null ? z : endpoint.getZ();
-            long sampleKey = ((long) sampleX << 32) | (sampleZ & 0xFFFFFFFFL);
+            // Actual grid points must be sampled at their own coordinates. Relabelling a
+            // harbour's water as an offshore snapped cell could manufacture a route through land.
+            long sampleKey = ((long) x << 32) | (z & 0xFFFFFFFFL);
             WaterColumn column = start == null ? null : readySamples.get(sampleKey);
             if (column == null) {
-                column = delegate.sample(sampleX, sampleZ, policy);
+                column = delegate.sample(x, z, policy);
                 if (start != null && column != null) readySamples.put(sampleKey, column);
             }
             if (column == null) { unknown = true; return null; }

@@ -671,9 +671,6 @@ public final class NationService {
         }
 
         String officeId = normalizeOfficeId(rawOfficeId);
-        if (NationOfficeIds.LEADER.equals(officeId) || NationOfficeIds.MEMBER.equals(officeId)) {
-            return NationResult.failure(Component.translatable("command.sailboatmod.nation.office.rename.reserved"));
-        }
         NationOfficeRecord office = data.getOffice(nation.nationId(), officeId);
         if (office == null) {
             return NationResult.failure(Component.translatable("command.sailboatmod.nation.office.missing", rawOfficeId));
@@ -954,22 +951,20 @@ public final class NationService {
         String shortName = nation.shortName().isBlank() ? NationRecord.buildShortName(nation.name()) : nation.shortName();
         String officeName = resolveOfficeName(data, member);
         MutableComponent prefix = Component.literal("[" + shortName + "][" + officeName + "]");
-        return prefix.setStyle(Style.EMPTY.withColor(TextColor.fromRgb(nation.primaryColorRgb())));
+        Style style=Style.EMPTY.withColor(TextColor.fromRgb(nation.primaryColorRgb()));
+        var flag=nation.flagId().isBlank()?null:data.getFlag(nation.flagId());
+        if(flag!=null)style=style.withInsertion(new com.monpai.sailboatmod.nation.chat.ChatFlagBadge(
+                flag.flagId(),nation.primaryColorRgb(),nation.secondaryColorRgb(),flag.mirrored()).encode());
+        return prefix.setStyle(style);
     }
 
     public static String resolveOfficeName(NationSavedData data, NationMemberRecord member) {
-        String officeId = member.officeId();
-        if (NationOfficeIds.LEADER.equals(officeId)) {
-            return Component.translatable("nation.prefix.leader").getString();
-        }
-        if (NationOfficeIds.OFFICER.equals(officeId)) {
-            NationOfficeRecord office = data.getOffice(member.nationId(), officeId);
-            if (office != null && !office.name().isBlank()) {
-                return office.name();
-            }
-            return Component.translatable("nation.prefix.officer").getString();
-        }
-        return Component.translatable("nation.prefix.member").getString();
+        if(member==null)return "";
+        String officeId=member.officeId();
+        NationOfficeRecord office=data.getOffice(member.nationId(),officeId);
+        if(office!=null&&!office.name().isBlank())return office.name();
+        return Component.translatable(NationOfficeIds.LEADER.equals(officeId)?"nation.prefix.leader":
+                NationOfficeIds.OFFICER.equals(officeId)?"nation.prefix.officer":"nation.prefix.member").getString();
     }
 
     public static void updateKnownPlayer(ServerPlayer player) {
@@ -1237,7 +1232,7 @@ public final class NationService {
     }
 
     private static boolean isValidOfficeName(String name) {
-        return name != null && !name.isBlank() && name.length() <= MAX_OFFICE_NAME_LENGTH;
+        return com.monpai.sailboatmod.nation.chat.ChatFlagBadge.validTitle(name,MAX_OFFICE_NAME_LENGTH);
     }
 
     private static String normalizeOfficeName(String rawName) {

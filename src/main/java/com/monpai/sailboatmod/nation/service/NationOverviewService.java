@@ -145,7 +145,7 @@ public final class NationOverviewService {
                     claim.containerAccessLevel(),
                     claim.redstoneAccessLevel(),
                     claim.entityUseAccessLevel(),
-                    claim.entityDamageAccessLevel()
+                    claim.entityDamageAccessLevel(), claim.mobSpawningAllowed()
             ));
         }
         nearbyClaims.sort(Comparator.comparingInt(NationOverviewClaim::chunkZ).thenComparingInt(NationOverviewClaim::chunkX));

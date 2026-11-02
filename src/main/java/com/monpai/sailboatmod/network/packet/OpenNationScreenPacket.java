@@ -165,6 +165,7 @@ public class OpenNationScreenPacket {
             writeUtfSafe(buffer, claim.redstoneAccessLevel(), 16);
             writeUtfSafe(buffer, claim.entityUseAccessLevel(), 16);
             writeUtfSafe(buffer, claim.entityDamageAccessLevel(), 16);
+            buffer.writeBoolean(claim.mobSpawningAllowed());
         }
         buffer.writeVarInt(data.allNations().size());
         for (NationOverviewNationEntry entry : data.allNations()) {
@@ -323,7 +324,8 @@ public class OpenNationScreenPacket {
                     buffer.readUtf(16),
                     buffer.readUtf(16),
                     buffer.readUtf(16),
-                    buffer.readUtf(16)
+                    buffer.readUtf(16),
+                    buffer.readBoolean()
             ));
         }
         int nationListSize = buffer.readVarInt();

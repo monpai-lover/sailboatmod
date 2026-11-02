@@ -149,6 +149,15 @@ public final class ShippingTraceService {
         return out;
     }
 
+    /** Replace only the rendered voyage geometry; do not recreate IDs, ownership, cargo or history. */
+    public static void replaceRouteGeometry(net.minecraft.world.level.Level level,String traceId,List<Vec3> points,
+                                           int target,double progress) {
+        if(!(level instanceof ServerLevel)||traceId==null||traceId.isBlank()||points==null||points.size()<2)return;
+        var data=ShippingTraceSavedData.get(level);var trace=data.getTrace(traceId);
+        if(trace==null||!trace.dimensionId().equals(level.dimension().location().toString())||trace.waypoints().equals(points))return;
+        data.putTrace(trace.withRouteGeometry(points,target,progress,level.getGameTime()));
+    }
+
     public static MarketWebMapDtos.ShipmentTrace toDto(ShippingTraceRecord trace,
                                                        NationSavedData nationData,
                                                        MarketSavedData marketData,
@@ -420,7 +429,9 @@ public final class ShippingTraceService {
     public static boolean isMapVisibleStatus(String status) {
         String normalized = status == null ? "" : status.trim().toUpperCase(Locale.ROOT);
         return "SAILING".equals(normalized) || "IN_TRANSIT".equals(normalized)
-                || "ARRIVED".equals(normalized) || "STUCK".equals(normalized);
+                || "ARRIVED".equals(normalized) || "STUCK".equals(normalized)
+                || "WAITING_TERRAIN".equals(normalized) || "REROUTING".equals(normalized)
+                || "PAUSED".equals(normalized) || "WAITING".equals(normalized);
     }
 
     /** 手动发车的稳定 trace id，与订单 id 不冲突。 */

@@ -41,7 +41,11 @@ public final class TellusSurfaceSampler implements TerrainSurfaceSampler {
     private final SurfaceBlockGrid blocks = new SurfaceBlockGrid(GRID_CAPACITY);
 
     public TellusSurfaceSampler(ServerLevel level) {
-        EarthChunkGenerator earth = (EarthChunkGenerator) level.getChunkSource().getGenerator();
+        this((EarthChunkGenerator) level.getChunkSource().getGenerator());
+    }
+
+    /** Same native sampler for server use and opt-in generator integration tests. */
+    public TellusSurfaceSampler(EarthChunkGenerator earth) {
         EarthGeneratorSettings settings = earth.settings();
         this.worldScale = settings.worldScale();
         this.terrain = (x, z, resolutionMeters) -> {
@@ -49,7 +53,7 @@ public final class TellusSurfaceSampler implements TerrainSurfaceSampler {
             return new NativeSample(sample.terrainHeight(), sample.coverClass(), sample.land(), sample.landMaskKnown());
         };
         this.surface = (x, z, height) -> earth.resolveLodSurfaceBlock(x, z, height, false);
-        this.seaLevel = level.getSeaLevel();
+        this.seaLevel = earth.getSeaLevel();
     }
 
     TellusSurfaceSampler(double worldScale, int seaLevel, NativeSampleSource terrain, SurfaceBlockSource surface) {

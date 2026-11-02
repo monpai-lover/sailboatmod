@@ -325,7 +325,7 @@ public record NationOverviewData(
                         sanitize(claim.containerAccessLevel(), 16),
                         sanitize(claim.redstoneAccessLevel(), 16),
                         sanitize(claim.entityUseAccessLevel(), 16),
-                        sanitize(claim.entityDamageAccessLevel(), 16)))
+                        sanitize(claim.entityDamageAccessLevel(), 16), claim.mobSpawningAllowed()))
                 .toList();
         allNations = allNations == null ? List.of() : allNations.stream()
                 .map(entry -> new NationOverviewNationEntry(

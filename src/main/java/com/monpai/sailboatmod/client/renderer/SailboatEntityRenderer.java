@@ -27,8 +27,9 @@ public class SailboatEntityRenderer extends GeoEntityRenderer<SailboatEntity> {
                           com.mojang.blaze3d.vertex.VertexConsumer buffer,
                           boolean isReRender, float partialTick, int packedLight, int packedOverlay,
                           int renderColor) {
-        poseStack.translate(0.0F, 0.35F, 0.0F);
-        poseStack.scale(0.68F, 0.68F, 0.68F);
+        poseStack.translate(0.0F, com.monpai.sailboatmod.entity.SailboatSeatLayout.MODEL_LIFT, 0.0F);
+        float modelScale = com.monpai.sailboatmod.entity.SailboatSeatLayout.MODEL_SCALE;
+        poseStack.scale(modelScale, modelScale, modelScale);
         super.preRender(poseStack, animatable, model, bufferSource, buffer, isReRender, partialTick, packedLight, packedOverlay, renderColor);
     }
 

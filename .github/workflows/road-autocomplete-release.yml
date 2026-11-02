@@ -1,0 +1,78 @@
+name: Far-town road autocomplete regression
+on:
+  push:
+    branches: [fix/autoroute-candidates-flag-preview]
+    paths:
+      - 'src/main/java/com/monpai/sailboatmod/road/**'
+      - 'src/main/java/com/monpai/sailboatmod/roadplanner/**'
+      - 'src/main/java/com/monpai/sailboatmod/client/roadplanner/**'
+      - 'src/main/java/com/monpai/sailboatmod/network/packet/roadplanner/**'
+      - 'src/main/java/com/monpai/sailboatmod/ServerEvents.java'
+      - 'src/test/java/com/monpai/sailboatmod/road/**'
+      - 'src/test/java/com/monpai/sailboatmod/roadplanner/**'
+      - 'src/test/java/com/monpai/sailboatmod/client/roadplanner/**'
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: road-autocomplete-${{ github.ref }}
+  cancel-in-progress: true
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          lfs: true
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
+      - name: Configure bounded test heap
+        run: |
+          cat > /tmp/road-memory.gradle <<'EOF'
+          allprojects { afterEvaluate { if (plugins.hasPlugin('java')) { tasks.named('test', Test) { maxHeapSize = '3G'; filter { excludeTestsMatching '*TellusTaipeiAmsterdamBenchmark' }; testLogging { events 'failed', 'skipped'; showStandardStreams = true } } } } }
+          EOF
+      - name: Compile, run road and navigation regressions, package both jars
+        run: |
+          chmod +x gradlew
+          ./gradlew --no-daemon -I /tmp/road-memory.gradle -PneoForge.disableRecompilation=true -PfixIndex=road_autocomplete '-Dorg.gradle.jvmargs=-Xmx2G -Dfile.encoding=UTF-8' test --tests '*road.*' --tests '*roadplanner.*' --tests '*route.water.*' --tests '*route.terrain.*' --tests '*WaterPolylineFollowerTest' --tests '*ShippingTraceRecordTest' --tests '*Autopilot*Test' --tests '*ChatFlag*Test' --tests '*NationOfficeTitleTest' --tests '*FlagPreviewLayoutTest' jar marketWebJar
+          cp -r build/test-results/test build/offline-test-results
+      - name: Prepare pinned Tellus runtime
+        run: |
+          mkdir -p build/native-runtime build/native-evidence
+          python3 - <<'PY'
+          import pathlib, zipfile, hashlib
+          p=pathlib.Path('libs/compile-only/Tellus-neoforge-1.21.1-0.8.3.jar')
+          digest=hashlib.sha256(p.read_bytes()).hexdigest()
+          assert digest=='fe3287f5b7cb1e8ef9395b71462db8c4455c21ebdca5ea33eee7cd0c5b62fcb6'
+          pathlib.Path('build/native-evidence/tellus-sha256.txt').write_text(digest+'\n')
+          with zipfile.ZipFile(p) as z:
+              for n in z.namelist():
+                  if n.startswith('META-INF/jarjar/') and n.endswith('.jar'):
+                      pathlib.Path('build/native-runtime',pathlib.Path(n).name).write_bytes(z.read(n))
+          PY
+      - name: Existing native Tellus water routes and reverse reuse
+        run: |
+          ./gradlew --no-daemon -I tools/tellus-native/native.init.gradle -PneoForge.disableRecompilation=true '-Dorg.gradle.jvmargs=-Xmx2G -Dfile.encoding=UTF-8' test --tests '*TellusNativeRoutesTest' --rerun-tasks
+      - name: Archive exact source and artifact identity
+        if: always()
+        run: |
+          mkdir -p build/native-evidence
+          git rev-parse HEAD > build/native-evidence/commit.txt
+          sha256sum build/libs/*.jar > build/native-evidence/jar-sha256.txt || true
+          tar czf build/verified-source.tar.gz src tools docs build.gradle gradle.properties settings.gradle
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: road-autocomplete-${{ github.sha }}
+          path: |
+            build/libs/*.jar
+            build/offline-test-results/
+            build/test-results/test/
+            build/native-evidence/
+            build/road-evidence/
+            build/route-regression/
+            build/verified-source.tar.gz
+          retention-days: 14

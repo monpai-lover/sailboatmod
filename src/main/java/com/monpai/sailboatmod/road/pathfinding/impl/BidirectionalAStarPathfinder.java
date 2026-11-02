@@ -33,7 +33,8 @@ public class BidirectionalAStarPathfinder implements Pathfinder {
 
     @Override
     public PathResult findPath(BlockPos start, BlockPos end, TerrainSamplingCache cache) {
-        int step = config.getAStarStep();
+        RoadSearchBudget.check();
+        int step = Math.max(1, config.getAStarStep());
         int maxSteps = config.getMaxSteps() * 2;
         int sx = start.getX(), sz = start.getZ();
         int ex = end.getX(), ez = end.getZ();
@@ -62,6 +63,7 @@ public class BidirectionalAStarPathfinder implements Pathfinder {
 
         int steps = 0;
         while (!forwardOpen.isEmpty() && !backwardOpen.isEmpty() && steps < maxSteps) {
+            RoadSearchBudget.check();
             steps++;
 
             // Expand whichever queue has the lower minimum f
@@ -85,6 +87,7 @@ public class BidirectionalAStarPathfinder implements Pathfinder {
                 }
 
                 for (int[] dir : DIRECTIONS) {
+                RoadSearchBudget.check();
                     int nx = current.x + dir[0] * step;
                     int nz = current.z + dir[1] * step;
 
@@ -118,6 +121,7 @@ public class BidirectionalAStarPathfinder implements Pathfinder {
                 }
 
                 for (int[] dir : DIRECTIONS) {
+                RoadSearchBudget.check();
                     int nx = current.x + dir[0] * step;
                     int nz = current.z + dir[1] * step;
 
@@ -154,6 +158,7 @@ public class BidirectionalAStarPathfinder implements Pathfinder {
         List<BlockPos> forwardChain = new ArrayList<>();
         Node n = forwardNode;
         while (n != null) {
+            RoadSearchBudget.check();
             int y = cache.getHeight(n.x, n.z);
             forwardChain.add(new BlockPos(n.x, y, n.z));
             n = n.parent;
@@ -164,6 +169,7 @@ public class BidirectionalAStarPathfinder implements Pathfinder {
         List<BlockPos> backwardChain = new ArrayList<>();
         n = backwardNode.parent; // skip meeting point, already in forward chain
         while (n != null) {
+            RoadSearchBudget.check();
             int y = cache.getHeight(n.x, n.z);
             backwardChain.add(new BlockPos(n.x, y, n.z));
             n = n.parent;
@@ -191,6 +197,7 @@ public class BidirectionalAStarPathfinder implements Pathfinder {
         List<BlockPos> path = new ArrayList<>();
         Node n = goalNode;
         while (n != null) {
+            RoadSearchBudget.check();
             int y = cache.getHeight(n.x, n.z);
             path.add(new BlockPos(n.x, y, n.z));
             n = n.parent;
@@ -209,6 +216,7 @@ public class BidirectionalAStarPathfinder implements Pathfinder {
         List<BlockPos> path = new ArrayList<>();
         Node n = goalNode;
         while (n != null) {
+            RoadSearchBudget.check();
             int y = cache.getHeight(n.x, n.z);
             path.add(new BlockPos(n.x, y, n.z));
             n = n.parent;

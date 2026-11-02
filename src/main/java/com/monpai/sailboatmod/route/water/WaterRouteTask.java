@@ -123,19 +123,19 @@ public final class WaterRouteTask {
         // 三段编排:customSearch 在后台整体跑三段串行并返回拼接结果。
         if (customSearch != null) {
             final long t0 = System.nanoTime();
-            LOGGER.info("[WaterPath] 三段编排后台提交 key={}", key);
+            LOGGER.info("[WaterPath] 后台航线后台提交 key={}", key);
             submitCancellable(() -> {
                 try {
                     WaterRouteResult<List<BlockPos>> r = customSearch.get();
                     long ms = (System.nanoTime() - t0) / 1_000_000L;
-                    LOGGER.info("[WaterPath] 三段编排完成 key={} 耗时={}ms success={} 航点={}",
+                    LOGGER.info("[WaterPath] 后台航线完成 key={} 耗时={}ms success={} 航点={}",
                             key, ms, r != null && r.successful(),
                             r != null && r.value() != null ? r.value().size() : 0);
                     return r != null ? r : WaterRouteResult.<List<BlockPos>>failure(WaterRouteFailureReason.NO_WATER_PATH);
                 } catch (java.util.concurrent.CancellationException cancelledSearch) {
                     return WaterRouteResult.<List<BlockPos>>failure(WaterRouteFailureReason.CANCELLED);
                 } catch (Throwable t) {
-                    LOGGER.error("[WaterPath] 三段编排异常 key={}", key, t);
+                    LOGGER.error("[WaterPath] 后台航线异常 key={}", key, t);
                     return WaterRouteResult.<List<BlockPos>>failure(WaterRouteFailureReason.NO_WATER_PATH);
                 }
             }).whenComplete((res, ex) ->

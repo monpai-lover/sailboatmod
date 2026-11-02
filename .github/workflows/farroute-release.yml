@@ -1,0 +1,91 @@
+name: Tellus far-route regression
+on:
+  push:
+    branches: [fix/autoroute-candidates-flag-preview]
+    paths: ['src/main/java/com/monpai/sailboatmod/route/**', 'src/main/java/com/monpai/sailboatmod/compat/tellus/**', 'src/test/java/com/monpai/sailboatmod/route/**', 'src/test/java/com/monpai/sailboatmod/network/packet/RoutePlanningPreferencePacketTest.java']
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: farroute-release-${{ github.ref }}
+  cancel-in-progress: true
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          lfs: true
+          fetch-depth: 2
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
+      - name: Verify checked-in overview and fetch official Tellus mask
+        run: |
+          mkdir -p build/test-data build/native-evidence
+          python3 - <<'PYTHON'
+          import gzip,hashlib,pathlib
+          p=pathlib.Path('src/main/resources/com/monpai/sailboatmod/route/water/world_water_overview.bin.gz')
+          actual=hashlib.sha256(gzip.decompress(p.read_bytes())).hexdigest()
+          assert actual=='90d51342861d98d880b716cb1164c5a532e88caa568585e87381dbb150dd745e'
+          pathlib.Path('build/native-evidence/overview-decoded-sha256.txt').write_text(actual+'\n')
+          PYTHON
+          curl --fail --location --retry 3 --max-time 180 https://github.com/Yucareux/Tellus-Land-Polygons/releases/download/v1.0.0/tellus_landmask.pmtiles -o build/test-data/tellus_landmask.pmtiles
+          echo 'ab142dc692ee9607eeb23802219c25f7dff5340cfe3cc8d7ee2083acfac3afa2  build/test-data/tellus_landmask.pmtiles' | sha256sum -c -
+          sha256sum build/test-data/*.pmtiles > build/native-evidence/input-data-sha256.txt
+      - name: Compile, run targeted regressions and actual-mask far-route benchmark, package both JARs
+        run: |
+          chmod +x gradlew
+          cat > build/farroute.init.gradle <<'GRADLE'
+          allprojects {
+            plugins.withId('java') {
+              tasks.withType(Test).configureEach {
+                maxHeapSize = '3G'
+                maxParallelForks = 1
+                testLogging { events 'passed','failed','skipped'; showStandardStreams = true }
+              }
+            }
+          }
+          GRADLE
+          export SAILBOAT_TELLUS_LANDMASK="$PWD/build/test-data/tellus_landmask.pmtiles"
+          export SAILBOAT_TELLUS_ROUTE_OUT="$PWD/build/farroute-evidence/taipei-amsterdam.csv"
+          ./gradlew --no-daemon -I build/farroute.init.gradle -PneoForge.disableRecompilation=true -PfixIndex=tellus_farroute '-Dorg.gradle.jvmargs=-Xmx2G -Dfile.encoding=UTF-8' test --tests '*route.water.*' --tests '*route.terrain.*' --tests '*WaterPolylineFollowerTest' --tests '*ShippingTraceRecordTest' --tests '*Autopilot*Test' --tests '*ChatFlag*Test' --tests '*NationOfficeTitleTest' --tests '*FlagPreviewLayoutTest' --tests '*RoutePlanningPreferencePacketTest' jar marketWebJar
+          cp -r build/test-results/test build/offline-test-results
+      - name: Prepare pinned native Tellus runtime
+        run: |
+          mkdir -p build/native-runtime build/native-evidence
+          python3 - <<'PY'
+          import pathlib,zipfile,hashlib
+          p=pathlib.Path('libs/compile-only/Tellus-neoforge-1.21.1-0.8.3.jar')
+          pathlib.Path('build/native-evidence/tellus-sha256.txt').write_text(hashlib.sha256(p.read_bytes()).hexdigest()+'\n')
+          with zipfile.ZipFile(p) as z:
+              for n in z.namelist():
+                  if n.startswith('META-INF/jarjar/') and n.endswith('.jar'):
+                      pathlib.Path('build/native-runtime',pathlib.Path(n).name).write_bytes(z.read(n))
+          PY
+      - name: Native Tellus port, saved-region, long-route and reverse-reuse regressions
+        run: |
+          ./gradlew --no-daemon -I tools/tellus-native/native.init.gradle -PneoForge.disableRecompilation=true '-Dorg.gradle.jvmargs=-Xmx2G -Dfile.encoding=UTF-8' test --tests '*TellusNativeRoutesTest' --rerun-tasks
+      - name: Archive exact source, reports and build identity
+        if: always()
+        run: |
+          mkdir -p build/native-evidence
+          git rev-parse HEAD > build/native-evidence/commit.txt
+          git status --short > build/native-evidence/working-tree.txt
+          sha256sum build/libs/*.jar > build/native-evidence/jar-sha256.txt || true
+          tar czf build/verified-source.tar.gz src tools docs AGENTS.md CLAUDE.md README.md START_HERE.md build.gradle gradle.properties settings.gradle
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: tellus-farroute-${{ github.run_id }}
+          path: |
+            build/libs/*.jar
+            build/offline-test-results/
+            build/test-results/test/
+            build/farroute-evidence/
+            build/native-evidence/
+            build/route-regression/
+            build/verified-source.tar.gz
+          retention-days: 14

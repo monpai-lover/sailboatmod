@@ -21,9 +21,10 @@ public final class MeterBar extends UIElement {
     }
 
     @Override
-    public void drawContents(GUIContext context) {
-        super.drawContents(context);
+    public void drawBackgroundAdditional(GUIContext context) {
+        super.drawBackgroundAdditional(context);
         GuiGraphics g = context.graphics;
+        g.flush();
         int x = Math.round(getContentX());
         int y = Math.round(getContentY());
         int w = Math.round(getContentWidth());
@@ -31,6 +32,7 @@ public final class MeterBar extends UIElement {
         int fill = Math.round(w * ratio);
         if (fill > 0 && h > 0) {
             g.fill(x, y, x + fill, y + h, color);
+            g.flush();
         }
     }
 }

@@ -1,0 +1,45 @@
+name: Async port and chat verification
+on:
+  push:
+    branches: [fix/autoroute-candidates-flag-preview]
+    paths: ['src/**', 'build.gradle', '.github/workflows/async-port-chat.yml']
+  pull_request:
+    branches: [1.21.1-neoforge]
+    paths: ['src/**', 'build.gradle', '.github/workflows/async-port-chat.yml']
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: async-port-chat-${{ github.ref }}
+  cancel-in-progress: true
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          lfs: true
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
+      - name: Compile, regress, package
+        run: |
+          chmod +x gradlew
+          ./gradlew --no-daemon -PneoForge.disableRecompilation=true -PfixIndex=async_chat '-Dorg.gradle.jvmargs=-Xmx3G -Dfile.encoding=UTF-8' test --tests '*PortBerthValidatorTest' --tests '*PortTerrain*Test' --tests '*PortDockSnapshotTest' --tests '*AsyncPortWiringTest' --tests '*AsyncRouteExecutorTest' --tests '*RouteProgressProtocolTest' --tests '*WaterRouteCandidateServiceTest' --tests '*WaterRouteTask*Test' --tests '*FlagPreviewLayoutTest' --tests '*ChatFlag*Test' --tests '*NationOfficeTitleTest' jar
+      - name: Archive sources
+        if: always()
+        run: |
+          mkdir -p build
+          tar czf build/validation-source.tar.gz src/main/java src/test/java src/main/resources build.gradle gradle.properties settings.gradle
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: async-port-chat-${{ github.sha }}
+          path: |
+            build/libs/*.jar
+            build/test-results/test/
+            build/reports/tests/test/
+            build/validation-source.tar.gz
+          retention-days: 14

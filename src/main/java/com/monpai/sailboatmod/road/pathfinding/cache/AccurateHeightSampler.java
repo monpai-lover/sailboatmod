@@ -1,6 +1,7 @@
 package com.monpai.sailboatmod.road.pathfinding.cache;
 
 import net.minecraft.server.level.ServerLevel;
+import com.monpai.sailboatmod.road.pathfinding.RoadSearchBudget;
 import net.minecraft.world.level.chunk.ChunkGenerator;
 import net.minecraft.world.level.levelgen.Heightmap;
 import net.minecraft.world.level.levelgen.RandomState;
@@ -28,10 +29,16 @@ public class AccurateHeightSampler {
     }
 
     public int surfaceHeight(int x, int z) {
-        return generator.getBaseHeight(x, z, Heightmap.Types.WORLD_SURFACE_WG, level, randomState) - 1;
+        RoadSearchBudget.check();
+        int value = generator.getBaseHeight(x, z, Heightmap.Types.WORLD_SURFACE_WG, level, randomState) - 1;
+        RoadSearchBudget.check();
+        return value;
     }
 
     public int oceanFloor(int x, int z) {
-        return generator.getBaseHeight(x, z, Heightmap.Types.OCEAN_FLOOR_WG, level, randomState) - 1;
+        RoadSearchBudget.check();
+        int value = generator.getBaseHeight(x, z, Heightmap.Types.OCEAN_FLOOR_WG, level, randomState) - 1;
+        RoadSearchBudget.check();
+        return value;
     }
 }

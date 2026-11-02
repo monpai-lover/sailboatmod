@@ -2,9 +2,6 @@ package com.monpai.sailboatmod.client.roadplanner;
 
 import com.monpai.sailboatmod.road.config.PathfindingConfig;
 import com.monpai.sailboatmod.road.config.RoadConfig;
-import com.monpai.sailboatmod.road.pathfinding.PathResult;
-import com.monpai.sailboatmod.road.pathfinding.Pathfinder;
-import com.monpai.sailboatmod.road.pathfinding.PathfinderFactory;
 import com.monpai.sailboatmod.road.pathfinding.cache.TerrainSamplingCache;
 import net.minecraft.core.BlockPos;
 import net.minecraft.server.level.ServerLevel;
@@ -14,6 +11,9 @@ import java.util.List;
 public final class RoadPlannerPathfinderRunnerFactory {
     private RoadPlannerPathfinderRunnerFactory() {
     }
+
+    /** 一次自动补全的总时限(后台线程);超时的窗口沿用粗路节点。 */
+    public static final long AUTO_COMPLETE_BUDGET_MILLIS = 45_000L;
 
     public static RoadPlannerAutoCompleteService.PathfinderRunner serverRunner(ServerLevel level) {
         RoadPlannerAutoCompleteService service = serverService(level);
@@ -42,17 +42,24 @@ public final class RoadPlannerPathfinderRunnerFactory {
         config.setSamplingPrecision(useRealChunk
                 ? PathfindingConfig.SamplingPrecision.HIGH
                 : PathfindingConfig.SamplingPrecision.NORMAL);
-        Pathfinder pathfinder = PathfinderFactory.create(config);
-        TerrainSamplingCache cache = new TerrainSamplingCache(level, config.getSamplingPrecision());
+        TerrainSamplingCache cache = new TerrainSamplingCache(level, config.getSamplingPrecision()).withEntryLimit(65_536);
+        // 远距离两城:粗步长找走向 + 分窗精寻,有总时限并响应中断(见 LongRangeRoadPathfinder)。只在后台线程运行。
+        LongRangeRoadPathfinder pathfinder = new LongRangeRoadPathfinder(config);
+        var lastPlan = new java.util.concurrent.atomic.AtomicReference<LongRangeRoadPathfinder.Result>();
         RoadPlannerAutoCompleteService.PathfinderRunner runner = (BlockPos from, BlockPos destination) -> {
-            PathResult result = pathfinder.findPath(from, destination, cache);
-            return result.success() ? result.path() : List.of();
+            var result = pathfinder.findPath(from, destination, cache, AUTO_COMPLETE_BUDGET_MILLIS - 10_000L);
+            lastPlan.set(result);
+            return result.path();
         };
         return new RoadPlannerAutoCompleteService(
                 runner,
                 new RoadPlannerTerrainSegmentClassifier(cache, new RoadConfig().getBridge()),
                 (x, z) -> !cache.isWater(x, z) || cache.getWaterDepth(x, z) <= 0,
                 nodes -> RoadPlannerTerrainSampleCollector.collect(cache, nodes)
-        );
+        ).withPlanningNote(() -> {
+            var result = lastPlan.get();
+            return result != null && result.refinedWindows() < result.windows()
+                    ? "（部分区段为粗略预览，建造前需复核）" : "";
+        });
     }
 }

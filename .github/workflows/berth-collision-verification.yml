@@ -1,0 +1,94 @@
+name: Berth and collision-aware navigation verification
+on:
+  push:
+    branches: [fix/autoroute-candidates-flag-preview]
+    paths: ['src/**', '.github/workflows/berth-collision-verification.yml']
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: berth-collision-motion-${{ github.ref }}
+  cancel-in-progress: true
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          lfs: true
+      - name: Capture exact source before compilation
+        run: |
+          mkdir -p build/verification
+          git rev-parse HEAD > build/verification/commit.txt
+          git status --short > build/verification/working-tree.txt
+          tar czf build/current-source.tar.gz src tools docs AGENTS.md CLAUDE.md README.md START_HERE.md build.gradle gradle.properties settings.gradle gradle gradlew gradlew.bat .github
+      - uses: actions/upload-artifact@v4
+        with:
+          name: berth-collision-source-${{ github.run_id }}
+          path: |
+            build/current-source.tar.gz
+            build/verification/commit.txt
+          retention-days: 7
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
+      - name: Full compilation, offline regressions and both JARs
+        run: |
+          cat > /tmp/berth-collision-tests.gradle <<'GRADLE'
+          allprojects {
+            afterEvaluate {
+              if (plugins.hasPlugin('java')) {
+                tasks.named('test', Test) {
+                  maxHeapSize = '3G'
+                  maxParallelForks = 1
+                  filter { excludeTestsMatching '*TellusTaipeiAmsterdamBenchmark' }
+                  testLogging { events 'failed','skipped'; showStandardStreams = true }
+                }
+              }
+            }
+          }
+          GRADLE
+          chmod +x gradlew
+          set -o pipefail
+          ./gradlew --no-daemon -I /tmp/berth-collision-tests.gradle -PneoForge.disableRecompilation=true -PfixIndex=berth_collision22 '-Dorg.gradle.jvmargs=-Xmx2G -Dfile.encoding=UTF-8' build marketWebJar 2>&1 | tee build/verification/build.log
+          cp -r build/test-results/test build/offline-test-results
+      - name: Prepare pinned Tellus runtime
+        run: |
+          mkdir -p build/native-runtime build/native-evidence
+          python3 - <<'PY'
+          import pathlib,zipfile,hashlib
+          p=pathlib.Path('libs/compile-only/Tellus-neoforge-1.21.1-0.8.3.jar')
+          digest=hashlib.sha256(p.read_bytes()).hexdigest()
+          assert digest=='fe3287f5b7cb1e8ef9395b71462db8c4455c21ebdca5ea33eee7cd0c5b62fcb6'
+          pathlib.Path('build/native-evidence/tellus-sha256.txt').write_text(digest+'\n')
+          with zipfile.ZipFile(p) as z:
+              for n in z.namelist():
+                  if n.startswith('META-INF/jarjar/') and n.endswith('.jar'):
+                      pathlib.Path('build/native-runtime',pathlib.Path(n).name).write_bytes(z.read(n))
+          PY
+      - name: Native Tellus navigation compatibility
+        run: |
+          set -o pipefail
+          ./gradlew --no-daemon -I tools/tellus-native/native.init.gradle -PneoForge.disableRecompilation=true '-Dorg.gradle.jvmargs=-Xmx2G -Dfile.encoding=UTF-8' test --tests '*TellusNativeRoutesTest' --rerun-tasks 2>&1 | tee build/verification/native.log
+      - name: Archive build identity
+        if: always()
+        run: |
+          mkdir -p build/verification
+          git rev-parse HEAD > build/verification/commit.txt
+          git status --short > build/verification/working-tree.txt
+          sha256sum build/libs/*.jar > build/verification/jar-sha256.txt || true
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: berth-collision-build-${{ github.run_id }}
+          path: |
+            build/libs/*.jar
+            build/offline-test-results/
+            build/test-results/test/
+            build/native-evidence/
+            build/route-regression/
+            build/verification/
+            build/current-source.tar.gz
+          retention-days: 14

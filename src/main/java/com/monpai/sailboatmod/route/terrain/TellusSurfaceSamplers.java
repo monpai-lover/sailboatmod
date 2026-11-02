@@ -32,6 +32,23 @@ public final class TellusSurfaceSamplers {
         }
     }
 
+    /**
+     * 远航寻路用的海陆取样(只读 Tellus 陆地遮罩,按取样间距选层级,后台并行预取相邻瓦片);
+     * 非 Tellus 世界或 API 不兼容时为空,调用方回退 {@link #forLevel}。
+     */
+    public static Optional<TerrainSurfaceSampler> landMaskForLevel(ServerLevel level) {
+        if (!TellusWorlds.isTellusLevel(level)) {
+            return Optional.empty();
+        }
+        try {
+            return checked(() -> new com.monpai.sailboatmod.compat.tellus.TellusLandMaskSampler(level),
+                    com.monpai.sailboatmod.compat.tellus.TellusLandMaskSampler::checkApi);
+        } catch (LinkageError e) {
+            warnOnce(e);
+            return Optional.empty();
+        }
+    }
+
     /** 能在不触发下载的情况下验证 Tellus API(反射查方法签名)。 */
     @FunctionalInterface
     public interface ApiCheck {

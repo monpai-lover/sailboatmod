@@ -501,7 +501,8 @@ public final class NationEvents {
         NationMemberRecord member = data.getMember(player.getUUID());
         NationRecord nation = member == null ? null : data.getNation(member.nationId());
         String playerName = player.getGameProfile().getName();
-        String tabKey = tabListKey(nation, member, playerName);
+        String tabKey = tabListKey(nation, member, playerName)+(member==null?"":NationService.resolveOfficeName(data,member));
+        if(nation!=null){var flag=data.getFlag(nation.flagId());tabKey+="|"+nation.flagId()+"|"+nation.secondaryColorRgb()+"|"+(flag!=null&&flag.mirrored());}
         if (!force && tabKey.equals(LAST_TAB_LIST_KEYS.get(player.getUUID()))) {
             return;
         }

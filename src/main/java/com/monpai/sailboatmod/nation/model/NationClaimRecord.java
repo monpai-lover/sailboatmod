@@ -18,7 +18,8 @@ public record NationClaimRecord(
         String entityUseAccessLevel,
         String entityDamageAccessLevel,
         long claimedAt,
-        String claimSource
+        String claimSource,
+        boolean mobSpawningAllowed
 ) {
     public static final String SOURCE_MANUAL = "manual";
     public static final String SOURCE_TOWN_CORE = "town_core";
@@ -57,6 +58,16 @@ public record NationClaimRecord(
         );
     }
 
+    /** Old constructors and old saves keep the world's original spawning behaviour. */
+    public NationClaimRecord(String dimensionId, int chunkX, int chunkZ, String nationId, String townId,
+            String breakAccessLevel, String placeAccessLevel, String useAccessLevel,
+            String containerAccessLevel, String redstoneAccessLevel, String entityUseAccessLevel,
+            String entityDamageAccessLevel, long claimedAt, String claimSource) {
+        this(dimensionId, chunkX, chunkZ, nationId, townId, breakAccessLevel, placeAccessLevel,
+                useAccessLevel, containerAccessLevel, redstoneAccessLevel, entityUseAccessLevel,
+                entityDamageAccessLevel, claimedAt, claimSource, true);
+    }
+
     public NationClaimRecord {
         dimensionId = normalize(dimensionId);
         nationId = normalize(nationId);
@@ -87,6 +98,7 @@ public record NationClaimRecord(
         tag.putString("EntityDamageAccessLevel", entityDamageAccessLevel);
         tag.putLong("ClaimedAt", claimedAt);
         tag.putString("ClaimSource", claimSource);
+        tag.putBoolean("MobSpawningAllowed", mobSpawningAllowed);
         return tag;
     }
 
@@ -105,7 +117,8 @@ public record NationClaimRecord(
                 tag.contains("EntityUseAccessLevel") ? tag.getString("EntityUseAccessLevel") : NationClaimAccessLevel.MEMBER.id(),
                 tag.contains("EntityDamageAccessLevel") ? tag.getString("EntityDamageAccessLevel") : NationClaimAccessLevel.MEMBER.id(),
                 tag.getLong("ClaimedAt"),
-                tag.contains("ClaimSource") ? tag.getString("ClaimSource") : SOURCE_MANUAL
+                tag.contains("ClaimSource") ? tag.getString("ClaimSource") : SOURCE_MANUAL,
+                !tag.contains("MobSpawningAllowed", net.minecraft.nbt.Tag.TAG_BYTE) || tag.getBoolean("MobSpawningAllowed")
         );
     }
 
@@ -117,7 +130,7 @@ public record NationClaimRecord(
                 useLevel == null ? useAccessLevel : useLevel.id(),
                 containerAccessLevel, redstoneAccessLevel, entityUseAccessLevel, entityDamageAccessLevel,
                 claimedAt,
-                claimSource
+                claimSource, mobSpawningAllowed
         );
     }
 
@@ -125,15 +138,22 @@ public record NationClaimRecord(
         if (actionId == null || level == null) return this;
         String levelId = level.id();
         return switch (actionId.toLowerCase(Locale.ROOT)) {
-            case "break" -> new NationClaimRecord(dimensionId, chunkX, chunkZ, nationId, townId, levelId, placeAccessLevel, useAccessLevel, containerAccessLevel, redstoneAccessLevel, entityUseAccessLevel, entityDamageAccessLevel, claimedAt, claimSource);
-            case "place" -> new NationClaimRecord(dimensionId, chunkX, chunkZ, nationId, townId, breakAccessLevel, levelId, useAccessLevel, containerAccessLevel, redstoneAccessLevel, entityUseAccessLevel, entityDamageAccessLevel, claimedAt, claimSource);
-            case "use" -> new NationClaimRecord(dimensionId, chunkX, chunkZ, nationId, townId, breakAccessLevel, placeAccessLevel, levelId, containerAccessLevel, redstoneAccessLevel, entityUseAccessLevel, entityDamageAccessLevel, claimedAt, claimSource);
-            case "container" -> new NationClaimRecord(dimensionId, chunkX, chunkZ, nationId, townId, breakAccessLevel, placeAccessLevel, useAccessLevel, levelId, redstoneAccessLevel, entityUseAccessLevel, entityDamageAccessLevel, claimedAt, claimSource);
-            case "redstone" -> new NationClaimRecord(dimensionId, chunkX, chunkZ, nationId, townId, breakAccessLevel, placeAccessLevel, useAccessLevel, containerAccessLevel, levelId, entityUseAccessLevel, entityDamageAccessLevel, claimedAt, claimSource);
-            case "entity_use" -> new NationClaimRecord(dimensionId, chunkX, chunkZ, nationId, townId, breakAccessLevel, placeAccessLevel, useAccessLevel, containerAccessLevel, redstoneAccessLevel, levelId, entityDamageAccessLevel, claimedAt, claimSource);
-            case "entity_damage" -> new NationClaimRecord(dimensionId, chunkX, chunkZ, nationId, townId, breakAccessLevel, placeAccessLevel, useAccessLevel, containerAccessLevel, redstoneAccessLevel, entityUseAccessLevel, levelId, claimedAt, claimSource);
+            case "break" -> new NationClaimRecord(dimensionId, chunkX, chunkZ, nationId, townId, levelId, placeAccessLevel, useAccessLevel, containerAccessLevel, redstoneAccessLevel, entityUseAccessLevel, entityDamageAccessLevel, claimedAt, claimSource, mobSpawningAllowed);
+            case "place" -> new NationClaimRecord(dimensionId, chunkX, chunkZ, nationId, townId, breakAccessLevel, levelId, useAccessLevel, containerAccessLevel, redstoneAccessLevel, entityUseAccessLevel, entityDamageAccessLevel, claimedAt, claimSource, mobSpawningAllowed);
+            case "use" -> new NationClaimRecord(dimensionId, chunkX, chunkZ, nationId, townId, breakAccessLevel, placeAccessLevel, levelId, containerAccessLevel, redstoneAccessLevel, entityUseAccessLevel, entityDamageAccessLevel, claimedAt, claimSource, mobSpawningAllowed);
+            case "container" -> new NationClaimRecord(dimensionId, chunkX, chunkZ, nationId, townId, breakAccessLevel, placeAccessLevel, useAccessLevel, levelId, redstoneAccessLevel, entityUseAccessLevel, entityDamageAccessLevel, claimedAt, claimSource, mobSpawningAllowed);
+            case "redstone" -> new NationClaimRecord(dimensionId, chunkX, chunkZ, nationId, townId, breakAccessLevel, placeAccessLevel, useAccessLevel, containerAccessLevel, levelId, entityUseAccessLevel, entityDamageAccessLevel, claimedAt, claimSource, mobSpawningAllowed);
+            case "entity_use" -> new NationClaimRecord(dimensionId, chunkX, chunkZ, nationId, townId, breakAccessLevel, placeAccessLevel, useAccessLevel, containerAccessLevel, redstoneAccessLevel, levelId, entityDamageAccessLevel, claimedAt, claimSource, mobSpawningAllowed);
+            case "entity_damage" -> new NationClaimRecord(dimensionId, chunkX, chunkZ, nationId, townId, breakAccessLevel, placeAccessLevel, useAccessLevel, containerAccessLevel, redstoneAccessLevel, entityUseAccessLevel, levelId, claimedAt, claimSource, mobSpawningAllowed);
             default -> this;
         };
+    }
+
+    public NationClaimRecord withMobSpawningAllowed(boolean allowed) {
+        return new NationClaimRecord(dimensionId, chunkX, chunkZ, nationId, townId,
+                breakAccessLevel, placeAccessLevel, useAccessLevel, containerAccessLevel,
+                redstoneAccessLevel, entityUseAccessLevel, entityDamageAccessLevel,
+                claimedAt, claimSource, allowed);
     }
 
     public String accessLevelFor(String actionId) {

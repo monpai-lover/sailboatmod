@@ -31,7 +31,8 @@ public class GradientDescentPathfinder implements Pathfinder {
 
     @Override
     public PathResult findPath(BlockPos start, BlockPos end, TerrainSamplingCache cache) {
-        int step = config.getAStarStep();
+        RoadSearchBudget.check();
+        int step = Math.max(1, config.getAStarStep());
         int maxSteps = Math.max(5000, config.getMaxSteps() * 3);
         int goalX = end.getX();
         int goalZ = end.getZ();
@@ -47,6 +48,7 @@ public class GradientDescentPathfinder implements Pathfinder {
 
         int steps = 0;
         while (!open.isEmpty() && steps < maxSteps) {
+            RoadSearchBudget.check();
             steps++;
             Node current = open.poll();
 
@@ -61,6 +63,7 @@ public class GradientDescentPathfinder implements Pathfinder {
             }
 
             for (int[] dir : DIRECTIONS) {
+                RoadSearchBudget.check();
                 int nx = current.x + dir[0] * step;
                 int nz = current.z + dir[1] * step;
 
@@ -118,6 +121,7 @@ public class GradientDescentPathfinder implements Pathfinder {
         List<BlockPos> path = new ArrayList<>();
         Node n = goalNode;
         while (n != null) {
+            RoadSearchBudget.check();
             int y = cache.getHeight(n.x, n.z);
             path.add(new BlockPos(n.x, y, n.z));
             n = n.parent;

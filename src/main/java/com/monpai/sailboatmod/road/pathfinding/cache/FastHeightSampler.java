@@ -2,6 +2,7 @@ package com.monpai.sailboatmod.road.pathfinding.cache;
 
 import net.minecraft.core.BlockPos;
 import net.minecraft.server.level.ServerLevel;
+import com.monpai.sailboatmod.road.pathfinding.RoadSearchBudget;
 import net.minecraft.world.level.block.state.BlockState;
 import net.minecraft.world.level.chunk.ChunkGenerator;
 import net.minecraft.world.level.levelgen.Heightmap;
@@ -33,11 +34,17 @@ public class FastHeightSampler {
 
     public int surfaceHeight(int x, int z) {
         // WORLD_SURFACE_WG = 世界生成阶段地表(含表层方块),不依赖区块加载。返回首个空气格的 y,减 1 为实心顶。
-        return generator.getBaseHeight(x, z, Heightmap.Types.WORLD_SURFACE_WG, level, randomState) - 1;
+        RoadSearchBudget.check();
+        int value = generator.getBaseHeight(x, z, Heightmap.Types.WORLD_SURFACE_WG, level, randomState) - 1;
+        RoadSearchBudget.check();
+        return value;
     }
 
     public int motionBlockingHeight(int x, int z) {
-        return generator.getBaseHeight(x, z, Heightmap.Types.MOTION_BLOCKING_NO_LEAVES, level, randomState) - 1;
+        RoadSearchBudget.check();
+        int value = generator.getBaseHeight(x, z, Heightmap.Types.MOTION_BLOCKING_NO_LEAVES, level, randomState) - 1;
+        RoadSearchBudget.check();
+        return value;
     }
 
     public static boolean isVegetationOrDestructible(BlockState state) {

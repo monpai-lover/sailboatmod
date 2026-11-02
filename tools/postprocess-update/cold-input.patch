@@ -1,0 +1,135 @@
+diff --git a/src/main/java/com/monpai/sailboatmod/route/water/WaterRoutePostProcessor.java b/src/main/java/com/monpai/sailboatmod/route/water/WaterRoutePostProcessor.java
+--- a/src/main/java/com/monpai/sailboatmod/route/water/WaterRoutePostProcessor.java
++++ b/src/main/java/com/monpai/sailboatmod/route/water/WaterRoutePostProcessor.java
+@@ -29,7 +29,7 @@
+     private final AwaitTerrain await;
+     private final Progress progress;
+     private final Options options;
+-    private final long deadline;
++    private long deadline;
+     private final Map<Long, WaterColumn> cells = new LinkedHashMap<>(1024, .75f, true) {
+         @Override protected boolean removeEldestEntry(Map.Entry<Long,WaterColumn> e) { return size() > 262_144; }
+     };
+@@ -63,12 +63,11 @@
+         // input cannot be silently returned as a 'safe fallback'. Cancellation propagates.
+         progress.update(90, "航线后处理 · 验证输入");
+         try {
+-            for (int i=1; i<safe.size(); i++) {
+-                BlockPos a=safe.get(i-1), b=safe.get(i);
+-                if (!settle(() -> edge(a,b,0), 1500))
+-                    throw new IllegalArgumentException("Input route is blocked or terrain is not ready");
+-            }
++            validateInput(safe);
+         } catch (Budget e) { throw new IllegalArgumentException("Cannot verify input within postprocessing budget"); }
++        // Mandatory reloading has its own bounded allowance. A long path can span
++        // evicted chunks; do not spend the optional geometry budget serially warming it.
++        deadline = System.nanoTime() + options.maxMillis() * 1_000_000L;
+         try {
+             safe = eraseRepeated(safe);
+             safe = eraseCrossings(safe);
+@@ -95,6 +94,43 @@
+         return new Result(List.copyOf(safe), before, metrics(safe), shortcuts, loops, moved, rounded,
+                 samples, unknown, limited);
+     }
++    /** Visit ALL missing cells in a pass, so bounded terrain workers can run in
++     * parallel. Short-circuiting at the first unknown serialized hundreds of evicted
++     * chunks behind a fixed per-edge timeout and rejected otherwise valid long paths.
++     * Each known cell is removed permanently from this worklist. No unknown is water.
++     */
++    private void validateInput(List<BlockPos> path) {
++        Set<BlockPos> unique = new LinkedHashSet<>();
++        for (int i=1; i<path.size(); i++) {
++            BlockPos a=path.get(i-1), b=path.get(i);
++            if(a.getY()!=b.getY())throw new IllegalArgumentException("Input changes water height");
++            WaterGridTraversal.all(a.getX(),a.getZ(),b.getX(),b.getZ(),(x,z)-> {
++                budget(); unique.add(new BlockPos(x,a.getY(),z));
++                if(unique.size()>options.maxSamples())throw new Budget();
++                return true;
++            });
++        }
++        List<BlockPos> pending = new ArrayList<>(unique);
++        while(!pending.isEmpty()) {
++            budget();
++            Set<Long> deferredChunks = new HashSet<>();
++            for(var iterator=pending.iterator(); iterator.hasNext();) {
++                BlockPos p=iterator.next();
++                long chunk=((long)(p.getX()>>4)<<32)|((p.getZ()>>4)&0xffffffffL);
++                if(deferredChunks.contains(chunk))continue;
++                WaterColumn c=sample(p.getX(),p.getZ());
++                if(c==null){deferredChunks.add(chunk);continue;}
++                if(!c.passable() || c.surfacePos()==null || c.surfacePos().getY()!=p.getY())
++                    throw new IllegalArgumentException("Input route blocked or wrong height at "+p);
++                iterator.remove();
++            }
++            if(!pending.isEmpty()) {
++                if(await==null)throw new IllegalArgumentException("Input terrain unavailable at "+pending.getFirst());
++                await.await(10); // route worker only; underlying IO remains bounded/asynchronous
++            }
++        }
++    }
++
+     private void budget() {
+         WaterRouteCancellation.check();
+         if (System.nanoTime() >= deadline || samples >= options.maxSamples()) throw new Budget();
+diff --git a/src/test/java/com/monpai/sailboatmod/route/water/WaterRoutePostProcessorTest.java b/src/test/java/com/monpai/sailboatmod/route/water/WaterRoutePostProcessorTest.java
+--- a/src/test/java/com/monpai/sailboatmod/route/water/WaterRoutePostProcessorTest.java
++++ b/src/test/java/com/monpai/sailboatmod/route/water/WaterRoutePostProcessorTest.java
+@@ -54,5 +54,31 @@
+     @Test void invalidArgumentsRejected(){assertThrows(IllegalArgumentException.class,()->new WaterRoutePostProcessor.Options(17,24,100,10));assertThrows(IllegalArgumentException.class,()->run((x,z)->true,p(0,0)));}
+     @Test void exactCompactionKeepsObliqueCorners(){assertEquals(3,WaterRoutePostProcessor.compact(List.of(p(0,0),p(10,1),p(20,5))).size());}
+     @Test void outputIsImmutable(){var r=run((x,z)->true,p(0,0),p(100,0));assertThrows(UnsupportedOperationException.class,()->r.path().clear());}
++    @Test void coldInputRequestsAheadInsteadOfStallingOnFirstMissingCell() {
++        Set<Integer> requested=new HashSet<>(); boolean[] ready={false}; int[] waits={0};
++        var result=WaterRoutePostProcessor.optimize((x,z)-> {
++            if(!ready[0]){requested.add(x>>4);return null;}
++            return WaterColumn.passable(p(x,z),0);
++        },List.of(p(0,0),p(256,0)),millis->{
++            waits[0]++;assertEquals(17,requested.size(),"must schedule missing chunks ahead, not just the first point");ready[0]=true;
++        },null,WaterRoutePostProcessor.Options.defaults());
++        assertEquals(1,waits[0]);assertEquals(256,result.after().length(),1e-6);
++    }
++    @Test void coldInputRetainsProgressAcrossBoundedIoBatches() {
++        int[] ready={-1},waits={0};Set<Integer> requested=new HashSet<>();
++        var result=WaterRoutePostProcessor.optimize((x,z)-> {
++            if(x>=0&&x<=256&&x>ready[0]){requested.add(x>>4);return null;}
++            return WaterColumn.passable(p(x,z),0);
++        },List.of(p(0,0),p(128,0),p(256,0)),millis->{waits[0]++;ready[0]+=32;},null,
++                WaterRoutePostProcessor.Options.defaults());
++        assertEquals(17,requested.size());assertTrue(waits[0]>=8);assertEquals(256,result.after().length(),1e-6);
++    }
++    @Test void delayedInputLandIsRejectedNotHiddenByPreviouslyReadyCells() {
++        boolean[] ready={false};
++        assertThrows(IllegalArgumentException.class,()->WaterRoutePostProcessor.optimize((x,z)-> {
++            if(x==12&&!ready[0])return null;
++            return x==12?WaterColumn.blocked():WaterColumn.passable(p(x,z),0);
++        },List.of(p(0,0),p(32,0)),millis->ready[0]=true,null,WaterRoutePostProcessor.Options.defaults()));
++    }
+     @Test void finalStageIsWiredAfterStitchingAndBeforeMetadata()throws Exception{String s=Files.readString(Path.of("src/main/java/com/monpai/sailboatmod/route/water/WaterAutoRouteService.java"));int a=s.indexOf("path = finishWholeRoute(map, planner.path()");assertTrue(a>0);assertTrue(s.indexOf("metasOut.set(buildMetas(path",a)>a);assertTrue(s.contains("terrain == null ? null : terrain::awaitProgress"));}
+ }
+diff --git a/docs/handoff/WHOLE_ROUTE_OFFSHORE_QUALITY.md b/docs/handoff/WHOLE_ROUTE_OFFSHORE_QUALITY.md
+--- a/docs/handoff/WHOLE_ROUTE_OFFSHORE_QUALITY.md
++++ b/docs/handoff/WHOLE_ROUTE_OFFSHORE_QUALITY.md
+@@ -11,7 +11,8 @@
+ 3. Bidirectional bounded visibility pruning across segment boundaries. Every shortcut
+    checks all traversed cells, same water height and a conservative clearance threshold.
+ 4. Add sparse relocation handles to long edges; shift controls away from known shore.
+-   Default target is eight extra hull-clear cells, maximum candidate shift 24 cells.
++   Default target is eight extra hull-clear cells, maximum candidate shift 24 cells per
++   pass (three passes).
+    The target is soft: true narrow channels and port approaches remain navigable.
+    Length growth for shore clearance is capped at 8% plus four blocks of rounding tolerance.
+ 5. Verified local quadratic corner rounding; retain necessary sharp narrow-channel corners.
+@@ -21,9 +22,12 @@
+ Actual start/end positions and water height are immutable. Every edit validates both
+ replacement edges, not just its moved vertex. Known land overrides Tellus predictions;
+ unknown cannot authorize a shortcut or create clearance. The optimizer has a bounded
+-ready-cell cache (262144), sample budget (2M), 30s cooperative wall budget and checks
++ready-cell cache (262144), sample budget (2M), separate 30s cooperative input/quality wall budgets and checks
+ cancellation. Optional budget exhaustion retains the last fully checked stage. Failure
+ of mandatory input validation rejects the output; it cannot fabricate a fallback route.
++Mandatory verification batches all missing input cells through the bounded asynchronous
++terrain source, retaining completed cells between polls. It does not serialize a long
++edge behind a fixed 1.5-second first-missing-cell retry loop.
+ The route worker may wait briefly for request-owned terrain futures; the tick thread
+ is never used for this pass. Progress is 90-99%, with stage labels and before/after metrics.
+ 

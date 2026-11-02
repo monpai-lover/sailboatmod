@@ -188,7 +188,8 @@ public class DockScreen<T extends DockMenu> extends TransportTerminalScreen<T> {
         reverseButton = new ActionButton(screenText("reverse"), Ui.Tone.SECONDARY, () -> send(KEY_ACTION, DockGuiActionPacket.Action.REVERSE_ROUTE));
         autoRouteButton = new ActionButton(screenText("auto_route"), Ui.Tone.SECONDARY, () -> {
             if (pending.begin(KEY_ACTION, ticks())) {
-                ModNetwork.CHANNEL.sendToServer(new RequestAutoRouteDocksPacket(data.dockPos()));
+                com.monpai.sailboatmod.client.DockClientHooks.beginAutoRoute(data.dockPos(),
+                        com.monpai.sailboatmod.market.TransportTerminalKind.PORT);
                 refresh();
             }
         });
@@ -203,7 +204,9 @@ public class DockScreen<T extends DockMenu> extends TransportTerminalScreen<T> {
             button.element().layout(l -> l.widthPercent(100));
         }
         side.addChildren(panelHeading(screenText("zone_map")), miniMap,
-                importButton.element(), reverseButton.element(), autoRouteButton.element(), deleteButton.element());
+                importButton.element(), reverseButton.element(), autoRouteButton.element(), deleteButton.element(),
+                Ui.button(Component.literal("寻路任务队列"), Ui.Tone.SECONDARY,
+                        () -> net.minecraft.client.Minecraft.getInstance().setScreen(new RouteTaskQueueScreen(this))));
         ScrollerView sideViewport = Ui.scroller();
         sideViewport.layout(l -> l.height(100).width(82).minWidth(82).flexGrow(1).flexShrink(1));
         sideViewport.addScrollViewChild(side);
@@ -222,10 +225,12 @@ public class DockScreen<T extends DockMenu> extends TransportTerminalScreen<T> {
         boats.addChildren(panelHeading(screenText("boats_title")), boatList);
         UIElement routes = Ui.column();
         routes.layout(l -> l.width(100).flexGrow(1).flexShrink(0).minWidth(90).height(100).gapAll(Ui.GAP_XS));
-        routes.addChildren(panelHeading(screenText("routes_title")), dispatchRouteList);
+        routes.addChildren(panelHeading(Component.translatable("screen.sailboatmod.destination.heading")),
+                Ui.paragraph(Component.translatable("screen.sailboatmod.destination.explain"),"sm-muted"));
         lists.addChildren(boats, routes);
 
-        assignButton = new ActionButton(screenText("assign"), Ui.Tone.PRIMARY, () -> send(KEY_ACTION, DockGuiActionPacket.Action.ASSIGN_SELECTED));
+        assignButton = new ActionButton(Component.translatable("screen.sailboatmod.destination.choose"), Ui.Tone.PRIMARY,
+                () -> openDestination(-1));
         autoReturnButton = new ActionButton(Component.empty(), Ui.Tone.SECONDARY, () -> send(KEY_ACTION, DockGuiActionPacket.Action.TOGGLE_NON_ORDER_AUTO_RETURN));
         autoUnloadButton = new ActionButton(Component.empty(), Ui.Tone.SECONDARY, () -> send(KEY_ACTION, DockGuiActionPacket.Action.TOGGLE_NON_ORDER_AUTO_UNLOAD));
         UIElement actions = Ui.row();
@@ -236,6 +241,14 @@ public class DockScreen<T extends DockMenu> extends TransportTerminalScreen<T> {
     }
 
     /** Keep narrow terminal columns readable; stacked lists and actions remain reachable below them. */
+    private void openDestination(int cargoIndex) {
+        if(data==null||data.nearbyBoatIds().isEmpty())return;
+        int index=Math.clamp(data.selectedBoatIndex(),0,data.nearbyBoatIds().size()-1);
+        var client=net.minecraft.client.Minecraft.getInstance();
+        var boat=client.level==null?null:client.level.getEntity(data.nearbyBoatIds().get(index));
+        if(boat!=null)com.monpai.sailboatmod.client.DockClientHooks.beginDestination(data.dockPos(),boat.getUUID(),cargoIndex);
+    }
+
     private static ScrollerView scrollPage(UIElement content) {
         content.layout(l -> l.heightAuto().widthPercent(100).minWidth(0).flexGrow(0).flexShrink(0));
         ScrollerView viewport = Ui.scroller();
@@ -248,7 +261,8 @@ public class DockScreen<T extends DockMenu> extends TransportTerminalScreen<T> {
         UIElement page = Ui.column();
         page.layout(l -> l.gapAll(Ui.GAP_XS).height(150));
         takeStorageButton = new ActionButton(screenText("withdraw"), Ui.Tone.SECONDARY, () -> send(KEY_ACTION, DockGuiActionPacket.Action.TAKE_SELECTED_STORAGE));
-        shipCargoButton = new ActionButton(screenText("ship_cargo"), Ui.Tone.PRIMARY, () -> send(KEY_ACTION, DockGuiActionPacket.Action.DISPATCH_SELECTED_CARGO));
+        shipCargoButton = new ActionButton(screenText("ship_cargo"), Ui.Tone.PRIMARY,
+                () -> openDestination(data.selectedStorageIndex()));
         UIElement actions = Ui.row();
         actions.layout(l -> l.widthPercent(100).minWidth(0).flexWrap(FlexWrap.WRAP).gapAll(Ui.GAP_S).flexShrink(0));
         actions.addChildren(Ui.spacer(), takeStorageButton.inRow().element(), shipCargoButton.inRow().element());
@@ -325,7 +339,7 @@ public class DockScreen<T extends DockMenu> extends TransportTerminalScreen<T> {
         fillList(dispatchRouteList, data.routeNames().size(), data.selectedRouteIndex(),
                 i -> textRow((i + 1) + ". " + safeGet(data.routeNames(), i), null),
                 i -> select(DockGuiActionPacket.Action.SELECT_ROUTE_INDEX, i), screenText("no_route"));
-        syncAction(assignButton, !data.nearbyBoatNames().isEmpty() && !data.routeNames().isEmpty(), KEY_ACTION, null);
+        syncAction(assignButton, !data.nearbyBoatNames().isEmpty(), KEY_ACTION, null);
         autoReturnButton.setLabel(screenText(data.nonOrderAutoReturnEnabled() ? "non_order_auto.on" : "non_order_auto.off"));
         autoUnloadButton.setLabel(screenText(data.nonOrderAutoUnloadEnabled() ? "non_order_unload.on" : "non_order_unload.off"));
         syncAction(autoReturnButton, manage, KEY_ACTION, null);
@@ -342,7 +356,7 @@ public class DockScreen<T extends DockMenu> extends TransportTerminalScreen<T> {
         }
         boolean hasCargo = manage && !data.storageLines().isEmpty();
         syncAction(takeStorageButton, hasCargo, KEY_ACTION, null);
-        syncAction(shipCargoButton, hasCargo && !data.nearbyBoatNames().isEmpty() && !data.routeNames().isEmpty(), KEY_ACTION, null);
+        syncAction(shipCargoButton, hasCargo && !data.nearbyBoatNames().isEmpty(), KEY_ACTION, null);
 
         // inbox
         fillList(waybillList, data.waybillNames().size(), data.selectedWaybillIndex(),

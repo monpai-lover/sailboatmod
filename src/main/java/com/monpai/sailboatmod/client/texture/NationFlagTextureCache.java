@@ -36,6 +36,37 @@ public final class NationFlagTextureCache {
     private static final Map<String, UploadAssembly> PENDING = new HashMap<>();
     private static byte[] bannerBaseBytes;
 
+    private static final java.util.LinkedHashMap<String,ResourceLocation> CHAT_ICONS=new java.util.LinkedHashMap<>(16,0.75f,true);
+    public static ResourceLocation resolveChatThumbnail(String flagId,int primary,int secondary,boolean mirrored){
+        String key=flagId+"|"+primary+"|"+secondary+"|"+mirrored+"|"+FLAG_VERSIONS.getOrDefault(flagId,0);
+        ResourceLocation cached=CHAT_ICONS.get(key);if(cached!=null)return cached;
+        NativeImage source=tryLoadSyncedFlagImage(flagId);
+        NativeImage icon=new NativeImage(16,16,true);
+        if(source!=null){
+            try{
+                double scale=Math.min(16.0/source.getWidth(),16.0/source.getHeight());
+                int w=Math.max(1,(int)Math.round(source.getWidth()*scale)),h=Math.max(1,(int)Math.round(source.getHeight()*scale));
+                int ox=(16-w)/2,oy=(16-h)/2;
+                for(int y=0;y<h;y++)for(int x=0;x<w;x++){
+                    int sx=Math.min(source.getWidth()-1,x*source.getWidth()/w);
+                    icon.setPixelRGBA(ox+x,oy+y,source.getPixelRGBA(mirrored?source.getWidth()-1-sx:sx,y*source.getHeight()/h));
+                }
+            }finally{source.close();}
+        }else{
+            for(int y=0;y<16;y++)for(int x=0;x<16;x++){
+                int rgb=x<8?primary:secondary;
+                icon.setPixelRGBA(x,y,0xff000000|((rgb&255)<<16)|(rgb&0xff00)|((rgb>>>16)&255));
+            }
+        }
+        ResourceLocation id=Minecraft.getInstance().getTextureManager().register("sailboatmod/chat_flag/"+Integer.toHexString(key.hashCode()),new DynamicTexture(icon));
+        CHAT_ICONS.put(key,id);
+        if(CHAT_ICONS.size()>128){var first=CHAT_ICONS.entrySet().iterator();var old=first.next();Minecraft.getInstance().getTextureManager().release(old.getValue());first.remove();}
+        return id;
+    }
+    public static void clearChatThumbnails(){
+        CHAT_ICONS.values().forEach(id->Minecraft.getInstance().getTextureManager().release(id));CHAT_ICONS.clear();
+    }
+
     public static ResourceLocation resolve(String flagId, int primaryColor, int secondaryColor, boolean mirrored) {
         return resolveTexture(flagId, primaryColor, secondaryColor, mirrored, false);
     }
@@ -270,6 +301,10 @@ public final class NationFlagTextureCache {
     }
 
     private static void invalidateFlag(String flagId) {
+        var icons=CHAT_ICONS.entrySet().iterator();
+        while(icons.hasNext()){var icon=icons.next();if(icon.getKey().startsWith(flagId+"|")){
+            Minecraft.getInstance().getTextureManager().release(icon.getValue());icons.remove();}}
+
         Iterator<String> iterator = CACHE.keySet().iterator();
         while (iterator.hasNext()) {
             String key = iterator.next();

@@ -1,4 +1,5 @@
 package com.monpai.sailboatmod.network;
+import com.monpai.sailboatmod.network.packet.DepartForDestinationPacket;
 
 import com.monpai.sailboatmod.network.packet.BankActionPacket;
 import com.monpai.sailboatmod.network.packet.CancelBuyOrderPacket;
@@ -109,7 +110,7 @@ import net.neoforged.bus.api.IEventBus;
 import java.util.Optional;
 
 public final class ModNetwork {
-    private static final String PROTOCOL_VERSION = "17"; // Live market updates plus aircraft actions and airport terminals.
+    private static final String PROTOCOL_VERSION = "22"; // 22: known-network menu leases plus explicit server navigation phases.
     public static final PayloadChannel CHANNEL = new PayloadChannel(PROTOCOL_VERSION);
 
     private static int packetId = 0;
@@ -1010,6 +1011,29 @@ public final class ModNetwork {
                 com.monpai.sailboatmod.network.packet.MarketLiveUpdatePacket::decode,
                 com.monpai.sailboatmod.network.packet.MarketLiveUpdatePacket::handle,
                 Optional.of(NetworkDirection.PLAY_TO_CLIENT));
+        CHANNEL.registerMessage(packetId++,com.monpai.sailboatmod.network.packet.RouteWorkProgressPacket.class,com.monpai.sailboatmod.network.packet.RouteWorkProgressPacket::encode,com.monpai.sailboatmod.network.packet.RouteWorkProgressPacket::decode,com.monpai.sailboatmod.network.packet.RouteWorkProgressPacket::handle,Optional.of(NetworkDirection.PLAY_TO_CLIENT));
+        CHANNEL.registerMessage(packetId++,com.monpai.sailboatmod.network.packet.CancelPortWorkPacket.class,com.monpai.sailboatmod.network.packet.CancelPortWorkPacket::encode,com.monpai.sailboatmod.network.packet.CancelPortWorkPacket::decode,com.monpai.sailboatmod.network.packet.CancelPortWorkPacket::handle,Optional.of(NetworkDirection.PLAY_TO_SERVER));
+        CHANNEL.registerMessage(packetId++, com.monpai.sailboatmod.network.packet.RequestRouteTasksPacket.class,
+                com.monpai.sailboatmod.network.packet.RequestRouteTasksPacket::encode,
+                com.monpai.sailboatmod.network.packet.RequestRouteTasksPacket::decode,
+                com.monpai.sailboatmod.network.packet.RequestRouteTasksPacket::handle, Optional.of(NetworkDirection.PLAY_TO_SERVER));
+        CHANNEL.registerMessage(packetId++, com.monpai.sailboatmod.network.packet.SyncRouteTasksPacket.class,
+                com.monpai.sailboatmod.network.packet.SyncRouteTasksPacket::encode,
+                com.monpai.sailboatmod.network.packet.SyncRouteTasksPacket::decode,
+                com.monpai.sailboatmod.network.packet.SyncRouteTasksPacket::handle, Optional.of(NetworkDirection.PLAY_TO_CLIENT));
+        CHANNEL.registerMessage(packetId++, DepartForDestinationPacket.class, DepartForDestinationPacket::encode,
+                DepartForDestinationPacket::decode, DepartForDestinationPacket::handle, Optional.of(NetworkDirection.PLAY_TO_SERVER));
+
+        CHANNEL.registerMessage(packetId++, com.monpai.sailboatmod.network.packet.KnownVoyageMenuPacket.class,
+                com.monpai.sailboatmod.network.packet.KnownVoyageMenuPacket::encode,
+                com.monpai.sailboatmod.network.packet.KnownVoyageMenuPacket::decode,
+                com.monpai.sailboatmod.network.packet.KnownVoyageMenuPacket::handle, Optional.of(NetworkDirection.PLAY_TO_SERVER));
+
+        CHANNEL.registerMessage(packetId++, com.monpai.sailboatmod.network.packet.KnownDestinationsPacket.class,
+                com.monpai.sailboatmod.network.packet.KnownDestinationsPacket::encode,
+                com.monpai.sailboatmod.network.packet.KnownDestinationsPacket::decode,
+                com.monpai.sailboatmod.network.packet.KnownDestinationsPacket::handle, Optional.of(NetworkDirection.PLAY_TO_CLIENT));
+
     }
 
     private ModNetwork() {
