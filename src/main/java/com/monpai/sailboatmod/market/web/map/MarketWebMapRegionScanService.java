@@ -40,7 +40,7 @@ public final class MarketWebMapRegionScanService {
                     region.regionX(),
                     region.regionZ(),
                     nowMillis,
-                    (chunkX, chunkZ) -> level.getChunkSource().getChunk(chunkX, chunkZ, false) != null);
+                    (chunkX, chunkZ) -> level.getChunkSource().getChunkNow(chunkX, chunkZ) != null);
         }
         return queued;
     }
