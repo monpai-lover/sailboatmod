@@ -45,7 +45,7 @@ public record MarketWebMapChunkSnapshot(
             LOGGER.warn("MarketWebMapChunkSnapshot.capture called off the server thread for chunk {},{} — skipping to avoid blocking getChunk", chunkX, chunkZ);
             return Optional.empty();
         }
-        ChunkAccess chunk = level.getChunkSource().getChunk(chunkX, chunkZ, false);
+        ChunkAccess chunk = level.getChunkSource().getChunkNow(chunkX, chunkZ);
         if (chunk == null) {
             return Optional.empty();
         }
@@ -68,7 +68,7 @@ public record MarketWebMapChunkSnapshot(
             LOGGER.warn("MarketWebMapChunkSnapshot.captureGenerated called off the server thread for chunk {},{} — skipping to avoid blocking getChunk", chunkX, chunkZ);
             return Optional.empty();
         }
-        ChunkAccess loaded = level.getChunkSource().getChunk(chunkX, chunkZ, false);
+        ChunkAccess loaded = level.getChunkSource().getChunkNow(chunkX, chunkZ);
         if (loaded != null) {
             return Optional.of(captureLoaded(level, chunkX, chunkZ));
         }
