@@ -27,6 +27,9 @@ import java.util.Set;
 public final class MarketWebMapRegionWatcher {
     private static final Logger LOGGER = LogUtils.getLogger();
 
+    /** Bound memory during large world edits or filesystem event bursts. */
+    static final int MAX_DIRTY_REGIONS = 4096;
+
     private final Object lock = new Object();
     private final Set<Long> dirtyRegions = new LinkedHashSet<>();
 
@@ -79,13 +82,37 @@ public final class MarketWebMapRegionWatcher {
      * 取出并清空当前累积的脏 region（打包为 long，用 {@link #packRegion}）。主线程每 tick 调用。
      */
     public Set<Long> drainDirtyRegions() {
+        return drainDirtyRegions(MAX_DIRTY_REGIONS);
+    }
+
+    /** Drain a bounded batch so filesystem bursts cannot monopolize a server tick. */
+    public Set<Long> drainDirtyRegions(int budget) {
+        int limit = Math.max(0, budget);
+        if (limit == 0) return Set.of();
         synchronized (lock) {
-            if (dirtyRegions.isEmpty()) {
-                return Set.of();
+            if (dirtyRegions.isEmpty()) return Set.of();
+            Set<Long> drained = new LinkedHashSet<>(Math.min(limit, dirtyRegions.size()));
+            var iterator = dirtyRegions.iterator();
+            while (iterator.hasNext() && drained.size() < limit) {
+                drained.add(iterator.next());
+                iterator.remove();
             }
-            Set<Long> drained = new LinkedHashSet<>(dirtyRegions);
-            dirtyRegions.clear();
             return drained;
+        }
+    }
+
+    /** Keep only the newest distinct region events once the bounded backlog is full. */
+    void addDirtyRegion(long packed) {
+        synchronized (lock) {
+            if (dirtyRegions.contains(packed)) return;
+            if (dirtyRegions.size() >= MAX_DIRTY_REGIONS) {
+                var iterator = dirtyRegions.iterator();
+                if (iterator.hasNext()) {
+                    iterator.next();
+                    iterator.remove();
+                }
+            }
+            dirtyRegions.add(packed);
         }
     }
 
@@ -123,9 +150,7 @@ public final class MarketWebMapRegionWatcher {
                 }
                 long packed = parseRegionFileName(relative.getFileName().toString());
                 if (packed != Long.MIN_VALUE) {
-                    synchronized (lock) {
-                        dirtyRegions.add(packed);
-                    }
+                    addDirtyRegion(packed);
                 }
             }
             if (!key.reset()) {
