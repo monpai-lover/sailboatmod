@@ -1,0 +1,35 @@
+name: MarketWeb map fix build
+
+on:
+  push:
+    branches:
+      - fix/marketweb-map-nonblocking-hardening
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Set up Java 21
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
+      - name: Setup Gradle
+        uses: gradle/actions/setup-gradle@v4
+      - name: Build MarketWeb addon only
+        run: ./gradlew marketWebJar --no-daemon
+      - name: Upload NeoForge jars
+        uses: actions/upload-artifact@v4
+        with:
+          name: sailboatmod-marketweb-map-fix-neoforge-1.21.1
+          path: |
+            build/libs/*-marketweb-*-neoforge-1.21.1.jar
+          if-no-files-found: error
+          retention-days: 14
