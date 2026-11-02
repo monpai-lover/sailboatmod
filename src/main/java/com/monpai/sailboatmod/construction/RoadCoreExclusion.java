@@ -1,33 +1,16 @@
 package com.monpai.sailboatmod.construction;
 
 import net.minecraft.core.BlockPos;
-
-import java.util.Collection;
-import java.util.LinkedHashSet;
+import java.util.HashSet;
 import java.util.Set;
 
 public final class RoadCoreExclusion {
-    public static final int DEFAULT_RADIUS = 5;
+    public static final int DEFAULT_RADIUS = 3;
 
-    private RoadCoreExclusion() {
-    }
+    private RoadCoreExclusion() {}
 
-    public static Set<Long> collectExcludedColumns(Collection<BlockPos> cores, int radius) {
-        if (cores == null || cores.isEmpty() || radius < 0) {
-            return Set.of();
-        }
-        LinkedHashSet<Long> excluded = new LinkedHashSet<>();
-        for (BlockPos core : cores) {
-            if (core == null) {
-                continue;
-            }
-            for (int x = core.getX() - radius; x <= core.getX() + radius; x++) {
-                for (int z = core.getZ() - radius; z <= core.getZ() + radius; z++) {
-                    excluded.add(columnKey(x, z));
-                }
-            }
-        }
-        return excluded.isEmpty() ? Set.of() : Set.copyOf(excluded);
+    public static long columnKey(int x, int z) {
+        return ((long) x << 32) ^ (z & 0xffffffffL);
     }
 
     public static boolean isExcluded(BlockPos pos, Set<Long> excludedColumns) {
@@ -37,7 +20,17 @@ public final class RoadCoreExclusion {
         return excludedColumns.contains(columnKey(pos.getX(), pos.getZ()));
     }
 
-    public static long columnKey(int x, int z) {
-        return BlockPos.asLong(x, 0, z);
+    public static Set<Long> collectExcludedColumns(Set<BlockPos> cores, int radius) {
+        if (cores == null || cores.isEmpty()) return Set.of();
+        Set<Long> excluded = new HashSet<>();
+        for (BlockPos core : cores) {
+            if (core == null) continue;
+            for (int dx = -radius; dx <= radius; dx++) {
+                for (int dz = -radius; dz <= radius; dz++) {
+                    excluded.add(columnKey(core.getX() + dx, core.getZ() + dz));
+                }
+            }
+        }
+        return excluded;
     }
 }

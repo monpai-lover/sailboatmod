@@ -111,6 +111,12 @@ public class RoadPlannerTargetSelectionScreen extends Screen {
 
     @Override
     public boolean mouseScrolled(double mouseX, double mouseY, double delta) {
+        int left = (this.width - SCREEN_W) / 2;
+        int top = (this.height - SCREEN_H) / 2;
+        int listTop = top + 48;
+        if (mouseX < left + 14 || mouseX >= left + SCREEN_W - 14 || mouseY < listTop || mouseY >= listTop + VISIBLE_ROWS * ROW_H) {
+            return super.mouseScrolled(mouseX, mouseY, delta);
+        }
         scroll = Mth.clamp(scroll - (int) delta, 0, Math.max(0, targets.size() - VISIBLE_ROWS));
         return true;
     }

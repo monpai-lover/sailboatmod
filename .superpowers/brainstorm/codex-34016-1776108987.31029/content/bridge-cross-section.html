@@ -1,0 +1,81 @@
+<h2>桥梁横截面与灯位密度</h2>
+<p class="subtitle">共同前提：桥面改完整方块；上下坡只用楼梯；扶手和灯压在桥体上，净通行宽度减 2；桥墩一直落到水底/地底，桥墩顶有灯。</p>
+
+<div class="cards">
+  <div class="card" data-choice="a" onclick="toggleSelect(this)">
+    <div class="card-image">
+      <div class="mockup">
+        <div class="mockup-header">A. 推荐：稀疏灯位，桥墩优先打灯</div>
+        <div class="mockup-body">
+          <div style="font-weight:700; margin-bottom:10px;">顶视图</div>
+          <div style="font-family:monospace; line-height:1.4; white-space:pre; font-size:14px;">
+W = 墙扶手
+L = 扶手灯
+P = 桥墩顶灯
+D = 可走桥面
+
+W D D D D D W
+W D D D D D W
+W D P D D D W
+W D D D D D W
+W D D D L D W
+          </div>
+          <div style="font-weight:700; margin:14px 0 10px;">侧视图</div>
+          <div style="font-family:monospace; line-height:1.35; white-space:pre; font-size:14px;">
+        L
+      W # W
+    W # # # W
+  S # # # # # S
+      |
+      |
+      P
+      |
+      |
+          </div>
+        </div>
+      </div>
+    </div>
+    <div class="card-body">
+      <h3>A</h3>
+      <p>桥面更干净。普通扶手灯拉开间距，主要在桥墩顶部补灯，整体更像功能桥。</p>
+    </div>
+  </div>
+
+  <div class="card" data-choice="b" onclick="toggleSelect(this)">
+    <div class="card-image">
+      <div class="mockup">
+        <div class="mockup-header">B. 中等灯位，扶手端点补灯更多</div>
+        <div class="mockup-body">
+          <div style="font-weight:700; margin-bottom:10px;">顶视图</div>
+          <div style="font-family:monospace; line-height:1.4; white-space:pre; font-size:14px;">
+W = 墙扶手
+L = 扶手灯
+P = 桥墩顶灯
+D = 可走桥面
+
+W D L D D L W
+W D D D D D W
+W D P D D D W
+W D D D D D W
+W D L D D L W
+          </div>
+          <div style="font-weight:700; margin:14px 0 10px;">侧视图</div>
+          <div style="font-family:monospace; line-height:1.35; white-space:pre; font-size:14px;">
+    L       L
+    W # # # W
+  S # # # # # S
+      |
+      |
+      P
+      |
+      |
+          </div>
+        </div>
+      </div>
+    </div>
+    <div class="card-body">
+      <h3>B</h3>
+      <p>夜间更亮，但更容易显得密，也更接近你现在不满意的“灯太多”方向。</p>
+    </div>
+  </div>
+</div>

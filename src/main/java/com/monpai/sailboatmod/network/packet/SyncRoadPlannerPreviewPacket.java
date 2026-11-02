@@ -1,8 +1,8 @@
 package com.monpai.sailboatmod.network.packet;
 
 import com.monpai.sailboatmod.client.RoadPlannerClientHooks;
-import com.monpai.sailboatmod.construction.RoadCorridorPlan;
 import com.monpai.sailboatmod.construction.RoadPlacementPlan;
+import com.monpai.sailboatmod.construction.RoadGeometryPlanner;
 import net.minecraft.core.BlockPos;
 import net.minecraft.network.FriendlyByteBuf;
 import net.minecraft.world.level.block.Block;
@@ -32,6 +32,13 @@ public class SyncRoadPlannerPreviewPacket {
         }
     }
 
+    public record BridgeRange(int startIndex, int endIndex) {
+        public BridgeRange {
+            startIndex = Math.max(0, startIndex);
+            endIndex = Math.max(startIndex, endIndex);
+        }
+    }
+
     private final String sourceTownName;
     private final String targetTownName;
     private final List<GhostBlock> ghostBlocks;
@@ -43,6 +50,7 @@ public class SyncRoadPlannerPreviewPacket {
     private final boolean awaitingConfirmation;
     private final List<PreviewOption> options;
     private final String selectedOptionId;
+    private final List<BridgeRange> bridgeRanges;
 
     public SyncRoadPlannerPreviewPacket(String sourceTownName,
                                         String targetTownName,
@@ -54,7 +62,8 @@ public class SyncRoadPlannerPreviewPacket {
                                         BlockPos focusPos,
                                         boolean awaitingConfirmation,
                                         List<PreviewOption> options,
-                                        String selectedOptionId) {
+                                        String selectedOptionId,
+                                        List<BridgeRange> bridgeRanges) {
         this.sourceTownName = sourceTownName == null ? "" : sourceTownName;
         this.targetTownName = targetTownName == null ? "" : targetTownName;
         this.ghostBlocks = ghostBlocks == null ? List.of() : List.copyOf(ghostBlocks);
@@ -66,49 +75,76 @@ public class SyncRoadPlannerPreviewPacket {
         this.awaitingConfirmation = awaitingConfirmation;
         this.options = options == null ? List.of() : List.copyOf(options);
         this.selectedOptionId = selectedOptionId == null ? "" : selectedOptionId;
+        this.bridgeRanges = bridgeRanges == null ? List.of() : List.copyOf(bridgeRanges);
     }
 
     public static SyncRoadPlannerPreviewPacket fromPlan(String sourceTownName,
                                                         String targetTownName,
-                                                        RoadPlacementPlan plan,
+                                                        Object plan,
                                                         boolean awaitingConfirmation) {
-        List<BlockPos> pathNodes = plan == null
-                ? List.of()
-                : structuredPreviewPathNodes(plan);
+        if (!(plan instanceof RoadPlacementPlan rpp) || rpp.centerPath() == null || rpp.centerPath().size() < 2) {
+            return new SyncRoadPlannerPreviewPacket(
+                    sourceTownName,
+                    targetTownName,
+                    List.of(),
+                    List.of(),
+                    0,
+                    null,
+                    null,
+                    null,
+                    awaitingConfirmation,
+                    List.of(),
+                    "",
+                    List.of()
+            );
+        }
+        List<GhostBlock> ghostBlocks = new ArrayList<>();
+        if (rpp.ghostBlocks() != null) {
+            for (RoadGeometryPlanner.GhostRoadBlock ghost : rpp.ghostBlocks()) {
+                if (ghost.pos() != null && ghost.state() != null) {
+                    ghostBlocks.add(new GhostBlock(ghost.pos(), ghost.state()));
+                }
+            }
+        }
+        List<BlockPos> pathNodes = structuredPreviewPathNodes(plan);
+        List<BridgeRange> bridgeRanges = new ArrayList<>();
+        if (rpp.bridgeRanges() != null) {
+            for (RoadPlacementPlan.BridgeRange br : rpp.bridgeRanges()) {
+                bridgeRanges.add(new BridgeRange(br.startIndex(), br.endIndex()));
+            }
+        }
         return new SyncRoadPlannerPreviewPacket(
                 sourceTownName,
                 targetTownName,
-                plan == null ? List.of() : plan.ghostBlocks().stream()
-                        .map(block -> new GhostBlock(block.pos(), block.state()))
-                        .toList(),
+                ghostBlocks,
                 pathNodes,
-                pathNodes.size(),
-                plan == null ? null : plan.startHighlightPos(),
-                plan == null ? null : plan.endHighlightPos(),
-                plan == null ? null : plan.focusPos(),
+                rpp.centerPath().size(),
+                rpp.startHighlightPos(),
+                rpp.endHighlightPos(),
+                rpp.focusPos(),
                 awaitingConfirmation,
                 List.of(),
-                ""
+                "",
+                bridgeRanges
         );
     }
 
-    private static List<BlockPos> structuredPreviewPathNodes(RoadPlacementPlan plan) {
-        if (plan == null) {
+    private static List<BlockPos> structuredPreviewPathNodes(Object plan) {
+        if (!(plan instanceof RoadPlacementPlan rpp) || rpp.centerPath() == null) {
             return List.of();
         }
-        if (plan.corridorPlan() != null
-                && plan.corridorPlan().valid()
-                && plan.corridorPlan().slices() != null
-                && !plan.corridorPlan().slices().isEmpty()) {
-            List<BlockPos> deckCenters = plan.corridorPlan().slices().stream()
-                    .map(RoadCorridorPlan.CorridorSlice::deckCenter)
-                    .filter(java.util.Objects::nonNull)
-                    .toList();
-            if (!deckCenters.isEmpty()) {
-                return deckCenters;
-            }
+        List<BlockPos> path = rpp.centerPath();
+        if (path.size() <= 64) {
+            return List.copyOf(path);
         }
-        return plan.centerPath();
+        List<BlockPos> sampled = new ArrayList<>();
+        sampled.add(path.get(0));
+        int step = Math.max(1, path.size() / 62);
+        for (int i = step; i < path.size() - 1; i += step) {
+            sampled.add(path.get(i));
+        }
+        sampled.add(path.get(path.size() - 1));
+        return List.copyOf(sampled);
     }
 
     public SyncRoadPlannerPreviewPacket withOptions(List<PreviewOption> options, String selectedOptionId) {
@@ -123,7 +159,8 @@ public class SyncRoadPlannerPreviewPacket {
                 focusPos,
                 awaitingConfirmation,
                 options,
-                selectedOptionId
+                selectedOptionId,
+                bridgeRanges
         );
     }
 
@@ -171,6 +208,10 @@ public class SyncRoadPlannerPreviewPacket {
         return selectedOptionId;
     }
 
+    public List<BridgeRange> bridgeRanges() {
+        return bridgeRanges;
+    }
+
     public static void encode(SyncRoadPlannerPreviewPacket msg, FriendlyByteBuf buf) {
         PacketStringCodec.writeUtfSafe(buf, msg.sourceTownName, 64);
         PacketStringCodec.writeUtfSafe(buf, msg.targetTownName, 64);
@@ -189,6 +230,11 @@ public class SyncRoadPlannerPreviewPacket {
             buf.writeBoolean(option.bridgeBacked());
         }
         PacketStringCodec.writeUtfSafe(buf, msg.selectedOptionId, 32);
+        buf.writeVarInt(msg.bridgeRanges.size());
+        for (BridgeRange range : msg.bridgeRanges) {
+            buf.writeVarInt(range.startIndex());
+            buf.writeVarInt(range.endIndex());
+        }
     }
 
     public static SyncRoadPlannerPreviewPacket decode(FriendlyByteBuf buf) {
@@ -207,6 +253,11 @@ public class SyncRoadPlannerPreviewPacket {
             options.add(new PreviewOption(buf.readUtf(32), buf.readUtf(64), buf.readVarInt(), buf.readBoolean()));
         }
         String selectedOptionId = buf.readUtf(32);
+        int bridgeRangeCount = buf.readVarInt();
+        List<BridgeRange> bridgeRanges = new ArrayList<>(bridgeRangeCount);
+        for (int i = 0; i < bridgeRangeCount; i++) {
+            bridgeRanges.add(new BridgeRange(buf.readVarInt(), buf.readVarInt()));
+        }
         return new SyncRoadPlannerPreviewPacket(
                 sourceTownName,
                 targetTownName,
@@ -218,7 +269,8 @@ public class SyncRoadPlannerPreviewPacket {
                 focusPos,
                 awaitingConfirmation,
                 options,
-                selectedOptionId
+                selectedOptionId,
+                bridgeRanges
         );
     }
 
@@ -231,6 +283,7 @@ public class SyncRoadPlannerPreviewPacket {
     private static void handleClient(SyncRoadPlannerPreviewPacket msg) {
         if (msg.ghostBlocks.isEmpty()) {
             RoadPlannerClientHooks.clearPreview();
+            RoadPlannerClientHooks.clearPlanningResult();
             return;
         }
         RoadPlannerClientHooks.updatePreview(new RoadPlannerClientHooks.PreviewState(
@@ -248,18 +301,11 @@ public class SyncRoadPlannerPreviewPacket {
                 msg.options.stream()
                         .map(option -> new RoadPlannerClientHooks.PreviewOption(option.optionId(), option.label(), option.pathNodeCount(), option.bridgeBacked()))
                         .toList(),
-                msg.selectedOptionId
+                msg.selectedOptionId,
+                msg.bridgeRanges.stream()
+                        .map(br -> new RoadPlannerClientHooks.BridgeRange(br.startIndex(), br.endIndex()))
+                        .toList()
         ));
-        if (msg.options.size() >= 2) {
-            RoadPlannerClientHooks.openPreviewOptionSelection(
-                    msg.sourceTownName,
-                    msg.targetTownName,
-                    msg.options.stream()
-                            .map(option -> new RoadPlannerClientHooks.PreviewOption(option.optionId(), option.label(), option.pathNodeCount(), option.bridgeBacked()))
-                            .toList(),
-                    msg.selectedOptionId
-            );
-        }
     }
 
     private static void writeGhostBlocks(FriendlyByteBuf buf, List<GhostBlock> blocks) {

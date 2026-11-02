@@ -1,5 +1,7 @@
 package com.monpai.sailboatmod.construction;
 
+import com.monpai.sailboatmod.road.pathfinding.cache.RoadSurfaceHeuristics;
+
 import net.minecraft.core.BlockPos;
 import net.minecraft.server.level.ServerLevel;
 import net.minecraft.world.level.block.Blocks;
@@ -12,12 +14,13 @@ public final class ConstructionStepExecutor {
         if (level == null || pos == null) {
             return;
         }
-        if (ConstructionStateMatchers.isNaturalCleanup(level.getBlockState(pos))) {
+        clearIfNatural(level, pos);
+        clearIfNatural(level, pos.above());
+    }
+
+    private static void clearIfNatural(ServerLevel level, BlockPos pos) {
+        if (RoadSurfaceHeuristics.isNaturalCleanupTarget(level.getBlockState(pos))) {
             level.setBlock(pos, Blocks.AIR.defaultBlockState(), 3);
-        }
-        BlockPos above = pos.above();
-        if (ConstructionStateMatchers.isNaturalCleanup(level.getBlockState(above))) {
-            level.setBlock(above, Blocks.AIR.defaultBlockState(), 3);
         }
     }
 }

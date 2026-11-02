@@ -4,6 +4,7 @@ import com.monpai.sailboatmod.SailboatMod;
 import com.monpai.sailboatmod.network.packet.BankActionPacket;
 import com.monpai.sailboatmod.network.packet.CancelBuyOrderPacket;
 import com.monpai.sailboatmod.network.packet.CancelMarketListingPacket;
+import com.monpai.sailboatmod.network.packet.ConfigureRoadPlannerPacket;
 import com.monpai.sailboatmod.network.packet.CloseClaimMapViewportPacket;
 import com.monpai.sailboatmod.network.packet.CopyMarketWebTokenPacket;
 import com.monpai.sailboatmod.network.packet.CreateAutoRoutePacket;
@@ -50,6 +51,7 @@ import com.monpai.sailboatmod.network.packet.SyncClaimPreviewMapPacket;
 import com.monpai.sailboatmod.network.packet.SyncManualRoadPlanningProgressPacket;
 import com.monpai.sailboatmod.network.packet.SyncRoadConstructionProgressPacket;
 import com.monpai.sailboatmod.network.packet.SyncRoadPlannerPreviewPacket;
+import com.monpai.sailboatmod.network.packet.SyncRoadPlannerResultPacket;
 import com.monpai.sailboatmod.network.packet.UseBuilderHammerPacket;
 import com.monpai.sailboatmod.network.packet.SetClaimPermissionPacket;
 import com.monpai.sailboatmod.network.packet.SetTownClaimPermissionPacket;
@@ -488,6 +490,14 @@ public final class ModNetwork {
         );
         CHANNEL.registerMessage(
                 packetId++,
+                SyncRoadPlannerResultPacket.class,
+                SyncRoadPlannerResultPacket::encode,
+                SyncRoadPlannerResultPacket::decode,
+                SyncRoadPlannerResultPacket::handle,
+                Optional.of(NetworkDirection.PLAY_TO_CLIENT)
+        );
+        CHANNEL.registerMessage(
+                packetId++,
                 SyncRoadPlannerPreviewPacket.class,
                 SyncRoadPlannerPreviewPacket::encode,
                 SyncRoadPlannerPreviewPacket::decode,
@@ -516,6 +526,13 @@ public final class ModNetwork {
                 UseBuilderHammerPacket::encode,
                 UseBuilderHammerPacket::decode,
                 UseBuilderHammerPacket::handle
+        );
+        CHANNEL.registerMessage(
+                packetId++,
+                ConfigureRoadPlannerPacket.class,
+                ConfigureRoadPlannerPacket::encode,
+                ConfigureRoadPlannerPacket::decode,
+                ConfigureRoadPlannerPacket::handle
         );
     }
 

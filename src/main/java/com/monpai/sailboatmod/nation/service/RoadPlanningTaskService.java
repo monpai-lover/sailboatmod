@@ -1,196 +1,88 @@
 package com.monpai.sailboatmod.nation.service;
 
 import net.minecraft.server.MinecraftServer;
-
-import java.util.Objects;
+import java.util.Map;
 import java.util.concurrent.CompletableFuture;
-import java.util.concurrent.CompletionException;
 import java.util.concurrent.ConcurrentHashMap;
-import java.util.concurrent.Executor;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
-import java.util.concurrent.ThreadFactory;
-import java.util.concurrent.atomic.AtomicLong;
-import java.util.concurrent.atomic.AtomicReference;
+import java.util.concurrent.TimeUnit;
 import java.util.function.Consumer;
 import java.util.function.Supplier;
 
-public class RoadPlanningTaskService {
-    private static final AtomicReference<RoadPlanningTaskService> ACTIVE = new AtomicReference<>();
+public final class RoadPlanningTaskService {
+    private static volatile RoadPlanningTaskService INSTANCE;
+    private final ExecutorService executor;
+    private final Map<TaskKey, CompletableFuture<?>> activeTasks = new ConcurrentHashMap<>();
 
-    private final Executor computeExecutor;
-    private final Executor mainThreadExecutor;
-    private final AtomicLong epoch = new AtomicLong();
-    private final AtomicLong requestIds = new AtomicLong();
-    private final ConcurrentHashMap<TaskKey, Long> activeRequests = new ConcurrentHashMap<>();
-
-    public RoadPlanningTaskService(Executor computeExecutor, Executor mainThreadExecutor) {
-        this.computeExecutor = Objects.requireNonNull(computeExecutor, "computeExecutor");
-        this.mainThreadExecutor = Objects.requireNonNull(mainThreadExecutor, "mainThreadExecutor");
-    }
-
-    public static void onServerStarted(MinecraftServer server) {
-        if (server == null) {
-            return;
-        }
-        ACTIVE.getAndUpdate(existing -> {
-            if (existing instanceof ManagedRoadPlanningTaskService managed) {
-                managed.shutdown();
-            }
-            return new ManagedRoadPlanningTaskService(server);
+    private RoadPlanningTaskService() {
+        this.executor = Executors.newFixedThreadPool(2, r -> {
+            Thread t = new Thread(r, "RoadPlanning-Worker");
+            t.setDaemon(true);
+            return t;
         });
     }
 
-    public static void onServerStopping() {
-        RoadPlanningTaskService service = ACTIVE.getAndSet(null);
-        if (service instanceof ManagedRoadPlanningTaskService managed) {
-            managed.shutdown();
-        } else if (service != null) {
-            service.invalidateAllForTest();
-        }
-    }
+    public record TaskKey(String category, String id) {}
 
     public static RoadPlanningTaskService get() {
-        return ACTIVE.get();
+        if (INSTANCE == null) {
+            synchronized (RoadPlanningTaskService.class) {
+                if (INSTANCE == null) {
+                    INSTANCE = new RoadPlanningTaskService();
+                }
+            }
+        }
+        return INSTANCE;
     }
 
-    public <T> CompletableFuture<T> submitLatest(TaskKey key, Supplier<T> supplier, Consumer<T> apply) {
-        Objects.requireNonNull(key, "key");
-        Objects.requireNonNull(supplier, "supplier");
-        Objects.requireNonNull(apply, "apply");
-
-        long requestId = requestIds.incrementAndGet();
-        long submittedEpoch = epoch.get();
-        activeRequests.put(key, requestId);
-
-        return CompletableFuture.supplyAsync(supplier, computeExecutor)
-                .handle((result, throwable) -> {
-                    if (throwable == null) {
-                        return result;
-                    }
-                    if (isPlanningCancelled(throwable)) {
-                        return null;
-                    }
-                    throw throwable instanceof RuntimeException runtime
-                            ? runtime
-                            : new CompletionException(throwable);
-                })
-                .thenApply(result -> {
-                    if (!isCurrent(key, requestId, submittedEpoch)) {
-                        return null;
-                    }
-                    return result;
-                })
-                .thenApplyAsync(result -> {
-                    if (result != null && isCurrent(key, requestId, submittedEpoch)) {
-                        apply.accept(result);
-                    }
-                    return result;
-                }, mainThreadExecutor);
+    public static void onServerStarted(MinecraftServer server) {
+        get();
     }
 
-    TaskHandle<String> submitForTest(TaskKey key, Supplier<String> supplier, Consumer<String> apply) {
-        return submitForTestInternal(key, supplier, apply);
-    }
-
-    <T> TaskHandle<T> submitForTestInternal(TaskKey key, Supplier<T> supplier, Consumer<T> apply) {
-        Objects.requireNonNull(key, "key");
-        Objects.requireNonNull(supplier, "supplier");
-        Objects.requireNonNull(apply, "apply");
-
-        long requestId = requestIds.incrementAndGet();
-        long submittedEpoch = epoch.get();
-        activeRequests.put(key, requestId);
-        return new TaskHandle<>(supplier, apply, key, requestId, submittedEpoch);
-    }
-
-    void invalidateAllForTest() {
-        epoch.incrementAndGet();
-        activeRequests.clear();
+    public static void onServerStopping() {
+        RoadPlanningTaskService inst = INSTANCE;
+        if (inst != null) {
+            inst.shutdown();
+            INSTANCE = null;
+        }
     }
 
     public static void throwIfCancelled() {
         if (Thread.currentThread().isInterrupted()) {
-            throw new PlanningCancelledException();
+            throw new java.util.concurrent.CancellationException("Task cancelled");
         }
     }
 
-    private boolean isCurrent(TaskKey key, long requestId, long submittedEpoch) {
-        return epoch.get() == submittedEpoch && Objects.equals(activeRequests.get(key), requestId);
+    public <T> CompletableFuture<T> submitLatest(TaskKey key, Supplier<T> task, Consumer<T> callback) {
+        CompletableFuture<?> prev = activeTasks.get(key);
+        if (prev != null && !prev.isDone()) {
+            prev.cancel(true);
+        }
+        CompletableFuture<T> future = CompletableFuture.supplyAsync(task, executor)
+            .whenComplete((result, ex) -> {
+                activeTasks.remove(key);
+                if (ex == null && callback != null) {
+                    callback.accept(result);
+                }
+            });
+        activeTasks.put(key, future);
+        return future;
     }
 
-    private static boolean isPlanningCancelled(Throwable throwable) {
-        Throwable cursor = throwable;
-        while (cursor != null) {
-            if (cursor instanceof PlanningCancelledException) {
-                return true;
+    private void shutdown() {
+        for (CompletableFuture<?> f : activeTasks.values()) {
+            f.cancel(true);
+        }
+        activeTasks.clear();
+        executor.shutdown();
+        try {
+            if (!executor.awaitTermination(3, TimeUnit.SECONDS)) {
+                executor.shutdownNow();
             }
-            cursor = cursor.getCause();
-        }
-        return false;
-    }
-
-    public record TaskKey(String kind, String ownerKey) {
-        public TaskKey {
-            kind = kind == null ? "" : kind;
-            ownerKey = ownerKey == null ? "" : ownerKey;
-        }
-    }
-
-    public static final class PlanningCancelledException extends RuntimeException {
-        public PlanningCancelledException() {
-            super("Road planning task cancelled");
-        }
-    }
-
-    public final class TaskHandle<T> {
-        private final Supplier<T> supplier;
-        private final Consumer<T> apply;
-        private final TaskKey key;
-        private final long requestId;
-        private final long submittedEpoch;
-
-        private TaskHandle(Supplier<T> supplier, Consumer<T> apply, TaskKey key, long requestId, long submittedEpoch) {
-            this.supplier = supplier;
-            this.apply = apply;
-            this.key = key;
-            this.requestId = requestId;
-            this.submittedEpoch = submittedEpoch;
-        }
-
-        public void completeForTest() {
-            T value = supplier.get();
-            if (isCurrent(key, requestId, submittedEpoch)) {
-                apply.accept(value);
-            }
-        }
-    }
-
-    private static final class ManagedRoadPlanningTaskService extends RoadPlanningTaskService {
-        private final ExecutorService computePool;
-
-        private ManagedRoadPlanningTaskService(MinecraftServer server) {
-            this(buildExecutor(), server::execute);
-        }
-
-        private ManagedRoadPlanningTaskService(ExecutorService computePool, Executor mainThreadExecutor) {
-            super(computePool, mainThreadExecutor);
-            this.computePool = computePool;
-        }
-
-        private static ExecutorService buildExecutor() {
-            int threads = Math.max(1, Runtime.getRuntime().availableProcessors() - 1);
-            ThreadFactory factory = runnable -> {
-                Thread thread = new Thread(runnable, "Sailboat-RoadPlanning-" + System.nanoTime());
-                thread.setDaemon(true);
-                return thread;
-            };
-            return Executors.newFixedThreadPool(threads, factory);
-        }
-
-        private void shutdown() {
-            invalidateAllForTest();
-            computePool.shutdownNow();
+        } catch (InterruptedException e) {
+            executor.shutdownNow();
+            Thread.currentThread().interrupt();
         }
     }
 }

@@ -25,7 +25,9 @@ public class RoadPlannerItem extends Item {
             Component message = player.isShiftKeyDown()
                     ? ManualRoadPlannerService.handleSneakUse(serverPlayer, stack, hand == InteractionHand.OFF_HAND)
                     : ManualRoadPlannerService.handlePrimaryUse(serverPlayer, stack);
-            serverPlayer.sendSystemMessage(message);
+            if (message != null && !message.getString().isEmpty()) {
+                serverPlayer.sendSystemMessage(message);
+            }
         }
         return InteractionResultHolder.sidedSuccess(stack, level.isClientSide);
     }

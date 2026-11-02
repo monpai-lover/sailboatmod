@@ -1513,5 +1513,15 @@
     "message.sailboatmod.builder_hammer.queued_road": "已排入一次道路催工。钱包 %s，国库 %s。",
     "overlay.sailboatmod.builder_hammer.ready": "建筑锤已锁定目标",
     "overlay.sailboatmod.builder_hammer.building": "当前目标：建筑施工预览",
-    "overlay.sailboatmod.builder_hammer.road": "当前目标：道路施工预览"
+    "overlay.sailboatmod.builder_hammer.road": "当前目标：道路施工预览",
+    "screen.sailboatmod.road_planner.config.title": "道路配置",
+    "screen.sailboatmod.road_planner.config.width_label": "道路宽度",
+    "screen.sailboatmod.road_planner.config.material_label": "材料",
+    "screen.sailboatmod.road_planner.config.tunnel_label": "隧道模式",
+    "screen.sailboatmod.road_planner.config.confirm": "确认",
+    "screen.sailboatmod.road_planner.config.cancel": "取消",
+    "screen.sailboatmod.road_planner.config.tunnel_on": "隧道: 开",
+    "screen.sailboatmod.road_planner.config.tunnel_off": "隧道: 关",
+    "message.sailboatmod.road_planner.planning": "正在规划路线...",
+    "message.sailboatmod.road_planner.planning_complete": "路线规划完成，右键打开道路规划器查看方案"
 }
