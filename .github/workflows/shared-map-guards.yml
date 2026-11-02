@@ -4,7 +4,7 @@ on:
     branches: [fix/shared-map-stream-bounds]
   workflow_dispatch:
 permissions:
-  contents: write
+  contents: read
 concurrency:
   group: shared-map-guards-${{ github.ref }}
   cancel-in-progress: true
@@ -14,31 +14,12 @@ jobs:
     timeout-minutes: 45
     steps:
       - uses: actions/checkout@v4
-      - name: Align protocol contracts and entry documentation
+        with:
+          persist-credentials: false
+      - name: Record exact source commit
         run: |
-          set -euo pipefail
-          test "$GITHUB_REF" = refs/heads/fix/shared-map-stream-bounds
-          python - <<'PY'
-          from pathlib import Path
-          files = ['CLAUDE.md', 'README.md', 'START_HERE.md', 'docs/handoff/LDLIB2_INTEGRATION.md', 'src/test/java/com/monpai/sailboatmod/network/packet/MarketLiveUpdatePacketTest.java', 'src/test/java/com/monpai/sailboatmod/route/water/RouteTaskRecoveryWiringTest.java', 'src/test/java/com/monpai/sailboatmod/route/water/KnownVoyageWiringTest.java']
-          for name in files:
-              p = Path(name)
-              s = p.read_text()
-              s = s.replace('協定為 **22**', '協定為 **23**').replace('協定為 22', '協定為 23').replace('protocol 22', 'protocol 23').replace('protocol version "22"', 'protocol version "23"')
-              if name.endswith('.java'):
-                  s = s.replace(chr(92) + '"22' + chr(92) + '"', chr(92) + '"23' + chr(92) + '"')
-              if name == 'CLAUDE.md':
-                  s = s.replace('registers 118 directional custom payloads', 'registers 120 directional custom payloads')
-              p.write_text(s)
-          PY
-          if ! git diff --quiet; then
-            git add -- CLAUDE.md README.md START_HERE.md docs/handoff/LDLIB2_INTEGRATION.md src/test/java/com/monpai/sailboatmod/network/packet/MarketLiveUpdatePacketTest.java src/test/java/com/monpai/sailboatmod/route/water/RouteTaskRecoveryWiringTest.java src/test/java/com/monpai/sailboatmod/route/water/KnownVoyageWiringTest.java
-            git -c user.name='github-actions[bot]' -c user.email='41898282+github-actions[bot]@users.noreply.github.com' commit -m 'Align protocol 23 contracts and deployment documentation'
-            git push origin HEAD:fix/shared-map-stream-bounds
-          fi
           git rev-parse HEAD > build-commit.txt
-      - name: Archive exact sources
-        run: git archive --format=zip HEAD -o /tmp/shared-map-source.zip
+          git archive --format=zip HEAD -o /tmp/shared-map-source.zip
       - uses: actions/upload-artifact@v4
         with:
           name: shared-map-source
