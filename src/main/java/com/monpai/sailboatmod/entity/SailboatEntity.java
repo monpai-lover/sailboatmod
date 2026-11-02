@@ -845,6 +845,17 @@ public class SailboatEntity extends Boat implements GeoEntity, MenuProvider, Tra
                     }
                 }
 
+                // Pure pursuit validates the desired direction, not necessarily this tick's
+                // still-turning heading. Sweep the actual post-inertia velocity as well, so a
+                // tight detour cannot repeatedly ram a vessel/sea pickle while yaw catches up.
+                // Only horizontal motion is held: yaw and normal buoyancy/collision continue.
+                if (autopilotControl && !autopilotRoute.isEmpty()) {
+                    double interfaceY = autopilotRoute.get(Mth.clamp(autopilotTargetIndex, 0, autopilotRoute.size() - 1)).y;
+                    Vec3 safe = com.monpai.sailboatmod.route.water.local.BoatMotionGate.constrain(
+                            position(), new Vec3(nextX, current.y, nextZ), interfaceY, this::liveAutopilotConnectionClear);
+                    if (safe.x != nextX || safe.z != nextZ) commandedForwardAccel = 0;
+                    nextX = safe.x; nextZ = safe.z;
+                }
                 inertialPlanarVelocity = new Vec3(nextX, 0.0D, nextZ);
                 setDeltaMovement(nextX, current.y, nextZ);
             }
@@ -1972,7 +1983,7 @@ public class SailboatEntity extends Boat implements GeoEntity, MenuProvider, Tra
             return 0;
         }
         DockBlockEntity startDock = getAutopilotStartDock();
-        if (startDock != null && startDock.isInsideDockZone(position())) {
+        if (startDock != null && startDock.isCarrierInsideDockZone(this)) {
             return 1;
         }
         return 0;

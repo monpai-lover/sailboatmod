@@ -156,4 +156,18 @@ class BoatCollisionFieldTest {
         java.nio.file.Files.writeString(out,"x,y,z\n"+route.stream().map(p->p.x+","+p.y+","+p.z).collect(java.util.stream.Collectors.joining("\n"))+"\n");
     }
 
+    @Test void missingCollisionHaloCannotBeAssumedEmpty() {
+        var field=new BoatCollisionField(HULL,(x,z)->x==2&&z==0?BoatCollisionField.Cell.unknown():WATER,List.of());
+        assertEquals(BoatCollisionField.Check.UNKNOWN,field.segment(p(.25,0),p(.25,1)));
+    }
+    @Test void diagonalDoesNotLoadDistantBoundingRectangleColumns() {
+        int[] probes={0};
+        var field=new BoatCollisionField(HULL,(x,z)->{
+            probes[0]++;
+            return x==0&&z==20?BoatCollisionField.Cell.unknown():WATER;
+        },List.of());
+        assertEquals(BoatCollisionField.Check.CLEAR,field.segment(p(0,0),p(20,20)));
+        assertTrue(probes[0]<350,"diagonal edge queried its whole bounding rectangle: "+probes[0]);
+    }
+
 }

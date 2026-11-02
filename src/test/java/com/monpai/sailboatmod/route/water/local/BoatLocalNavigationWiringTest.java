@@ -22,4 +22,14 @@ class BoatLocalNavigationWiringTest {
         assertTrue(part.contains("liveAutopilotConnectionClear(from,probe)"));assertTrue(part.contains("request::cancelled"));
         a=s.indexOf("private void beginUnstickAttempt");b=s.indexOf("\n    /**",a);assertFalse(s.substring(a,b).contains("AUTOPILOT_UNSTICK_REVERSE_TICKS"));
     }
+    @Test void integratedVelocityIsCollisionCheckedBeforeMovement()throws Exception {
+        String s=src("entity/SailboatEntity.java");
+        int gate=s.indexOf("BoatMotionGate.constrain("),write=s.indexOf("setDeltaMovement(nextX, current.y, nextZ);",gate);
+        assertTrue(gate>0&&write>gate);
+        assertTrue(s.substring(gate,write).contains("commandedForwardAccel = 0"));
+        int a=s.indexOf("private int determineInitialAutopilotTargetIndex()"),b=s.indexOf("public void stopAutopilot()",a);
+        assertTrue(s.substring(a,b).contains("startDock.isCarrierInsideDockZone(this)"));
+        assertFalse(s.substring(a,b).contains("startDock.isInsideDockZone(position())"));
+    }
+
 }

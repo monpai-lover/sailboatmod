@@ -46,10 +46,15 @@ public final class BoatCollisionField {
         int maxZ=(int)Math.floor(Math.max(a.z,b.z)+hull.halfZ)+1;
         if ((long)(maxX-minX+1)*(maxZ-minZ+1)>20_000) return Check.UNKNOWN;
         for (int z=minZ;z<=maxZ;z++) for (int x=minX;x<=maxX;x++) {
+            AABB columnBox=new AABB(x,hull.minY,z,x+1,hull.maxY,z+1);
+            // Do not request every column inside the bounding rectangle of a diagonal edge.
+            // The one-cell halo is still relevant: an unread neighbour may own a protruding
+            // collision shape, so it cannot be silently accepted as air/water.
+            if(!hit(a,b,columnBox,hull.halfX+1,hull.halfZ+1))continue;
             Cell c=columns.get(x,z);
             // Dry support columns are checked with the SAME centred hull, not +X/+Z offsets.
-            boolean touched=hit(a,b,new AABB(x,hull.minY,z,x+1,hull.maxY,z+1),hull.halfX-1e-6,hull.halfZ-1e-6);
-            if (c==null || !c.known) { if(touched)unknown=true; continue; }
+            boolean touched=hit(a,b,columnBox,hull.halfX-1e-6,hull.halfZ-1e-6);
+            if (c==null || !c.known) { unknown=true; continue; }
             if(touched&&!c.water)return Check.BLOCKED;
             for(AABB obstacle:c.shapes) if(obstacle.maxY>hull.minY+1e-6&&obstacle.minY<hull.maxY-1e-6
                     &&hit(a,b,obstacle,hull.halfX-1e-6,hull.halfZ-1e-6)
