@@ -767,7 +767,12 @@ public final class MarketWebServer {
             writeJson(exchange, 404, error("not_found", "Tile not found"));
             return;
         }
-        byte[] bytes = callOnServerThread(() -> service.mapTile(minecraftServer, lod, tileX, tileZ));
+        callOnServerThread(() -> {
+            service.requestMapTile(minecraftServer, lod, tileX, tileZ);
+            return Boolean.TRUE;
+        });
+        // PNG file IO is intentionally performed by this HTTP worker, not the Minecraft server thread.
+        byte[] bytes = service.readMapTile(minecraftServer, lod, tileX, tileZ);
         if (bytes == null || bytes.length == 0) {
             writeJson(exchange, 404, error("not_found", "Tile not found"));
             return;
@@ -797,7 +802,12 @@ public final class MarketWebServer {
             writeJson(exchange, 404, error("not_found", "Tile not found"));
             return;
         }
-        byte[] bytes = callOnServerThread(() -> service.squareMapTile(minecraftServer, dimension, zoom, tile.x(), tile.z()));
+        callOnServerThread(() -> {
+            service.requestSquareMapTile(minecraftServer, dimension, zoom, tile.x(), tile.z());
+            return Boolean.TRUE;
+        });
+        // Cache reads can hit disk; keep them off the game thread.
+        byte[] bytes = service.readSquareMapTile(minecraftServer, dimension, zoom, tile.x(), tile.z());
         if (bytes == null || bytes.length == 0) {
             writeJson(exchange, 404, error("not_found", "Tile not found"));
             return;
