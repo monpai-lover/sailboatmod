@@ -17,15 +17,43 @@ import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.List;
+import java.util.PriorityQueue;
+import java.util.concurrent.ThreadPoolExecutor;
+import java.util.concurrent.ArrayBlockingQueue;
+import java.util.concurrent.TimeUnit;
+import java.util.function.BooleanSupplier;
 
 public final class MarketWebMapRegionScanService {
     private static final Logger LOGGER = LogUtils.getLogger();
     private static final int CHUNKS_PER_REGION_AXIS = 32;
 
     private final MarketWebMapRenderQueue queue;
+    private final Object repairLock = new Object();
+    private final ThreadPoolExecutor repairWorker = new ThreadPoolExecutor(1, 1, 30L, TimeUnit.SECONDS,
+            new ArrayBlockingQueue<>(1), runnable -> {
+        Thread thread = new Thread(runnable, "MarketWebMap-RegionScan");
+        thread.setDaemon(true);
+        return thread;
+    });
+    private final RepairScanOperation repairOperation;
+    private boolean repairBusy;
+    private volatile long repairGeneration;
+    private List<RegionFile> repairResults = List.of();
+    private int nextRepairResult;
 
     public MarketWebMapRegionScanService(MarketWebMapRenderQueue queue) {
+        this(queue, MarketWebMapRegionScanService::scanRepairRegions);
+    }
+
+    MarketWebMapRegionScanService(MarketWebMapRenderQueue queue, RepairScanOperation repairOperation) {
         this.queue = queue;
+        this.repairOperation = repairOperation;
+        this.repairWorker.allowCoreThreadTimeOut(true);
+    }
+
+    @FunctionalInterface
+    interface RepairScanOperation {
+        List<RegionFile> scan(RepairScanRequest request, BooleanSupplier active);
     }
 
     public int enqueueRepairScan(ServerLevel level, int maxRegions, long nowMillis) {
@@ -50,6 +78,121 @@ public final class MarketWebMapRegionScanService {
             return List.of();
         }
         return scanRegionFiles(level, maxRegions);
+    }
+
+    /** Captured on the server thread; the worker receives no level/player/world references. */
+    RepairScanRequest captureRepairScan(ServerLevel level, int maxRegions) {
+        if (level == null || !MarketWebMapConstants.OVERWORLD.equals(level.dimension().location().toString())) {
+            return null;
+        }
+        List<RegionCenter> centers = new ArrayList<>();
+        for (ServerPlayer player : level.players()) {
+            if (player != null) {
+                centers.add(centerRegion(List.of(player.blockPosition()), null));
+                if (centers.size() >= 64) { break; }
+            }
+        }
+        if (centers.isEmpty()) { centers.add(centerRegion(List.of(), level.getSharedSpawnPos())); }
+        return new RepairScanRequest(level.getServer().getWorldPath(LevelResource.ROOT).resolve("region"), centers, maxRegions);
+    }
+
+    boolean requestRepairScan(RepairScanRequest request) {
+        if (request == null || request.maxRegions() == 0 || !MarketWebMapSettings.updatesEnabled()) { return false; }
+        synchronized (repairLock) {
+            if (repairBusy || nextRepairResult < repairResults.size()) { return false; }
+            repairBusy = true;
+            long generation = repairGeneration;
+            repairWorker.execute(() -> {
+                List<RegionFile> result = List.of();
+                try {
+                    result = List.copyOf(repairOperation.scan(request, () -> generation == repairGeneration
+                            && MarketWebMapSettings.updatesEnabled() && !Thread.currentThread().isInterrupted()));
+                } catch (RuntimeException exception) {
+                    LOGGER.warn("Failed to scan periodic market web map regions", exception);
+                } finally {
+                    synchronized (repairLock) {
+                        // Completed output can wait through a pause; an old world's output is discarded.
+                        if (generation == repairGeneration) {
+                            repairResults = result;
+                            nextRepairResult = 0;
+                        }
+                        repairBusy = false;
+                    }
+                }
+            });
+            return true;
+        }
+    }
+
+    RegionFile peekRepairRegion() {
+        synchronized (repairLock) {
+            return nextRepairResult < repairResults.size() ? repairResults.get(nextRepairResult) : null;
+        }
+    }
+
+    void acceptRepairRegion(RegionFile region) {
+        synchronized (repairLock) {
+            if (nextRepairResult < repairResults.size() && repairResults.get(nextRepairResult).equals(region)) {
+                nextRepairResult++;
+                if (nextRepairResult == repairResults.size()) {
+                    repairResults = List.of();
+                    nextRepairResult = 0;
+                }
+            }
+        }
+    }
+
+    List<RegionFile> invalidateAndDrainRepairResults() {
+        synchronized (repairLock) {
+            repairGeneration++;
+            List<RegionFile> retained = List.copyOf(repairResults.subList(nextRepairResult, repairResults.size()));
+            repairResults = List.of();
+            nextRepairResult = 0;
+            // Keep repairBusy until the actual old worker exits; never queue another scan behind it.
+            return retained;
+        }
+    }
+
+    int pendingRepairWork() {
+        synchronized (repairLock) { return repairResults.size() - nextRepairResult + (repairBusy ? 1 : 0); }
+    }
+
+    static List<RegionFile> scanRepairRegions(RepairScanRequest request, BooleanSupplier active) {
+        if (!active.getAsBoolean() || request.maxRegions() == 0 || !Files.isDirectory(request.regionDir())) { return List.of(); }
+        Comparator<RegionFile> order = Comparator.comparingLong((RegionFile region) -> region.distanceSquared(request.centers()))
+                .thenComparingInt(RegionFile::regionX).thenComparingInt(RegionFile::regionZ);
+        PriorityQueue<RegionFile> nearest = new PriorityQueue<>(request.maxRegions(), order.reversed());
+        try (DirectoryStream<Path> stream = Files.newDirectoryStream(request.regionDir(), "r.*.*.mca")) {
+            for (Path file : stream) {
+                if (!active.getAsBoolean()) { return List.of(); }
+                long packed = MarketWebMapRegionWatcher.parseRegionFileName(file.getFileName().toString());
+                if (packed == Long.MIN_VALUE) { continue; }
+                RegionFile candidate = new RegionFile(MarketWebMapRegionWatcher.unpackRegionX(packed),
+                        MarketWebMapRegionWatcher.unpackRegionZ(packed), List.of());
+                // Once top-K is full, a farther filename cannot improve the result; avoid its disk header entirely.
+                if (nearest.size() == request.maxRegions() && order.compare(candidate, nearest.peek()) >= 0) { continue; }
+                RegionFile region = parseRegionFile(file, active);
+                if (!active.getAsBoolean()) { return List.of(); }
+                if (region == null) { continue; }
+                if (nearest.size() < request.maxRegions()) { nearest.add(region); }
+                else if (order.compare(region, nearest.peek()) < 0) { nearest.poll(); nearest.add(region); }
+            }
+        } catch (IOException exception) {
+            LOGGER.warn("Failed to scan periodic market web map region files under {}", request.regionDir(), exception);
+            return List.of();
+        }
+        if (!active.getAsBoolean()) { return List.of(); }
+        List<RegionFile> result = new ArrayList<>(nearest);
+        result.sort(order);
+        return List.copyOf(result);
+    }
+
+    record RepairScanRequest(Path regionDir, List<RegionCenter> centers, int maxRegions) {
+        RepairScanRequest {
+            regionDir = regionDir.toAbsolutePath().normalize();
+            centers = centers == null || centers.isEmpty() ? List.of(new RegionCenter(0, 0)) : List.copyOf(centers);
+            maxRegions = Math.max(0, Math.min(4, maxRegions));
+        }
     }
 
     public int queueSize() {
@@ -166,10 +309,14 @@ public final class MarketWebMapRegionScanService {
     }
 
     private static RegionFile parseRegionFile(Path file) {
-        if (file == null || file.getFileName() == null) {
+        return parseRegionFile(file, () -> true);
+    }
+
+    private static RegionFile parseRegionFile(Path file, BooleanSupplier active) {
+        if (!active.getAsBoolean() || file == null || file.getFileName() == null) {
             return null;
         }
-        List<Integer> localChunks = readChunkLocations(file);
+        List<Integer> localChunks = readChunkLocations(file, active);
         if (localChunks.isEmpty()) {
             return null;
         }
@@ -234,12 +381,13 @@ public final class MarketWebMapRegionScanService {
                 Math.floorDiv(selected.getZ() >> 4, CHUNKS_PER_REGION_AXIS));
     }
 
-    private static List<Integer> readChunkLocations(Path file) {
+    private static List<Integer> readChunkLocations(Path file, BooleanSupplier active) {
         byte[] header;
         try {
-            if (!Files.isRegularFile(file) || Files.size(file) < 8192) {
+            if (!active.getAsBoolean() || !Files.isRegularFile(file) || Files.size(file) < 8192) {
                 return List.of();
             }
+            if (!active.getAsBoolean()) { return List.of(); }
             header = new byte[4096];
             try (InputStream input = Files.newInputStream(file)) {
                 int read = input.read(header);
@@ -253,6 +401,7 @@ public final class MarketWebMapRegionScanService {
         int headerLength = header.length;
         List<Integer> localChunks = new ArrayList<>();
         for (int local = 0; local < CHUNKS_PER_REGION_AXIS * CHUNKS_PER_REGION_AXIS; local++) {
+            if ((local & 63) == 0 && !active.getAsBoolean()) { return List.of(); }
             int offset = local * 4;
             if (offset + 3 >= headerLength) {
                 break;

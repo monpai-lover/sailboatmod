@@ -104,6 +104,10 @@ public final class MarketWebCommands {
                                         .executes(context -> setBlackTileAutoRepair(context.getSource(), false)))
                                 .then(Commands.literal("status")
                                         .executes(context -> showBlackTileAutoRepair(context.getSource()))))
+                        .then(Commands.literal("pause")
+                                .executes(context -> setMapUpdates(context.getSource(), false)))
+                        .then(Commands.literal("resume")
+                                .executes(context -> setMapUpdates(context.getSource(), true)))
                         .then(Commands.literal("status")
                                 .executes(context -> showMapRenderStatus(context.getSource()))))
                 .then(Commands.literal("debugroute")
@@ -297,6 +301,16 @@ public final class MarketWebCommands {
         return 1;
     }
 
+    private static int setMapUpdates(CommandSourceStack source, boolean enabled) {
+        if (enabled) MarketWebMapRenderService.global().resumeRender();
+        boolean saved = com.monpai.sailboatmod.market.web.map.MarketWebMapSettings.setUpdatesEnabled(enabled);
+        source.sendSuccess(() -> Component.literal(enabled
+                ? "Market web map updates resumed. Cached map viewing and market operations remain available."
+                : "Market web map updates paused globally. Cached images remain visible; active image writes may finish safely."), true);
+        if (!saved) source.sendSuccess(() -> Component.literal("The update switch changed in memory; configuration persistence was unavailable."), false);
+        return 1;
+    }
+
     private static int resumeMapRender(CommandSourceStack source) {
         boolean resumed = MarketWebMapRenderService.global().resumeRender();
         if (!resumed) {
@@ -318,6 +332,9 @@ public final class MarketWebCommands {
     }
 
     private static int showMapRenderStatus(CommandSourceStack source) {
+        source.sendSuccess(() -> Component.literal("Market web map updates="
+                + (com.monpai.sailboatmod.market.web.map.MarketWebMapSettings.updatesEnabled() ? "ENABLED" : "PAUSED")
+                + " mainThreadBudgetMs=" + com.monpai.sailboatmod.market.web.map.MarketWebMapSettings.mainThreadBudgetNanos() / 1_000_000D), false);
         MarketWebMapRenderService service = MarketWebMapRenderService.global();
         int queueSize = service.queueSize();
         var status = service.renderStatus();
@@ -326,6 +343,7 @@ public final class MarketWebCommands {
         source.sendSuccess(() -> Component.literal("Market web map render queue: " + queueSize
                 + " snapshots(active/pending)=" + status.activeSnapshotRequests() + "/" + status.pendingSnapshotRequests()
                 + " imageIO=" + status.pendingImageIo()), false);
+        source.sendSuccess(() -> Component.literal(service.renderDiagLine()), false);
         source.sendSuccess(() -> Component.literal("Progress chunks: " + status.processedChunks() + "/" + status.totalChunks()
                 + " regions: " + status.processedRegions() + "/" + status.totalRegions()), false);
         source.sendSuccess(() -> Component.literal("Dirty regions/chunks: " + status.dirtyRegions() + "/" + status.dirtyChunks()

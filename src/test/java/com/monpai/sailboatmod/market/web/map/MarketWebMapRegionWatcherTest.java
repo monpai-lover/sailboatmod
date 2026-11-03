@@ -4,8 +4,30 @@ import org.junit.jupiter.api.Test;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNotEquals;
+import static org.junit.jupiter.api.Assertions.assertTrue;
+import static org.junit.jupiter.api.Assertions.fail;
+
+import java.lang.reflect.Method;
+import java.util.Set;
 
 class MarketWebMapRegionWatcherTest {
+    @Test
+    void stopReturnsPausedDirtyBacklogAndRejectsLateWatcherEvents() throws Exception {
+        MarketWebMapRegionWatcher watcher = new MarketWebMapRegionWatcher();
+        long first = MarketWebMapRegionWatcher.packRegion(1, 2);
+        watcher.addDirtyRegion(first);
+        Method stopAndDrain;
+        try {
+            stopAndDrain = MarketWebMapRegionWatcher.class.getDeclaredMethod("stopAndDrain");
+        } catch (NoSuchMethodException exception) {
+            fail("Stopping must return retained watcher work instead of clearing paused changes");
+            return;
+        }
+        assertEquals(Set.of(first), stopAndDrain.invoke(watcher));
+        watcher.addDirtyRegion(MarketWebMapRegionWatcher.packRegion(3, 4));
+        assertTrue(watcher.drainDirtyRegions().isEmpty(), "a late stopped-worker event cannot enter the next world");
+    }
+
     @Test
     void parsesValidRegionFileName() {
         long packed = MarketWebMapRegionWatcher.parseRegionFileName("r.-1.2.mca");

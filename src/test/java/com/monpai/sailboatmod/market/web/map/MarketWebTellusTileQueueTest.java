@@ -16,6 +16,112 @@ class MarketWebTellusTileQueueTest {
     private final Deque<Runnable> worker = new ArrayDeque<>();
     private final List<String> ran = new ArrayList<>();
 
+    @Test
+    void globalPauseRejectsNewRequestsWithoutAJob() {
+        boolean previous = MarketWebMapSettings.updatesEnabled();
+        try {
+            MarketWebMapSettings.setUpdatesEnabled(false);
+            assertFalse(queue(256).request(0, 1, 1, job("paused")));
+            assertTrue(worker.isEmpty());
+        } finally {
+            MarketWebMapSettings.setUpdatesEnabled(previous);
+        }
+    }
+
+    @Test
+    void pauseRetainsPendingJobsUntilUpdatesResume() {
+        boolean previous = MarketWebMapSettings.updatesEnabled();
+        MarketWebTellusTileQueue q = queue(256);
+        try {
+            MarketWebMapSettings.setUpdatesEnabled(true);
+            assertTrue(q.request(0, 1, 1, job("retained")));
+            MarketWebMapSettings.setUpdatesEnabled(false);
+            drain();
+            assertTrue(ran.isEmpty());
+            MarketWebMapSettings.setUpdatesEnabled(true);
+            assertTrue(q.request(0, 2, 2, job("new")));
+            drain();
+            assertEquals(List.of("new", "retained"), ran);
+        } finally {
+            q.shutdown();
+            MarketWebMapSettings.setUpdatesEnabled(previous);
+        }
+    }
+
+    @Test
+    void resumeWakesRetainedWorkWithoutAnotherHttpRequest() {
+        boolean previous = MarketWebMapSettings.updatesEnabled();
+        MarketWebTellusTileQueue q = queue(256);
+        try {
+            MarketWebMapSettings.setUpdatesEnabled(true);
+            q.request(0, 1, 1, job("retained"));
+            MarketWebMapSettings.setUpdatesEnabled(false);
+            drain();
+            MarketWebMapSettings.setUpdatesEnabled(true);
+            q.resumePending();
+            drain();
+            assertEquals(List.of("retained"), ran);
+        } finally {
+            q.shutdown();
+            MarketWebMapSettings.setUpdatesEnabled(previous);
+        }
+    }
+
+    @Test
+    void cooperativeSuspensionRetainsRunningTileAndItsDedupeKey() {
+        boolean previous = MarketWebMapSettings.updatesEnabled();
+        MarketWebTellusTileQueue q = queue(1);
+        AtomicInteger attempts = new AtomicInteger();
+        try {
+            MarketWebMapSettings.setUpdatesEnabled(true);
+            q.request(0, 1, 1, () -> {
+                if (attempts.incrementAndGet() == 1) {
+                    MarketWebMapSettings.setUpdatesEnabled(false);
+                    throw new MarketWebMapWorkSuspendedException();
+                }
+                ran.add("complete");
+            });
+            drain();
+            assertEquals(1, attempts.get());
+            assertTrue(ran.isEmpty());
+            MarketWebMapSettings.setUpdatesEnabled(true);
+            assertFalse(q.request(0, 1, 1, job("duplicate")));
+            q.resumePending();
+            drain();
+            assertEquals(2, attempts.get());
+            assertEquals(List.of("complete"), ran);
+            assertTrue(q.request(0, 1, 1, job("refresh")));
+        } finally {
+            q.shutdown();
+            MarketWebMapSettings.setUpdatesEnabled(previous);
+        }
+    }
+
+    @Test
+    void resumeRacingWithSuspensionStillSchedulesTheRetainedTile() {
+        boolean previous = MarketWebMapSettings.updatesEnabled();
+        MarketWebTellusTileQueue q = queue(1);
+        AtomicInteger attempts = new AtomicInteger();
+        try {
+            MarketWebMapSettings.setUpdatesEnabled(true);
+            q.request(0, 1, 1, () -> {
+                if (attempts.incrementAndGet() == 1) {
+                    MarketWebMapSettings.setUpdatesEnabled(false);
+                    MarketWebMapSettings.setUpdatesEnabled(true);
+                    q.resumePending(); // Existing worker still owns the drain at this instant.
+                    throw new MarketWebMapWorkSuspendedException();
+                }
+                ran.add("complete");
+            });
+            drain();
+            assertEquals(2, attempts.get());
+            assertEquals(List.of("complete"), ran);
+        } finally {
+            q.shutdown();
+            MarketWebMapSettings.setUpdatesEnabled(previous);
+        }
+    }
+
     private MarketWebTellusTileQueue queue(int capacity) {
         return new MarketWebTellusTileQueue(capacity, worker::add);
     }

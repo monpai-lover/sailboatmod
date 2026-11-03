@@ -29,6 +29,45 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class MarketWebMapTileCacheTest {
     @Test
+    void changeJournalTracksOnlyChangedBytesAcrossCacheHandles() {
+        var cache = new MarketWebMapTileCache(tempDir);
+        var journal = cache.changeJournal();
+        int[] pixels = new int[512 * 512];
+        java.util.Arrays.fill(pixels, 0xFF123456);
+        long before = journal.revision();
+        assertTrue(cache.writeSquareTilePixels("minecraft:overworld", 0, 5, -9, pixels));
+        var otherHandle = new MarketWebMapTileCache(tempDir);
+        var changes = otherHandle.changeJournal().changes("minecraft:overworld", before, journal.session());
+        assertEquals(1, changes.tiles().size());
+        assertEquals("square", changes.tiles().getFirst().kind());
+        assertEquals(5, changes.tiles().getFirst().x());
+        long after = journal.revision();
+        assertTrue(cache.writeSquareTilePixels("minecraft:overworld", 0, 5, -9, pixels));
+        assertEquals(after, journal.revision());
+        assertTrue(cache.writePng("minecraft:overworld", 1, 2, solidPng(0xFF123456),
+                MarketWebMapTileQuality.SERVER_LOADED_CHUNK, 10L));
+        after = journal.revision();
+        assertTrue(cache.writePng("minecraft:overworld", 1, 2, solidPng(0xFF123456),
+                MarketWebMapTileQuality.SERVER_LOADED_CHUNK, 20L));
+        assertEquals(after, journal.revision(), "metadata-only refresh must not invalidate terrain images");
+    }
+
+    @Test
+    void clearingGeneratedImagesReportsTheirCoordinates() {
+        var cache = new MarketWebMapTileCache(tempDir);
+        int[] pixels = new int[512 * 512];
+        java.util.Arrays.fill(pixels, 0xFF123456);
+        assertTrue(cache.writeSquareTilePixels("minecraft:overworld", 2, 5, -9, pixels));
+        var journal = cache.changeJournal();
+        long before = journal.revision();
+        cache.clearAllTiles();
+        var changes = journal.changes("minecraft:overworld", before, journal.session());
+        assertEquals(1, changes.tiles().size());
+        assertEquals("square", changes.tiles().getFirst().kind());
+        assertEquals(2, changes.tiles().getFirst().zoom());
+    }
+
+    @Test
     void changedSquareTilesAdvanceTheBrowserRefreshEpoch() {
         MarketWebMapTileCache cache = new MarketWebMapTileCache(tempDir);
         int[] pixels = new int[512 * 512];

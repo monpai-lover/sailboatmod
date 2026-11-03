@@ -36,6 +36,8 @@ public final class MarketWebMapRegionWatcher {
     private Thread thread;
     private WatchService watchService;
     private volatile boolean running;
+    private boolean acceptingEvents = true;
+    private long watcherGeneration;
 
     /** 启动监听指定世界的 region 目录。重复调用会先停掉旧线程。 */
     public void start(ServerLevel level) {
@@ -61,21 +63,37 @@ public final class MarketWebMapRegionWatcher {
             return;
         }
         this.running = true;
-        this.thread = new Thread(() -> watchLoop(regionDir), "MarketWebMap-RegionWatcher");
+        long generation;
+        synchronized (lock) {
+            acceptingEvents = true;
+            generation = ++watcherGeneration;
+        }
+        WatchService source = this.watchService;
+        this.thread = new Thread(() -> watchLoop(source, generation), "MarketWebMap-RegionWatcher");
         this.thread.setDaemon(true);
         this.thread.start();
     }
 
     public void stop() {
+        stopAndDrain();
+    }
+
+    /** Stop accepting events and return queued work for persistence, including paused changes. */
+    public Set<Long> stopAndDrain() {
         this.running = false;
+        Set<Long> retained;
+        synchronized (lock) {
+            acceptingEvents = false;
+            watcherGeneration++;
+            retained = new LinkedHashSet<>(dirtyRegions);
+            dirtyRegions.clear();
+        }
         closeWatchService();
         if (this.thread != null) {
             this.thread.interrupt();
             this.thread = null;
         }
-        synchronized (lock) {
-            dirtyRegions.clear();
-        }
+        return retained;
     }
 
     /**
@@ -104,7 +122,7 @@ public final class MarketWebMapRegionWatcher {
     /** Keep only the newest distinct region events once the bounded backlog is full. */
     void addDirtyRegion(long packed) {
         synchronized (lock) {
-            if (dirtyRegions.contains(packed)) return;
+            if (!acceptingEvents || dirtyRegions.contains(packed)) return;
             if (dirtyRegions.size() >= MAX_DIRTY_REGIONS) {
                 var iterator = dirtyRegions.iterator();
                 if (iterator.hasNext()) {
@@ -132,11 +150,11 @@ public final class MarketWebMapRegionWatcher {
         return (int) (packed >> 32);
     }
 
-    private void watchLoop(Path regionDir) {
+    private void watchLoop(WatchService source, long generation) {
         while (running) {
             WatchKey key;
             try {
-                key = watchService.take();
+                key = source.take();
             } catch (ClosedWatchServiceException | InterruptedException ignore) {
                 return;
             }
@@ -150,7 +168,10 @@ public final class MarketWebMapRegionWatcher {
                 }
                 long packed = parseRegionFileName(relative.getFileName().toString());
                 if (packed != Long.MIN_VALUE) {
-                    addDirtyRegion(packed);
+                    synchronized (lock) {
+                        if (generation != watcherGeneration) { return; }
+                        addDirtyRegion(packed);
+                    }
                 }
             }
             if (!key.reset()) {

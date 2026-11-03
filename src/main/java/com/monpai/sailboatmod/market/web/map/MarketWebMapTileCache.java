@@ -30,6 +30,8 @@ import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Comparator;
 import java.util.List;
+import java.util.LinkedHashMap;
+import java.util.Map;
 import java.util.Optional;
 import java.util.stream.Stream;
 
@@ -38,18 +40,30 @@ public final class MarketWebMapTileCache {
     private static final Gson GSON = new Gson();
     public static final int RENDER_VERSION = 6;
     private static final int METADATA_VERSION = 2;
-    /**
-     * 运行时瓦片写入计数:每成功写一张瓦片 +1。给前端 snapshot 的 renderVersion 用,让 ?v= 缓存破坏参数
-     * 随实际渲染变化,渲染完网页能拉到新瓦片(RENDER_VERSION 是编译期常量,不随渲染变,单用它网页永远显示旧图)。
-     */
+    /** Backward-compatible snapshot counter. New clients consume the per-coordinate change journal. */
     private static final java.util.concurrent.atomic.AtomicLong TILE_WRITE_EPOCH =
             new java.util.concurrent.atomic.AtomicLong(0L);
+    // Cache handles are short-lived (one per HTTP read). Retain only a few active worlds, each with bounded history.
+    private static final Map<Path, MarketWebMapTileChangeJournal> JOURNALS = new LinkedHashMap<>(4, 0.75F, true);
 
     public static long tileWriteEpoch() {
         return TILE_WRITE_EPOCH.get();
     }
 
     private final Path root;
+
+    public MarketWebMapTileChangeJournal changeJournal() {
+        synchronized (JOURNALS) {
+            var journal = JOURNALS.computeIfAbsent(root, ignored -> new MarketWebMapTileChangeJournal(4096));
+            while (JOURNALS.size() > 4) JOURNALS.remove(JOURNALS.keySet().iterator().next());
+            return journal;
+        }
+    }
+
+    private void tileChanged(String kind, String dimensionId, int zoom, int tileX, int tileZ) {
+        TILE_WRITE_EPOCH.incrementAndGet();
+        changeJournal().record(kind, dimensionId, zoom, tileX, tileZ);
+    }
 
     public MarketWebMapTileCache(Path root) {
         this.root = root == null ? Path.of(".").toAbsolutePath().normalize() : root.toAbsolutePath().normalize();
@@ -126,7 +140,8 @@ public final class MarketWebMapTileCache {
             if (isSamePng(path, pngBytes)) {
                 return true;
             }
-            Files.write(path, pngBytes);
+            writeBytesAtomically(path, pngBytes);
+            tileChanged("legacy", dimensionId, 0, tileX, tileZ);
             return true;
         } catch (IOException exception) {
             LOGGER.warn("Failed to write market web map tile {}", path, exception);
@@ -708,11 +723,10 @@ public final class MarketWebMapTileCache {
                 return true;
             }
             writeBytesAtomically(pngPath, pngBytes);
-            TILE_WRITE_EPOCH.incrementAndGet();
+            tileChanged("square", dimensionId, zoom, tileX, tileZ);
             return true;
         } catch (IOException exception) {
-            LOGGER.warn("Failed to write market web square map tile {}", pngPath, exception);
-            return false;
+            throw new java.io.UncheckedIOException("Failed to write market web square map tile " + pngPath, exception);
         }
     }
 
@@ -732,12 +746,12 @@ public final class MarketWebMapTileCache {
         }
         try {
             Files.createDirectories(pngPath.getParent());
-            writeBytesAtomically(pngPath, pngBytes);
-            boolean ok = writeMetadata(metadataPath, metadata);
-            if (ok) {
-                TILE_WRITE_EPOCH.incrementAndGet(); // 写成功 → bump epoch,前端据此刷新缓存破坏参数
+            boolean changed = !isSamePng(pngPath, pngBytes);
+            if (changed) {
+                writeBytesAtomically(pngPath, pngBytes);
+                tileChanged("legacy", dimensionId, 0, tileX, tileZ);
             }
-            return ok;
+            return writeMetadata(metadataPath, metadata);
         } catch (IOException exception) {
             LOGGER.warn("Failed to merge market web map tile {}", pngPath, exception);
             return false;
@@ -751,7 +765,7 @@ public final class MarketWebMapTileCache {
             return false;
         }
         try {
-            Files.deleteIfExists(pngPath);
+            if (Files.deleteIfExists(pngPath)) tileChanged("legacy", dimensionId, 0, tileX, tileZ);
             Files.deleteIfExists(metadataPath);
             return true;
         } catch (IOException exception) {
@@ -946,6 +960,16 @@ public final class MarketWebMapTileCache {
                     boolean tile = Files.isRegularFile(path) && path.getFileName().toString().endsWith(".png");
                     if (Files.deleteIfExists(path) && tile) {
                         cleared++;
+                        Path squareRoot = root.resolve("overworld").resolve("square");
+                        TileName coordinate = parseTileName(path);
+                        if (path.startsWith(squareRoot) && coordinate != null) {
+                            try {
+                                int zoom = Integer.parseInt(path.getParent().getFileName().toString());
+                                tileChanged("square", MarketWebMapConstants.OVERWORLD, zoom, coordinate.tileX(), coordinate.tileZ());
+                            } catch (NumberFormatException ignored) {
+                                // Foreign cache files have no supported terrain URL to invalidate.
+                            }
+                        }
                     }
                 } catch (java.nio.file.DirectoryNotEmptyException ignored) {
                     // A concurrent write can leave files behind. Keep the old marker so startup retries the cleanup.

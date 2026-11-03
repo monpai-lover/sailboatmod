@@ -65,7 +65,7 @@ class MarketWebAppResourceTest {
     void mapTileEndpointIsPublicCacheReadOnly() throws IOException {
         String source = Files.readString(MARKET_WEB_SERVER, StandardCharsets.UTF_8);
         int start = source.indexOf("private void handleMapTile");
-        int end = source.indexOf("private void handleMapFlag", start);
+        int end = source.indexOf("private void handleSquareMapTile", start);
         assertTrue(start >= 0 && end > start, "handleMapTile method should be present");
         String method = source.substring(start, end);
 
@@ -73,8 +73,14 @@ class MarketWebAppResourceTest {
                 "cached map tile PNGs should be readable without market web login");
         assertTrue(method.contains("\"GET\".equalsIgnoreCase"),
                 "map tile endpoint should remain read-only");
-        assertTrue(method.contains("service.mapTile"),
-                "map tile endpoint should only read cached tile bytes");
+        assertTrue(method.contains("serveCachedTerrain(exchange, () -> service.readMapTile"),
+                "map tile endpoint must read cache before miss-only discovery");
+        assertFalse(method.contains("callOnServerThread"), "cached PNG browsing never waits for the game thread");
+        int read = source.indexOf("byte[] bytes = read.get()", end);
+        int miss = source.indexOf("if (bytes == null || bytes.length == 0)", read);
+        int discovery = source.indexOf("discover.run()", miss);
+        assertTrue(read > end && miss > read && discovery > miss,
+                "discovery belongs inside the cache-miss branch");
     }
 
     @Test
@@ -190,9 +196,9 @@ class MarketWebAppResourceTest {
 
         assertTrue(mapJs.contains("function tileRefreshKey("),
                 "map client should derive a stable refresh key for tile image URLs");
-        assertTrue(mapJs.contains("?v=${encodeURIComponent(tileRefreshKey())}"),
-                "map tile image URLs need a cache-busting render/snapshot version query");
-        assertTrue(server.contains("\"Cache-Control\", \"no-cache, max-age=0\""),
+        assertTrue(mapJs.contains("?v=${encodeURIComponent(tileRefreshKey(tileZoom, tileX, tileZ))}"),
+                "map tile image URLs must carry the changed coordinate's terrain revision");
+        assertTrue(server.contains("\"Cache-Control\", \"public, no-cache\""),
                 "tile endpoint should require revalidation after map cache resets");
         assertTrue(commands.contains("clearall"),
                 "admin map commands should expose a full tile cache clear for bad current-version server tiles");
@@ -256,8 +262,8 @@ class MarketWebAppResourceTest {
                 "terrain layer should load cached images through Leaflet's native tile layer");
         assertTrue(mapJs.contains("/api/map/square/tile/overworld/${tileZoom}/"),
                 "terrain layer should use the server's squaremap tile endpoint");
-        assertTrue(mapJs.contains("encodeURIComponent(tileRefreshKey())"),
-                "tile URLs should carry a render version to refresh changed images");
+        assertTrue(mapJs.contains("encodeURIComponent(tileRefreshKey(tileZoom, tileX, tileZ))"),
+                "tile URLs should carry a per-coordinate render version to refresh changed images");
         assertTrue(mapJs.contains("errorTileUrl"),
                 "missing squaremap tiles should render as transparent placeholders instead of broken images");
         assertFalse(mapJs.contains("fetch(this.getTileUrl(coords), { cache: \"no-store\" })"),
@@ -435,8 +441,9 @@ class MarketWebAppResourceTest {
                 "admin commands should expose pause/resume/cancel for long renders");
         assertTrue(commands.contains("Dirty regions/chunks") && commands.contains("currentRegionX()"),
                 "admin render status should expose dirty queue and current cursor diagnostics");
-        assertTrue(renderService.contains("loadDirtyChunks") && renderService.contains("saveDirtyChunks"),
-                "render service should persist dirty chunk state across restarts");
+        assertTrue(renderService.contains("loadDirtyChunks") && renderService.contains("savePendingWork")
+                        && renderManager.contains("requestDirtyQueues"),
+                "render service should transfer pending work before saving a consistent dirty-state pair");
         assertTrue(renderService.contains("markRegionDirty"),
                 "region watcher events should feed the persistent dirty chunk queue");
         assertTrue(renderManager.contains("writeDirty"),

@@ -8,14 +8,17 @@ import net.minecraft.server.level.ServerLevel;
 import net.minecraft.world.level.storage.LevelResource;
 import org.slf4j.Logger;
 
+import java.io.IOException;
+import java.io.InputStream;
+import java.nio.file.DirectoryStream;
+import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
-import java.util.HashSet;
 import java.util.List;
-import java.util.Set;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.function.BooleanSupplier;
 
 /**
  * 黑块检测 + 修复:扫描磁盘上已渲染的方形底图瓦片,定位"该 region 有存盘 chunk(本应有地形)却整张全黑"的
@@ -42,6 +45,7 @@ public final class MarketWebMapBlackTileRepair {
         return thread;
     });
     private static final AtomicBoolean SCANNING = new AtomicBoolean(false);
+    private static final AutomaticScanCursor AUTOMATIC_CURSOR = new AutomaticScanCursor();
 
     private MarketWebMapBlackTileRepair() {
     }
@@ -88,10 +92,6 @@ public final class MarketWebMapBlackTileRepair {
         return true;
     }
 
-    private static long packRegion(int regionX, int regionZ) {
-        return MarketWebMapRegionWatcher.packRegion(regionX, regionZ);
-    }
-
     /** 该世界 region 目录(level-free 路径解析,主线程调用后传入后台,避免后台触碰 level 状态)。 */
     private static Path regionDir(ServerLevel level) {
         return level.getServer()
@@ -105,35 +105,115 @@ public final class MarketWebMapBlackTileRepair {
      * 仅做文件读 + PNG 解码,可后台线程安全运行。
      */
     private static List<int[]> findBlackRegions(MarketWebMapTileCache cache, Path regionDir, int budgetTiles) {
-        List<int[]> tiles = cache.listSquareTileCoords(0);
-        if (tiles.isEmpty()) {
-            return List.of();
+        return findBlackRegions(cache, regionDir, budgetTiles, MarketWebMapSettings::updatesEnabled,
+                (x, z) -> cache.readSquareTilePixels(MarketWebMapConstants.OVERWORLD, 0, x, z));
+    }
+
+    static List<int[]> findBlackRegions(MarketWebMapTileCache cache, Path regionDir, int budgetTiles,
+                                        BooleanSupplier continueWork, TilePixelReader pixelsReader) {
+        return scanPage(cache, regionDir, 0L, budgetTiles, continueWork, pixelsReader).holes();
+    }
+
+    /** Automatic repair rotates through bounded pages; explicit full repair uses an independent scan. */
+    static final class AutomaticScanCursor {
+        private Path directory;
+        private long nextOffset;
+
+        // Owned by the one SCANNING worker. No directory handle survives a page or a pause.
+        List<int[]> scan(MarketWebMapTileCache cache, Path regionDir, int budgetTiles,
+                         BooleanSupplier continueWork, TilePixelReader pixelsReader) {
+            Path currentDirectory = cache.squareTileDir(0);
+            long start = java.util.Objects.equals(directory, currentDirectory) ? nextOffset : 0L;
+            int limit = budgetTiles <= 0 ? 128 : Math.min(128, budgetTiles);
+            ScanPage page = scanPage(cache, regionDir, start, limit, continueWork, pixelsReader);
+            // A suspended/incomplete page throws before reaching here, so its prefix is retried.
+            directory = currentDirectory;
+            nextOffset = page.nextOffset();
+            return page.holes();
         }
-        // 扫足够多的 region 覆盖现有瓦片即可(留余量)。
-        int regionCap = Math.max(64, tiles.size() + 64);
-        Set<Long> saved = new HashSet<>();
-        for (MarketWebMapRegionScanService.RegionFile region
-                : MarketWebMapRegionScanService.scanRegionFilesByDir(regionDir, regionCap)) {
-            saved.add(packRegion(region.regionX(), region.regionZ()));
+    }
+
+    private record ScanPage(List<int[]> holes, long nextOffset) { }
+
+    private static ScanPage scanPage(MarketWebMapTileCache cache, Path regionDir, long startOffset, int budgetTiles,
+                                      BooleanSupplier continueWork, TilePixelReader pixelsReader) {
+        checkContinue(continueWork);
+        Path tileDir = cache.squareTileDir(0);
+        if (tileDir == null || !Files.isDirectory(tileDir)) {
+            return new ScanPage(List.of(), 0L);
         }
         List<int[]> holes = new ArrayList<>();
+        long visited = 0L;
         int examined = 0;
-        for (int[] tile : tiles) {
-            if (budgetTiles > 0 && examined >= budgetTiles) {
-                break;
+        // Enumerate lazily and read only the matching region header. A pause can therefore stop
+        // between individual files instead of waiting for a full directory/header/PNG sweep.
+        try (DirectoryStream<Path> stream = Files.newDirectoryStream(tileDir, "*.png")) {
+            for (Path tile : stream) {
+                checkContinue(continueWork);
+                int[] coordinate = tileCoordinate(tile);
+                if (coordinate == null) continue;
+                if (visited < startOffset) { visited++; continue; }
+                if (budgetTiles > 0 && examined >= budgetTiles) {
+                    return new ScanPage(List.copyOf(holes), visited);
+                }
+                visited++;
+                examined++;
+                int regionX = coordinate[0]; // zoom-0 tileX == regionX
+                int regionZ = coordinate[1];
+                if (!hasSavedChunk(regionDir.resolve("r." + regionX + "." + regionZ + ".mca"))) continue;
+                checkContinue(continueWork);
+                int[] pixels = pixelsReader.read(regionX, regionZ);
+                checkContinue(continueWork);
+                if (hasBlackChunkCell(pixels)) holes.add(coordinate);
             }
-            examined++;
-            int regionX = tile[0]; // zoom-0 tileX == regionX
-            int regionZ = tile[1];
-            if (!saved.contains(packRegion(regionX, regionZ))) {
-                continue; // 未生成区域 → 黑是对的,跳过(否则会永远重渲)
-            }
-            int[] pixels = cache.readSquareTilePixels(MarketWebMapConstants.OVERWORLD, 0, regionX, regionZ);
-            if (hasBlackChunkCell(pixels)) {
-                holes.add(new int[]{regionX, regionZ});
-            }
+        } catch (IOException exception) {
+            LOGGER.warn("Failed to scan market web map black tiles under {}", tileDir, exception);
+            // Retry an interrupted directory read from its original cursor, not from partial output.
+            return new ScanPage(List.of(), startOffset);
         }
-        return holes;
+        checkContinue(continueWork);
+        return new ScanPage(List.copyOf(holes), 0L);
+    }
+
+    private static void checkContinue(BooleanSupplier continueWork) {
+        if (!continueWork.getAsBoolean() || Thread.currentThread().isInterrupted()) {
+            throw new MarketWebMapWorkSuspendedException();
+        }
+    }
+
+    private static int[] tileCoordinate(Path tile) {
+        String name = tile.getFileName().toString();
+        String base = name.substring(0, name.length() - 4);
+        int split = base.lastIndexOf('_');
+        if (split <= 0 || split >= base.length() - 1) return null;
+        try {
+            return new int[]{Integer.parseInt(base.substring(0, split)), Integer.parseInt(base.substring(split + 1))};
+        } catch (NumberFormatException exception) {
+            return null;
+        }
+    }
+
+    private static boolean hasSavedChunk(Path regionFile) {
+        try {
+            if (!Files.isRegularFile(regionFile) || Files.size(regionFile) < 8192) return false;
+            byte[] locations;
+            try (InputStream input = Files.newInputStream(regionFile)) {
+                locations = input.readNBytes(4096);
+            }
+            if (locations.length < 4096) return false;
+            for (int offset = 0; offset < locations.length; offset += 4) {
+                boolean sector = locations[offset] != 0 || locations[offset + 1] != 0 || locations[offset + 2] != 0;
+                if (sector && locations[offset + 3] != 0) return true;
+            }
+        } catch (IOException ignored) {
+            // Missing, incomplete and unreadable regions are not evidence of a terrain hole.
+        }
+        return false;
+    }
+
+    @FunctionalInterface
+    interface TilePixelReader {
+        int[] read(int regionX, int regionZ);
     }
 
     /**
@@ -153,12 +233,16 @@ public final class MarketWebMapBlackTileRepair {
      * budgetTiles &lt;= 0 表示全量。
      */
     public static int scanAndRepair(MinecraftServer server, ServerLevel level, int budgetTiles) {
-        if (server == null || level == null) {
+        if (server == null || level == null || !MarketWebMapSettings.updatesEnabled()) {
             return 0;
         }
         MarketWebMapTileCache cache = MarketWebMapTileCache.forServer(server);
-        List<int[]> holes = findBlackRegions(cache, regionDir(level), budgetTiles);
-        return queueRepairs(level, holes);
+        try {
+            List<int[]> holes = findBlackRegions(cache, regionDir(level), budgetTiles);
+            return queueRepairs(level, holes);
+        } catch (MarketWebMapWorkSuspendedException paused) {
+            return 0;
+        }
     }
 
     /**
@@ -166,7 +250,7 @@ public final class MarketWebMapBlackTileRepair {
      * 同一时刻只跑一个扫描(SCANNING 互斥),已在跑则本次跳过。
      */
     public static void scanAndRepairAsync(MinecraftServer server, ServerLevel level, int budgetTiles) {
-        if (server == null || level == null) {
+        if (server == null || level == null || !MarketWebMapSettings.updatesEnabled()) {
             return;
         }
         if (!SCANNING.compareAndSet(false, true)) {
@@ -176,15 +260,20 @@ public final class MarketWebMapBlackTileRepair {
         final Path regionDir = regionDir(level); // 主线程预取路径,后台不再触碰 level
         SCAN_POOL.submit(() -> {
             try {
-                List<int[]> holes = findBlackRegions(cache, regionDir, budgetTiles);
-                if (!holes.isEmpty()) {
+                List<int[]> holes = AUTOMATIC_CURSOR.scan(cache, regionDir, budgetTiles,
+                        () -> MarketWebMapSettings.updatesEnabled() && server.isRunning(),
+                        (x, z) -> cache.readSquareTilePixels(MarketWebMapConstants.OVERWORLD, 0, x, z));
+                if (!holes.isEmpty() && server.isRunning()) {
                     server.execute(() -> {
+                        if (!server.isRunning() || !MarketWebMapSettings.updatesEnabled()) return;
                         int queued = queueRepairs(level, holes);
                         if (queued > 0) {
                             LOGGER.info("Market web map black-tile repair queued {} region(s) for re-render", queued);
                         }
                     });
                 }
+            } catch (MarketWebMapWorkSuspendedException paused) {
+                // A later normal interval can retry; no terrain task has been accepted yet.
             } catch (RuntimeException exception) {
                 LOGGER.warn("Market web map black-tile repair scan failed", exception);
             } finally {

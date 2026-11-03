@@ -56,6 +56,11 @@ public final class MarketWebTellusTileRenderer {
     }
 
     public static Rendered render(TerrainSurfaceSampler sampler, int zoom, int tileX, int tileY) {
+        return render(sampler, zoom, tileX, tileY, () -> true);
+    }
+
+    public static Rendered render(TerrainSurfaceSampler sampler, int zoom, int tileX, int tileY,
+                                  java.util.function.BooleanSupplier updatesEnabled) {
         int blocksPerPixel = 1 << zoom;
         long minX = blockMinX(zoom, tileX) + blocksPerPixel / 2;
         long minZ = blockMinZ(zoom, tileY) + blocksPerPixel / 2;
@@ -67,6 +72,9 @@ public final class MarketWebTellusTileRenderer {
         int failures = 0;
         // 先取同一格线上的北侧一行,让瓦片顶边也与真正相邻的像素比较高度。
         for (int py = -1; py < TILE_PIXELS; py++) {
+            if (!updatesEnabled.getAsBoolean() || Thread.currentThread().isInterrupted()) {
+                throw new MarketWebMapWorkSuspendedException();
+            }
             int z = (int) (minZ + (long) py * blocksPerPixel);
             for (int px = 0; px < TILE_PIXELS; px++) {
                 int x = (int) (minX + (long) px * blocksPerPixel);

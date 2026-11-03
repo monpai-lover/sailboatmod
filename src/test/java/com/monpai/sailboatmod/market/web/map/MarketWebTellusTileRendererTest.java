@@ -23,6 +23,7 @@ import static org.junit.jupiter.api.Assertions.assertArrayEquals;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 
 class MarketWebTellusTileRendererTest {
     private static final int PIXELS = MarketWebTellusTileRenderer.TILE_PIXELS * MarketWebTellusTileRenderer.TILE_PIXELS;
@@ -39,6 +40,18 @@ class MarketWebTellusTileRendererTest {
         assertEquals(-4096L, MarketWebTellusTileRenderer.blockMinX(3, -1));
         assertEquals(-1024L, MarketWebTellusTileRenderer.blockMinZ(1, -1));
         assertEquals(2L * 512 * 2048, MarketWebTellusTileRenderer.blockMinX(11, 2));
+    }
+
+    @Test
+    void pauseDuringSamplingAbortsBeforePublishingAPartialTile() {
+        AtomicInteger samples = new AtomicInteger();
+        TerrainSurfaceSampler sampler = (x, z, bps) -> {
+            samples.incrementAndGet();
+            return Optional.empty();
+        };
+        assertThrows(MarketWebMapWorkSuspendedException.class, () ->
+                MarketWebTellusTileRenderer.render(sampler, 0, 0, 0, () -> samples.get() < 600));
+        assertEquals(1024, samples.get(), "pause is checked at each row, including the northern halo");
     }
 
     @Test
