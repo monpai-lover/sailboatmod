@@ -1,10 +1,16 @@
 package com.monpai.sailboatmod.route.water.debug;
 
 import com.mojang.logging.LogUtils;
+import com.monpai.sailboatmod.SailboatMod;
+import com.monpai.sailboatmod.route.terrain.TellusWorlds;
+import com.monpai.sailboatmod.route.water.PortAsyncRuntime;
 import com.sun.net.httpserver.HttpExchange;
 import com.sun.net.httpserver.HttpHandler;
 import com.sun.net.httpserver.HttpServer;
 import net.minecraft.server.MinecraftServer;
+import net.neoforged.bus.api.SubscribeEvent;
+import net.neoforged.fml.common.EventBusSubscriber;
+import net.neoforged.neoforge.event.server.ServerStoppingEvent;
 import org.slf4j.Logger;
 
 import java.io.IOException;
@@ -25,6 +31,7 @@ import java.util.function.Supplier;
  * 寻路直接走 {@code route.water.*}
  * 正式链路（与游戏实际使用的算法一致），出图复用 {@code roadplanner.map} 着色 + Java2D。
  */
+@EventBusSubscriber(modid = SailboatMod.MODID)
 public final class RouteDebugServer {
     private static final Logger LOGGER = LogUtils.getLogger();
     private static final String ACCESS_COOKIE = "route_debug_session";
@@ -49,6 +56,7 @@ public final class RouteDebugServer {
     }
 
     public static synchronized void start(MinecraftServer server, String host, int port) throws IOException {
+        if (server != null && server.isStopped()) throw new IOException("Server is stopping; start debug in the active world");
         stop();
         InetSocketAddress address = new InetSocketAddress(host, port);
         RouteDebugServer s = new RouteDebugServer(server, port,
@@ -71,6 +79,11 @@ public final class RouteDebugServer {
 
     public static RouteDebugServer get() {
         return INSTANCE;
+    }
+
+    @SubscribeEvent
+    public static synchronized void onServerStopping(ServerStoppingEvent event) {
+        if (INSTANCE != null && INSTANCE.minecraftServer == event.getServer()) stop();
     }
 
     public boolean isRunning() {
@@ -108,19 +121,32 @@ public final class RouteDebugServer {
             var docks = callOnServerThread(() -> RouteDebugService.listDocks(minecraftServer));
             writeJson(ex, 200, RouteDebugService.docksJson(docks));
         });
+        ctx("/api/capabilities", ex -> {
+            boolean available = tellusAvailable();
+            var data = new com.google.gson.JsonObject();
+            data.addProperty("tellusAvailable", available);
+            data.addProperty("defaultMode", RouteDebugMode.defaultFor(available).id());
+            data.addProperty("tellusUnavailableReason", available ? "" : "当前世界不是 Tellus 地球世界，使用 NBT 模式");
+            writeJson(ex, 200, data.toString());
+        });
         ctx("/api/route", ex -> {
             String q = ex.getRequestURI().getRawQuery();
+            String requested = paramString(q, "mode", null);
+            RouteDebugMode mode = requested == null ? RouteDebugMode.defaultFor(tellusAvailable()) : RouteDebugMode.parse(requested);
+            if (mode == null) {
+                writeRouteError(ex, 400, "UNKNOWN_MODE", "未知调试模式；请选择 TELLUS、NBT、HYBRID 或 NOISE");
+                return;
+            }
+            if (mode == RouteDebugMode.TELLUS && !tellusAvailable()) {
+                writeRouteError(ex, 400, "TELLUS_UNAVAILABLE", "当前世界不是 Tellus 地球世界，无法运行 Tellus 模式");
+                return;
+            }
             int ai = paramInt(q, "a", -1);
             int bi = paramInt(q, "b", -1);
             var docks = callOnServerThread(() -> RouteDebugService.listDocks(minecraftServer));
             if (ai < 0 || bi < 0 || ai >= docks.size() || bi >= docks.size()) {
                 writeText(ex, 400, "bad a/b index (a=" + ai + " b=" + bi + " n=" + docks.size() + ")");
                 return;
-            }
-            com.monpai.sailboatmod.route.water.WaterMidMode mode =
-                    com.monpai.sailboatmod.route.water.WaterMidMode.parse(paramString(q, "mode", "nbt"));
-            if (mode == null) {
-                mode = com.monpai.sailboatmod.route.water.WaterMidMode.NBT;
             }
             String json = RouteDebugService.renderBundle(minecraftServer, docks.get(ai), docks.get(bi), mode);
             writeJson(ex, 200, json);
@@ -152,6 +178,10 @@ public final class RouteDebugServer {
                 ex.getResponseHeaders().set("X-Frame-Options", "DENY");
                 if (!authorized(ex)) {
                     writeText(ex, 401, "Access denied. Open the complete access link shown by /sailboat routedebug start or status.");
+                    return;
+                }
+                if (minecraftServer != null && minecraftServer.isStopped()) {
+                    writeRouteError(ex, 503, "SERVER_STOPPED", "调试服务所属世界已关闭，请在当前世界重新启动调试服务");
                     return;
                 }
                 handler.handle(ex);
@@ -188,6 +218,19 @@ public final class RouteDebugServer {
     private boolean matchesToken(String supplied) {
         return supplied != null && MessageDigest.isEqual(accessToken.getBytes(StandardCharsets.US_ASCII),
                 supplied.getBytes(StandardCharsets.UTF_8));
+    }
+
+    private boolean tellusAvailable() {
+        return minecraftServer != null && Boolean.TRUE.equals(callOnServerThread(
+                () -> TellusWorlds.isTellusLevel(minecraftServer.overworld())));
+    }
+
+    private static void writeRouteError(HttpExchange ex, int status, String reason, String message) throws IOException {
+        var error = new com.google.gson.JsonObject();
+        error.addProperty("status", "FAILED");
+        error.addProperty("reason", reason);
+        error.addProperty("message", message);
+        writeJson(ex, status, error.toString());
     }
 
     static void writeText(HttpExchange ex, int status, String body) throws IOException {
@@ -246,12 +289,23 @@ public final class RouteDebugServer {
     }
 
     <T> T callOnServerThread(Supplier<T> action) {
-        if (minecraftServer == null || action == null) {
-            return null;
+        if (action == null) return null;
+        if (minecraftServer == null || minecraftServer.isSameThread()) return action.get();
+        if (minecraftServer.isStopped()) throw new java.util.concurrent.CancellationException("Server stopped");
+        // MinecraftServer.submit may run inline when the server has stopped.
+        // This mailbox is drained exclusively by the server tick and never runs a caller's world read inline.
+        var task = PortAsyncRuntime.onMain(minecraftServer, action);
+        try {
+            return task.get(10, java.util.concurrent.TimeUnit.SECONDS);
+        } catch (InterruptedException stopped) {
+            task.cancel(false);
+            Thread.currentThread().interrupt();
+            throw new java.util.concurrent.CancellationException("Debug metadata request interrupted");
+        } catch (java.util.concurrent.TimeoutException expired) {
+            task.cancel(false);
+            throw new java.util.concurrent.CompletionException(expired);
+        } catch (java.util.concurrent.ExecutionException failed) {
+            throw new java.util.concurrent.CompletionException(failed.getCause());
         }
-        if (minecraftServer.isSameThread()) {
-            return action.get();
-        }
-        return minecraftServer.submit(action::get).join();
     }
 }

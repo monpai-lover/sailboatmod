@@ -381,18 +381,25 @@ public final class WaterAutoRouteService {
                                                  DockBerthResolver.DockZone target) {
         if (level == null || source == null || target == null)
             return new ReadOnlyNbtPlan(null, null, WaterRouteResult.failure(WaterRouteFailureReason.NO_WATER_PATH), List.of());
-        if (level.getServer().isSameThread()) throw new IllegalStateException("Read-only route planning requires a worker");
+        var server = level.getServer();
+        if (server.isStopped())
+            return new ReadOnlyNbtPlan(null, null, WaterRouteResult.failure(WaterRouteFailureReason.CANCELLED), List.of());
+        if (server.isSameThread()) throw new IllegalStateException("Read-only route planning requires a worker");
         return boundedReadOnlyNbt(null, null, deadline -> {
             var sourceZone = PortTerrainProbe.zone(source);
             var targetZone = PortTerrainProbe.zone(target);
-            var capture = level.getServer().submit(() -> {
+            // MinecraftServer.submit can execute inline after shutdown. This mailbox is drained
+            // only by server ticks, and cancelled entries never read live world metadata later.
+            var capture = PortAsyncRuntime.onMain(server, () -> {
+                if (server.isStopped() || System.nanoTime() >= deadline)
+                    throw new java.util.concurrent.CancellationException("Read-only port capture expired");
                 var predictor = com.monpai.sailboatmod.route.terrain.TellusTerrain.forLevel(level).orElse(null);
                 return new ReadOnlyNbtTerrain(predictor,
                         PortTerrainProbe.capture(level, List.of(sourceZone, targetZone), predictor), level.getSeaLevel());
             });
             ReadOnlyNbtTerrain terrain;
             try {
-                terrain = capture.get(Math.max(1, deadline - System.nanoTime()), java.util.concurrent.TimeUnit.NANOSECONDS);
+                terrain = awaitReadOnlyCapture(capture, deadline);
             } catch (InterruptedException stopped) {
                 capture.cancel(false);
                 Thread.currentThread().interrupt();
@@ -401,6 +408,8 @@ public final class WaterAutoRouteService {
                 capture.cancel(false);
                 return new ReadOnlyNbtPlan(null, null, WaterRouteResult.failure(WaterRouteFailureReason.TIMEOUT), List.of());
             } catch (java.util.concurrent.ExecutionException failed) {
+                if (server.isStopped())
+                    throw new java.util.concurrent.CancellationException("Read-only route server stopped");
                 throw new java.util.concurrent.CompletionException(failed.getCause());
             }
             WaterRouteCancellation.check();
@@ -411,6 +420,25 @@ public final class WaterAutoRouteService {
             return runReadOnlyNbt(level, ports.value().source(), ports.value().target(), terrain.seaY(),
                     terrain.predictor(), terrain.probe().realSnapshots());
         });
+    }
+
+    private static <T> T awaitReadOnlyCapture(java.util.concurrent.CompletableFuture<T> capture, long deadline)
+            throws InterruptedException, java.util.concurrent.ExecutionException, java.util.concurrent.TimeoutException {
+        try {
+            while (true) {
+                WaterRouteCancellation.check();
+                long remaining = deadline - System.nanoTime();
+                if (remaining <= 0) throw new java.util.concurrent.TimeoutException("Read-only port capture expired");
+                try {
+                    return capture.get(Math.min(remaining, java.util.concurrent.TimeUnit.MILLISECONDS.toNanos(50)),
+                            java.util.concurrent.TimeUnit.NANOSECONDS);
+                } catch (java.util.concurrent.TimeoutException waitingForTick) {
+                    if (System.nanoTime() >= deadline) throw waitingForTick;
+                }
+            }
+        } finally {
+            if (!capture.isDone()) capture.cancel(false);
+        }
     }
 
     /** Same production solver for callers that already own validated berths and authoritative port snapshots. */

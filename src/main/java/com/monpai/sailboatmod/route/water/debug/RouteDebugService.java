@@ -146,7 +146,7 @@ public final class RouteDebugService {
      * HYBRID/NOISE 三段编排 debug(生产同口径 ThreeSegmentPlanner.runSerialPlanned)。
      * 阶段填充:coarse=三段原始航点(中段编排产物),fine=空(三段无独立精寻阶段),smooth=平滑,verified=NBT校验。
      * 校验前【预加载航线沿途真实区块】(与生产同),verify 红点标 NBT 判陆点 → 图像看 HYBRID 在哪与真实判水冲突。
-     * RealChunkRouteWorld.load 需主线程,用 server.submit().join()。
+     * RealChunkRouteWorld.load 需主线程,只通过 tick mailbox 投递并有界等待。
      */
     private static RouteDebugBundle runRouteThreeSeg(MinecraftServer server, DockInfo a, DockInfo b,
                                                      com.monpai.sailboatmod.route.water.WaterMidMode mode) {
@@ -177,9 +177,13 @@ public final class RouteDebugService {
         final BlockPos sB = startBerth;
         final BlockPos gB = goalBerth;
         com.monpai.sailboatmod.route.water.RealChunkRouteWorld startWorld =
-                server.submit(() -> com.monpai.sailboatmod.route.water.RealChunkRouteWorld.load(level, sB, radius)).join();
+                com.monpai.sailboatmod.route.water.PortAsyncRuntime.onMain(server,
+                        () -> com.monpai.sailboatmod.route.water.RealChunkRouteWorld.load(level, sB, radius))
+                        .orTimeout(10, java.util.concurrent.TimeUnit.SECONDS).join();
         com.monpai.sailboatmod.route.water.RealChunkRouteWorld endWorld =
-                server.submit(() -> com.monpai.sailboatmod.route.water.RealChunkRouteWorld.load(level, gB, radius)).join();
+                com.monpai.sailboatmod.route.water.PortAsyncRuntime.onMain(server,
+                        () -> com.monpai.sailboatmod.route.water.RealChunkRouteWorld.load(level, gB, radius))
+                        .orTimeout(10, java.util.concurrent.TimeUnit.SECONDS).join();
         com.monpai.sailboatmod.route.water.ServerWaterRouteWorld midWorld =
                 new com.monpai.sailboatmod.route.water.ServerWaterRouteWorld(level);
 
@@ -247,7 +251,7 @@ public final class RouteDebugService {
         if (verified == null || verified.isEmpty()) {
             return List.of();
         }
-        return server.submit(() -> {
+        return com.monpai.sailboatmod.route.water.PortAsyncRuntime.onMain(server, () -> {
             List<NodeDiag> out = new ArrayList<>();
             for (int i = 0; i < verified.size(); i++) {
                 BlockPos p = verified.get(i);
@@ -280,7 +284,7 @@ public final class RouteDebugService {
                 out.add(new NodeDiag(i, p, nbtWater, realNav, realSurfY, id, how, routed));
             }
             return out;
-        }).join();
+        }).orTimeout(10, java.util.concurrent.TimeUnit.SECONDS).join();
     }
 
     // ===================== top-level: route -> bounded NBT preview / legacy stage images + log =====================
@@ -297,7 +301,7 @@ public final class RouteDebugService {
         ServerLevel level = server.overworld();
         RouteDebugBundle bundle = runRoute(server, a, b, mode);
         if (mode == null || mode == com.monpai.sailboatmod.route.water.WaterMidMode.NBT) {
-            return renderProductionBundle(level, a, b, bundle);
+            return renderProductionBundle(level, a, b, bundle, "nbt");
         }
         BlockPos viewA = bundle.start() != null ? bundle.start() : a.pos();
         BlockPos viewB = bundle.goal() != null ? bundle.goal() : b.pos();
@@ -305,7 +309,8 @@ public final class RouteDebugService {
         var view = RouteDebugRenderer.computeView(viewA, viewB, 64, 8192);
 
         // terrain base: real-block sampling, must be main thread; render once and reuse.
-        java.awt.image.BufferedImage terrain = server.submit(() -> RouteDebugRenderer.renderTerrain(level, view)).join();
+        java.awt.image.BufferedImage terrain = com.monpai.sailboatmod.route.water.PortAsyncRuntime.onMain(server,
+                () -> RouteDebugRenderer.renderTerrain(level, view)).orTimeout(10, java.util.concurrent.TimeUnit.SECONDS).join();
 
         // water overlay + path lines: worker thread (RealBlockWaterMap off-thread NBT read + pure Java2D).
         // 底图判水用 hullClear(2×2),与 verifier 同标准 → 蓝色区=verifier 认可可航区(不再骗人)。
@@ -336,6 +341,17 @@ public final class RouteDebugService {
         return json.toString();
     }
 
+    /** Tellus is an explicit HTTP choice for the existing production Tellus/NBT solver. */
+    public static String renderBundle(MinecraftServer server, DockInfo a, DockInfo b, RouteDebugMode mode) {
+        if (mode == RouteDebugMode.TELLUS) {
+            if (!com.monpai.sailboatmod.route.terrain.TellusWorlds.isTellusLevel(server.overworld()))
+                throw new IllegalArgumentException("Tellus mode requires a Tellus Earth world");
+            RouteDebugBundle bundle = runRoute(server, a, b, mode.plannerMode());
+            return renderProductionBundle(server.overworld(), a, b, bundle, mode.id());
+        }
+        return renderBundle(server, a, b, mode.plannerMode());
+    }
+
     /** Fits the complete result, including detours, without a route-length-dependent image allocation. */
     static RouteDebugDtos.ViewTransform productionPreviewView(BlockPos start, BlockPos goal, List<BlockPos> path) {
         long minX = Math.min(start.getX(), goal.getX()), maxX = Math.max(start.getX(), goal.getX());
@@ -354,7 +370,7 @@ public final class RouteDebugService {
     }
 
     /** Worker-only schematic preview. The bundled overview never downloads or loads/generates Minecraft chunks. */
-    private static String renderProductionBundle(ServerLevel level, DockInfo a, DockInfo b, RouteDebugBundle bundle) {
+    private static String renderProductionBundle(ServerLevel level, DockInfo a, DockInfo b, RouteDebugBundle bundle, String webMode) {
         BlockPos start = bundle.start() == null ? a.pos() : bundle.start();
         BlockPos goal = bundle.goal() == null ? b.pos() : bundle.goal();
         List<BlockPos> path = bundle.verified().path();
@@ -390,7 +406,7 @@ public final class RouteDebugService {
         }
         StringBuilder json = new StringBuilder("{\"images\":{");
         appendImage(json, true, "verified", image);
-        json.append("},\"mode\":\"nbt\",\"pipeline\":\"production-nbt\",\"status\":\"")
+        json.append("},\"mode\":\"").append(webMode).append("\",\"pipeline\":\"production-nbt\",\"status\":\"")
                 .append(bundle.verified().status()).append("\",\"reason\":\"").append(bundle.verified().reason())
                 .append("\",\"log\":\"").append(escapeJson(bundle.summary()))
                 .append("preview=").append(view.width()).append('x').append(view.height())
