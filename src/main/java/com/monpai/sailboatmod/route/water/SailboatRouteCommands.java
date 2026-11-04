@@ -30,21 +30,29 @@ public final class SailboatRouteCommands {
                                         StringArgumentType.getString(ctx, "mode")))))
                 .then(Commands.literal("routedebug")
                         .then(Commands.literal("start")
-                                .executes(ctx -> startDebug(ctx.getSource(), 8899))
+                                .executes(ctx -> startDebug(ctx.getSource(), 8899, false))
                                 .then(Commands.argument("port", IntegerArgumentType.integer(1024, 65535))
                                         .executes(ctx -> startDebug(ctx.getSource(),
-                                                IntegerArgumentType.getInteger(ctx, "port")))))
+                                                IntegerArgumentType.getInteger(ctx, "port"), false))
+                                        .then(Commands.literal("public")
+                                                .executes(ctx -> startDebug(ctx.getSource(),
+                                                        IntegerArgumentType.getInteger(ctx, "port"), true)))))
                         .then(Commands.literal("stop")
                                 .executes(ctx -> stopDebug(ctx.getSource())))
                         .then(Commands.literal("status")
                                 .executes(ctx -> statusDebug(ctx.getSource())))));
     }
 
-    private static int startDebug(CommandSourceStack source, int port) {
+    private static int startDebug(CommandSourceStack source, int port, boolean publicAccess) {
         try {
-            RouteDebugServer.start(source.getServer(), "127.0.0.1", port);
-            source.sendSuccess(() -> Component.literal(
-                    "路由调试服务已启动：http://127.0.0.1:" + port + "/  （仅本机，调试用，记得 stop）"), true);
+            RouteDebugServer.start(source.getServer(), publicAccess ? "0.0.0.0" : "127.0.0.1", port);
+            RouteDebugServer running = RouteDebugServer.get();
+            source.sendSuccess(() -> Component.literal(publicAccess
+                    ? "路由调试服务已监听 0.0.0.0:" + running.port() + "，访问链接：" + running.accessUrl()
+                        + "  面板 TCP 转发到本端口；将链接中的 127.0.0.1:" + running.port()
+                        + " 换成面板的公网域名:公网端口，保留完整 ?token=...，例如 http://<公网域名>:<公网端口>/?token=<本次令牌>。"
+                        + "链接仅发给需要调试的人，完成后 routedebug stop。"
+                    : "路由调试服务已启动：" + running.accessUrl() + "  （仅本机，调试用，记得 stop）"), false);
             return 1;
         } catch (Exception e) {
             source.sendFailure(Component.literal("启动失败：" + e.getMessage()));
@@ -61,9 +69,10 @@ public final class SailboatRouteCommands {
     private static int statusDebug(CommandSourceStack source) {
         RouteDebugServer s = RouteDebugServer.get();
         boolean running = s != null && s.isRunning();
-        int p = s == null ? -1 : s.port();
         source.sendSuccess(() -> Component.literal(
-                running ? "运行中：http://127.0.0.1:" + p + "/" : "未运行（/sailboat routedebug start [port]）"), false);
+                running ? (s.requiresToken() ? "公网模式运行中（需令牌）：" : "仅本机运行中：") + s.accessUrl()
+                        + (s.requiresToken() ? "  公网转发访问时替换域名和端口，保留完整 ?token=...。" : "")
+                        : "未运行（/sailboat routedebug start [port]；公网转发：/sailboat routedebug start 8899 public）"), false);
         return 1;
     }
 

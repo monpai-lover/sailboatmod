@@ -62,6 +62,87 @@ class GlobalWaterGridPlannerTest {
     }
 
     @Test
+    void aNavigableStraitBetweenSixteenBlockCentresRetriesWithoutChangingTheInitialGrid() {
+        // Like the Bosphorus on Tellus 1:100: nine water blocks wide, but neither
+        // 16-block centre (8 or 24) lies in the channel. The 8-block centre at 12 does.
+        BiPredicate<Integer, Integer> water = (x, z) -> x >= -80 && x <= 2_080 && z >= -80 && z <= 80
+                && (x < 800 || x > 1_000 || (z >= 10 && z <= 18));
+        BlockPos a = new BlockPos(0, 63, 0), b = new BlockPos(2_000, 63, 0);
+        assertEquals(16, GlobalWaterGridPlanner.initialCell(a, b), "ordinary routes retain their original grid");
+        for (List<BlockPos> endpoints : List.of(List.of(a, b), List.of(b, a))) {
+            GlobalWaterGridPlanner.Guidance g = GlobalWaterGridPlanner.plan(world(water, new int[1]),
+                    endpoints.getFirst(), endpoints.getLast(), 63);
+            assertTrue(g.successful(), "a water-connected strait must not be rejected: " + g.failure());
+            assertEquals(8, g.cellSize());
+            assertEquals(endpoints.getFirst(), g.legs().getFirst().from());
+            assertEquals(endpoints.getLast(), g.legs().getLast().to());
+            assertContinuous(g.legs());
+            assertTrue(g.legs().stream().anyMatch(l -> !l.direct() && Math.min(l.from().getX(), l.to().getX()) < 1_001
+                    && Math.max(l.from().getX(), l.to().getX()) > 799), "the narrow channel still requires detailed verification");
+        }
+    }
+
+    @Test
+    void stillNarrowerWaterwaysCanRefineBelowTheEightBlockGrid() {
+        BiPredicate<Integer, Integer> water = (x, z) -> x >= -80 && x <= 2_080 && z >= -80 && z <= 80
+                && (x < 800 || x > 1_000 || (z >= 0 && z <= 3));
+        for (boolean reverse : new boolean[]{false, true}) {
+            BlockPos start = new BlockPos(reverse ? 2_000 : 0, 63, 20);
+            BlockPos goal = new BlockPos(reverse ? 0 : 2_000, 63, 20);
+            GlobalWaterGridPlanner.Guidance g = GlobalWaterGridPlanner.plan(world(water, new int[1]), start, goal, 63);
+            assertTrue(g.successful(), "a four-block-wide waterway fits the boat: " + g.failure());
+            assertEquals(4, g.cellSize());
+            assertContinuous(g.legs());
+        }
+    }
+
+    @Test
+    void unavailableTerrainDoesNotMasqueradeAsADisconnectedSea() {
+        WaterRouteWorld missing = new WaterRouteWorld() {
+            @Override public WaterColumn sample(int x, int z, WaterRoutePolicy policy) { return null; }
+            @Override public boolean canLoadMoreChunks(int requested) { return false; }
+            @Override public int consumedChunkLoads() { return 0; }
+        };
+        GlobalWaterGridPlanner.Guidance result = GlobalWaterGridPlanner.plan(missing,
+                new BlockPos(0, 63, 0), new BlockPos(2_000, 63, 0), 63);
+        assertEquals(WaterRouteFailureReason.TERRAIN_NOT_READY, result.failure());
+    }
+
+    @Test
+    void nativeFrontiersCannotMeetThroughTwoDryCorners() throws Exception {
+        // The third cell keeps the forward frontier alive until the reverse
+        // frontier can attempt its fast join to the already-closed source.
+        WaterRouteWorld water = world((x, z) -> (z == 0 && (x == 0 || x == -1)) || (x == 1 && z == 1), new int[1]);
+        var constructor = GlobalWaterGridPlanner.class.getDeclaredConstructor(
+                WaterRouteWorld.class, GlobalWaterGridPlanner.SeaDistanceSource.class, int.class);
+        constructor.setAccessible(true);
+        GlobalWaterGridPlanner planner = constructor.newInstance(water, null, 63);
+        Class<?> gridType = Class.forName(GlobalWaterGridPlanner.class.getName() + "$Grid");
+        var gridConstructor = gridType.getDeclaredConstructor(GlobalWaterGridPlanner.class, int.class, int.class);
+        gridConstructor.setAccessible(true);
+        Object grid = gridConstructor.newInstance(planner, 1, 1_000);
+        var search = gridType.getDeclaredMethod("search", BlockPos.class, BlockPos.class);
+        search.setAccessible(true);
+        assertNull(search.invoke(grid, new BlockPos(0, 63, 0), new BlockPos(1, 63, 1)),
+                "both orthogonal neighbours are dry, including on a cross-frontier join");
+    }
+
+    @Test
+    void directLegCertificationCannotSkipASingleBlockIslandBetweenSamples() {
+        BiPredicate<Integer, Integer> water = (x, z) -> x != 10_001 || z != 8;
+        GlobalWaterGridPlanner.Guidance g = GlobalWaterGridPlanner.plan(world(water, new int[1]),
+                new BlockPos(8, 63, 8), new BlockPos(20_008, 63, 8), 63);
+        assertTrue(g.successful());
+        for (GlobalWaterGridPlanner.Leg leg : g.legs()) {
+            if (!leg.direct()) continue;
+            assertTrue(WaterGridTraversal.all(leg.from().getX(), leg.from().getZ(), leg.to().getX(), leg.to().getZ(),
+                    (x, z) -> water.test(x, z) && water.test(x + 1, z)
+                            && water.test(x, z + 1) && water.test(x + 1, z + 1)),
+                    "a direct ocean leg bypasses detailed search and must certify every hull cell");
+        }
+    }
+
+    @Test
     void anEnclosedStartFailsFastInsteadOfFloodingTheWholeOcean() {
         // The start sits in a 600x600 lake; the goal side is a vast open ocean.
         BiPredicate<Integer, Integer> water = (x, z) -> (x >= 0 && x < 600 && z >= 0 && z < 600) || x > 2_000;
@@ -69,8 +150,12 @@ class GlobalWaterGridPlannerTest {
         GlobalWaterGridPlanner.Guidance g = GlobalWaterGridPlanner.plan(world(water, samples),
                 new BlockPos(300, 63, 300), new BlockPos(400_000, 63, 300), 63);
         assertFalse(g.successful());
-        assertEquals(WaterRouteFailureReason.NO_WATER_PATH, g.failure());
-        assertTrue(g.expandedNodes() < 20_000, "expanded=" + g.expandedNodes());
+        assertTrue(g.failure() == WaterRouteFailureReason.NO_WATER_PATH
+                || g.failure() == WaterRouteFailureReason.NODE_BUDGET_EXCEEDED);
+        // Native-resolution attempts are now allowed, but their combined work
+        // must remain bounded even when the opposite side is an infinite ocean.
+        assertTrue(g.expandedNodes() < 20_000 + GlobalWaterGridPlanner.MAX_FINE_EXPANSIONS,
+                "expanded=" + g.expandedNodes());
     }
 
     @Test

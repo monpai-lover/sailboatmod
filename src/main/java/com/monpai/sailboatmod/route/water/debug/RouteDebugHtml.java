@@ -13,17 +13,17 @@ final class RouteDebugHtml {
             <body><h3>Water Route Debug</h3>
             <div>From <select id="a"></select> To <select id="b"></select>
             Mode <select id="mode">
-              <option value="nbt" selected>NBT (两阶段:粗渐进+走廊精寻)</option>
+              <option value="nbt" selected>NBT (当前生产求解；不保存航线)</option>
               <option value="hybrid">HYBRID (噪声导向+真实精寻)</option>
               <option value="noise">NOISE (纯噪声)</option>
             </select>
             <button onclick="go()">Generate</button>
             <span id="msg"></span></div>
-            <div id="imgs"></div><h4>Per-node log</h4><pre id="log"></pre>
+            <p>NBT 显示当前生产算法的最终结果。底图只作定位示意，不代表真实方块或船宽校验；青点为起点，紫点为终点。</p>
+            <div id="imgs"></div><h4>Route result / diagnostic log</h4><pre id="log"></pre>
             <script>
-            // NBT 模式阶段标签;HYBRID/NOISE 下 coarse=三段编排原始线、fine 为空跳过。
-            const STAGES_NBT=[['berth','Berth resolve'],['coarse','Coarse corridor (粗走廊)'],['fine','Corridor refine (走廊精寻)'],
-              ['smooth','Smooth (平滑)'],['verified','NBT verify (校验删点,红点=NBT判陆)'],['overview','Overview (各阶段叠加)']];
+            // NBT only exposes the final production result; uncollected intermediate stages are skipped.
+            const STAGES_NBT=[['verified','生产求解最终结果（概览底图仅定位示意）']];
             const STAGES_SEG=[['berth','Berth resolve'],['coarse','三段编排原始线 (HYBRID/NOISE 中段产物)'],
               ['smooth','Smooth (平滑)'],['verified','NBT verify (校验删点,红点=NBT判陆)'],['overview','Overview (原始线 vs 校验后)']];
             async function load(){
@@ -44,7 +44,8 @@ final class RouteDebugHtml {
                   const dv=document.createElement('div');dv.className='stage';
                   dv.innerHTML='<h4>'+t+'</h4><img src="'+j.images[k]+'">';box.appendChild(dv);}
                 document.getElementById('log').textContent=j.log||'';
-                document.getElementById('msg').textContent=' done (mode='+(j.mode||'nbt')+')';
+                document.getElementById('msg').textContent=j.status==='FAILED'
+                  ?' failed: '+(j.reason||'unknown'):' done (mode='+(j.mode||'nbt')+')';
               }catch(e){document.getElementById('msg').textContent=' failed: '+e;}
             }
             load();

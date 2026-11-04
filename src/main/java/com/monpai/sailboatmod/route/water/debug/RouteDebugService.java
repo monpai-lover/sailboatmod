@@ -13,10 +13,10 @@ import com.monpai.sailboatmod.route.water.RealBlockWaterMap;
 import com.monpai.sailboatmod.route.water.RealBlockWaterWorld;
 import com.monpai.sailboatmod.route.water.WaterColumn;
 import com.monpai.sailboatmod.route.water.WaterRouteNbtVerifier;
-import com.monpai.sailboatmod.route.water.WaterRoutePathfinder;
 import com.monpai.sailboatmod.route.water.WaterRoutePolicy;
 import com.monpai.sailboatmod.route.water.WaterRouteResult;
-import com.monpai.sailboatmod.route.water.WaterRouteWorld;
+import com.monpai.sailboatmod.route.water.WaterAutoRouteService;
+import com.monpai.sailboatmod.route.water.WorldWaterOverview;
 import net.minecraft.core.BlockPos;
 import net.minecraft.core.registries.BuiltInRegistries;
 import net.minecraft.server.MinecraftServer;
@@ -32,7 +32,7 @@ import com.monpai.sailboatmod.util.ModChunkLoading;
 import java.util.ArrayList;
 import java.util.List;
 
-/** Orchestration for the route-debug tool: list docks, resolve berths, run the copied NBT pathfinder, render. */
+/** Read-only route diagnostics. NBT delegates to the current production planner without publishing its result. */
 public final class RouteDebugService {
     private static final String OVERWORLD = "minecraft:overworld";
 
@@ -92,119 +92,54 @@ public final class RouteDebugService {
         return s.replace("\\", "\\\\").replace("\"", "\\\"").replace("\n", "\\n").replace("\r", "");
     }
 
-    // ===================== route orchestration (production route.water.*, two-stage NBT) =====================
-
-    private static final int NBT_CORRIDOR_RADIUS = 96; // same as WaterAutoRouteService
+    // ===================== read-only production route orchestration =====================
 
     /**
-     * Worker-thread: resolve berths -> coarse corridor -> corridor refine -> smooth -> NBT verify, calling the
-     * PRODUCTION route.water classes the game actually uses. Per-node diagnosis hops to main thread internally.
+     * Worker-thread entry. NBT shares production berth validation, terrain, solver and final checks.
      */
     public static RouteDebugBundle runRoute(MinecraftServer server, DockInfo a, DockInfo b) {
         return runRoute(server, a, b, com.monpai.sailboatmod.route.water.WaterMidMode.NBT);
     }
 
     /**
-     * 按指定中段模式跑寻路:NBT=两阶段(粗渐进step+走廊精寻);HYBRID/NOISE=生产三段编排(runSerialPlanned),
-     * 与游戏实际跑的【完全同口径】,这样 webmap 图就是游戏真实结果,可图像判断 HYBRID 判水对不对、在哪穿陆。
+     * NBT returns the final production result only; intermediate stages are deliberately left SKIPPED.
+     * HYBRID/NOISE retain the existing three-segment diagnostics.
      */
     public static RouteDebugBundle runRoute(MinecraftServer server, DockInfo a, DockInfo b,
                                             com.monpai.sailboatmod.route.water.WaterMidMode mode) {
         if (mode != null && mode != com.monpai.sailboatmod.route.water.WaterMidMode.NBT) {
             return runRouteThreeSeg(server, a, b, mode);
         }
-        ServerLevel level = server.overworld();
-        int seaY = level.getSeaLevel();
-        WaterRoutePolicy policy = WaterRoutePolicy.defaults();
-        int halfWidth = Math.max(1, policy.boatHalfWidth());
-
-        RealBlockWaterMap map = new RealBlockWaterMap(level, seaY).enableOnDemand();
-
-        // berth: RealBlockWaterWorld.coarse implements BerthWorld; resolve both docks' water entry points.
-        RealBlockWaterWorld berthProbe = RealBlockWaterWorld.coarse(map, seaY, null, null);
-        BlockPos startBerth = resolveBerth(berthProbe, a, policy);
-        BlockPos goalBerth = resolveBerth(berthProbe, b, policy);
-
-        StringBuilder log = new StringBuilder();
-        if (startBerth == null || goalBerth == null) {
-            log.append("berth resolve failed: start=").append(startBerth).append(" goal=").append(goalBerth);
-            StageResult berthFail = new StageResult("berth",
-                    pair(startBerth, goalBerth), "FAILED", 0, "NO_BERTH");
-            return new RouteDebugBundle(startBerth, goalBerth, berthFail, empty("coarse"), empty("fine"),
-                    empty("smooth"), empty("verified"), List.of(), log.toString());
+        long started = System.nanoTime();
+        WaterAutoRouteService.ReadOnlyNbtPlan plan = WaterAutoRouteService.planReadOnlyNbt(server.overworld(),
+                zone(a), zone(b));
+        BlockPos start = plan.sourceBerth(), goal = plan.targetBerth();
+        var result = plan.result();
+        String reason = result.reason().name();
+        boolean hasBerths = start != null && goal != null;
+        StageResult berth = new StageResult("berth", pair(start, goal), hasBerths ? "OK" : "FAILED", 0,
+                hasBerths ? "" : reason);
+        List<BlockPos> path = result.successful() && result.value() != null ? result.value() : List.of();
+        StageResult verified = new StageResult("verified", path, result.successful() ? "SUCCESS" : "FAILED", 0, reason);
+        StringBuilder log = new StringBuilder("pipeline=production-nbt preference=OPTIMAL (fresh calculation)\n");
+        log.append("start=").append(start).append(" goal=").append(goal).append('\n');
+        log.append("result=").append(verified.status()).append(" reason=").append(reason)
+                .append(" waypoints=").append(path.size()).append(" elapsedMs=")
+                .append((System.nanoTime() - started) / 1_000_000L).append('\n');
+        log.append("生产泊位验证、全局/分段求解及最终检查；未导入、注册或保存航线。\n")
+                .append("仅显示生产求解的最终结果；中间阶段未单独采集，扩展节点数请查看服务器 [WaterPath] 日志。\n")
+                .append("未逐点强制加载区块；底图仅为定位示意，不代表真实方块或船宽校验结果。\n");
+        for (int i = 0; i < path.size(); i++) {
+            BlockPos p = path.get(i);
+            log.append("waypoint,").append(i).append(',').append(p.getX()).append(',')
+                    .append(p.getY()).append(',').append(p.getZ()).append('\n');
         }
+        return new RouteDebugBundle(start, goal, berth, empty("coarse"), empty("fine"), empty("smooth"),
+                verified, List.of(), log.toString());
+    }
 
-        StageResult berth = new StageResult("berth", pair(startBerth, goalBerth), "OK", 0, "");
-        log.append("start=").append(startBerth).append(" goal=").append(goalBerth).append('\n');
-
-        // stage 1: coarse corridor —— 渐进 step(24→12→8→4)与游戏 WaterAutoRouteService 同口径,踩进窄海峡。
-        WaterRoutePathfinder cpf = null;
-        StageResult coarse = null;
-        for (int step : com.monpai.sailboatmod.route.water.WaterAutoRouteService.COARSE_STEP_LADDER) {
-            RealBlockWaterWorld coarseWorld = RealBlockWaterWorld.coarse(map, seaY, startBerth, goalBerth);
-            cpf = runToCompletion(coarseWorld, startBerth, goalBerth, WaterRoutePolicy.nbtCoarseStep(step));
-            coarse = stageOf("coarse", cpf);
-            log.append("coarse(step=").append(step).append(") ").append(coarse.status())
-               .append(" nodes=").append(coarse.expandedNodes())
-               .append(" wp=").append(coarse.path().size()).append(" reason=").append(coarse.reason()).append('\n');
-            if (cpf.status() == WaterRoutePathfinder.Status.SUCCESS) {
-                break;
-            }
-        }
-        if (cpf.status() != WaterRoutePathfinder.Status.SUCCESS) {
-            List<NodeDiag> diags = diagnoseNodes(server, level, map, coarse.path(), seaY);
-            appendNodeLog(log, diags);
-            return new RouteDebugBundle(startBerth, goalBerth, berth, coarse, empty("fine"),
-                    empty("smooth"), empty("verified"), diags, log.toString());
-        }
-
-        // stage 2: corridor refine (3x3 hull)
-        RealBlockWaterWorld fineWorld = RealBlockWaterWorld.corridor(
-                map, coarse.path(), NBT_CORRIDOR_RADIUS, seaY, halfWidth, startBerth, goalBerth);
-        WaterRoutePathfinder fpf = runToCompletion(fineWorld, startBerth, goalBerth, WaterRoutePolicy.nbtRefine());
-        StageResult fine = stageOf("fine", fpf);
-        log.append("fine ").append(fine.status()).append(" nodes=").append(fine.expandedNodes())
-           .append(" wp=").append(fine.path().size()).append(" reason=").append(fine.reason()).append('\n');
-        if (fpf.status() != WaterRoutePathfinder.Status.SUCCESS) {
-            List<NodeDiag> diags = diagnoseNodes(server, level, map, fine.path(), seaY);
-            appendNodeLog(log, diags);
-            return new RouteDebugBundle(startBerth, goalBerth, berth, coarse, fine,
-                    empty("smooth"), empty("verified"), diags, log.toString());
-        }
-
-        // refine/coarse 择优兜底(与 WaterAutoRouteService 同口径,同一 pathQuality):refine 劣于 coarse 则退回 coarse,
-        // 平滑/verify 的输入就是实际会走的那条线 → debug 图与游戏 100% 一致(否则可能显示 refine 图但实际退回 coarse)。
-        List<BlockPos> raw = fine.path();
-        if (raw != null && raw.size() >= 2) {
-            long[] qFine = com.monpai.sailboatmod.route.water.WaterAutoRouteService.pathQuality(map, raw, halfWidth);
-            long[] qCoarse = com.monpai.sailboatmod.route.water.WaterAutoRouteService.pathQuality(map, coarse.path(), halfWidth);
-            boolean fineWorse = qFine[0] > qCoarse[0] || (qFine[0] == qCoarse[0] && qFine[1] > qCoarse[1]);
-            log.append("prefer: fine(land=").append(qFine[0]).append(",len=").append(qFine[1])
-               .append(") coarse(land=").append(qCoarse[0]).append(",len=").append(qCoarse[1])
-               .append(") -> ").append(fineWorse ? "COARSE" : "FINE").append('\n');
-            if (fineWorse) {
-                raw = coarse.path();
-            }
-        }
-
-        // 去回折(与游戏同口径:平滑前删开阔水回折赘点,治窄水道出口三角)
-        raw = WaterRouteNbtVerifier.dropOpenWaterBackfolds(map, raw, halfWidth);
-        // smooth + NBT verify (use production WaterPathSmoother so debug images match in-game behavior:
-        // 撞陆感知平滑前/中/后三层,与 WaterAutoRouteService 同口径)
-        List<BlockPos> smoothPath = com.monpai.sailboatmod.route.water.WaterPathSmoother.smooth(
-                map, raw, seaY, 2.0D, halfWidth);
-        StageResult smooth = new StageResult("smooth", smoothPath, "OK", 0, "");
-        log.append("smooth wp=").append(smoothPath.size()).append('\n');
-
-        List<BlockPos> verifiedPath = WaterRouteNbtVerifier.verify(map, smoothPath, halfWidth);
-        StageResult verified = new StageResult("verified", verifiedPath, "OK", 0, "");
-        log.append("verified wp=").append(verifiedPath.size()).append('\n');
-
-        // per-node diagnosis (all nodes, main-thread real-block read)
-        List<NodeDiag> diags = diagnoseNodes(server, level, map, verifiedPath, seaY);
-        appendNodeLog(log, diags);
-
-        return new RouteDebugBundle(startBerth, goalBerth, berth, coarse, fine, smooth, verified, diags, log.toString());
+    private static DockBerthResolver.DockZone zone(DockInfo dock) {
+        return new DockBerthResolver.DockZone(dock.pos(), dock.zoneMinX(), dock.zoneMaxX(), dock.zoneMinZ(), dock.zoneMaxZ());
     }
 
     /**
@@ -280,21 +215,6 @@ public final class RouteDebugService {
         return new RouteDebugBundle(startBerth, goalBerth, berth, coarse, empty("fine"), smooth, verified, diags, log.toString());
     }
 
-    private static WaterRoutePathfinder runToCompletion(WaterRouteWorld world, BlockPos start, BlockPos goal,
-                                                        WaterRoutePolicy policy) {
-        WaterRoutePathfinder pf = new WaterRoutePathfinder(world, start, goal, policy);
-        long deadline = System.nanoTime() + (long) policy.timeoutTicks() * 50L * 1_000_000L;
-        WaterRoutePathfinder.Status st;
-        do {
-            st = pf.step(policy.nodesPerTick(), policy.chunkLoadsPerTick());
-        } while (st == WaterRoutePathfinder.Status.RUNNING && System.nanoTime() < deadline);
-        return pf;
-    }
-
-    private static StageResult stageOf(String stage, WaterRoutePathfinder pf) {
-        return new StageResult(stage, pf.path(), pf.status().name(), pf.expandedNodes(), pf.failureReason().name());
-    }
-
     private static StageResult empty(String stage) {
         return new StageResult(stage, List.of(), "SKIPPED", 0, "");
     }
@@ -363,11 +283,10 @@ public final class RouteDebugService {
         }).join();
     }
 
-    // ===================== top-level: route -> 6 images + log -> JSON =====================
+    // ===================== top-level: route -> bounded NBT preview / legacy stage images + log =====================
 
     /**
-     * Worker-thread entry (called from HTTP handler): run the route, render terrain once on the main thread,
-     * render each stage image on the worker, return a JSON object {images:{stage:dataUrl,...}, log:"..."}.
+     * Worker-thread entry. NBT renders a bounded schematic here; legacy modes retain their stage images.
      */
     public static String renderBundle(MinecraftServer server, DockInfo a, DockInfo b) {
         return renderBundle(server, a, b, com.monpai.sailboatmod.route.water.WaterMidMode.NBT);
@@ -377,6 +296,9 @@ public final class RouteDebugService {
                                       com.monpai.sailboatmod.route.water.WaterMidMode mode) {
         ServerLevel level = server.overworld();
         RouteDebugBundle bundle = runRoute(server, a, b, mode);
+        if (mode == null || mode == com.monpai.sailboatmod.route.water.WaterMidMode.NBT) {
+            return renderProductionBundle(level, a, b, bundle);
+        }
         BlockPos viewA = bundle.start() != null ? bundle.start() : a.pos();
         BlockPos viewB = bundle.goal() != null ? bundle.goal() : b.pos();
         // 1:1 pixel-per-block; 8192 is only an OOM safety clamp for extreme routes.
@@ -411,6 +333,70 @@ public final class RouteDebugService {
                 RouteDebugRenderer.renderOverview(terrain, view, map, bundle.coarse(), bundle.fine(), bundle.smooth(), bundle.verified(), bundle.start(), bundle.goal(), halfWidth));
         json.append("},\"mode\":\"").append(mode == null ? "nbt" : mode.name().toLowerCase())
             .append("\",\"log\":\"").append(escapeJson(bundle.summary())).append("\"}");
+        return json.toString();
+    }
+
+    /** Fits the complete result, including detours, without a route-length-dependent image allocation. */
+    static RouteDebugDtos.ViewTransform productionPreviewView(BlockPos start, BlockPos goal, List<BlockPos> path) {
+        long minX = Math.min(start.getX(), goal.getX()), maxX = Math.max(start.getX(), goal.getX());
+        long minZ = Math.min(start.getZ(), goal.getZ()), maxZ = Math.max(start.getZ(), goal.getZ());
+        for (BlockPos p : path) {
+            minX = Math.min(minX, p.getX()); maxX = Math.max(maxX, p.getX());
+            minZ = Math.min(minZ, p.getZ()); maxZ = Math.max(maxZ, p.getZ());
+        }
+        minX = Math.max(Integer.MIN_VALUE, minX - 64); minZ = Math.max(Integer.MIN_VALUE, minZ - 64);
+        maxX = Math.min(Integer.MAX_VALUE, maxX + 65); maxZ = Math.min(Integer.MAX_VALUE, maxZ + 65);
+        long spanX = Math.max(1, maxX - minX), spanZ = Math.max(1, maxZ - minZ);
+        int scale = (int) Math.max(1, (Math.max(spanX, spanZ) + 1023) / 1024);
+        int width = (int) ((spanX + scale - 1) / scale), height = (int) ((spanZ + scale - 1) / scale);
+        return new RouteDebugDtos.ViewTransform((int) minX, (int) minZ,
+                (int) Math.min(Integer.MAX_VALUE, spanX), (int) Math.min(Integer.MAX_VALUE, spanZ), scale, width, height);
+    }
+
+    /** Worker-only schematic preview. The bundled overview never downloads or loads/generates Minecraft chunks. */
+    private static String renderProductionBundle(ServerLevel level, DockInfo a, DockInfo b, RouteDebugBundle bundle) {
+        BlockPos start = bundle.start() == null ? a.pos() : bundle.start();
+        BlockPos goal = bundle.goal() == null ? b.pos() : bundle.goal();
+        List<BlockPos> path = bundle.verified().path();
+        var view = productionPreviewView(start, goal, path);
+        var scale = com.monpai.sailboatmod.route.terrain.TellusSurfaceSamplers.worldScale(level);
+        WorldWaterOverview overview = scale.isPresent() ? WorldWaterOverview.get() : null;
+        var water = overview == null ? null : overview.forTellusScale(scale.getAsDouble());
+        var image = new java.awt.image.BufferedImage(view.width(), view.height(), java.awt.image.BufferedImage.TYPE_INT_ARGB);
+        for (int py = 0; py < view.height(); py++) {
+            com.monpai.sailboatmod.route.water.WaterRouteCancellation.check();
+            int z = (int) ((long) view.minZ() + (long) py * view.scale());
+            for (int px = 0; px < view.width(); px++) {
+                int x = (int) ((long) view.minX() + (long) px * view.scale());
+                image.setRGB(px, py, water == null ? 0xFF26313C
+                        : water.anyWater(x, z, x, z) ? 0xFF173F5D : 0xFF726B50);
+            }
+        }
+        java.awt.Graphics2D graphics = image.createGraphics();
+        try {
+            graphics.setRenderingHint(java.awt.RenderingHints.KEY_ANTIALIASING, java.awt.RenderingHints.VALUE_ANTIALIAS_ON);
+            graphics.setColor(new java.awt.Color(70, 255, 120));
+            graphics.setStroke(new java.awt.BasicStroke(2.0f, java.awt.BasicStroke.CAP_ROUND, java.awt.BasicStroke.JOIN_ROUND));
+            for (int i = 1; i < path.size(); i++) {
+                BlockPos p = path.get(i - 1), q = path.get(i);
+                graphics.drawLine(view.px(p.getX()), view.pz(p.getZ()), view.px(q.getX()), view.pz(q.getZ()));
+            }
+            graphics.setColor(java.awt.Color.CYAN);
+            graphics.fillOval(view.px(start.getX()) - 4, view.pz(start.getZ()) - 4, 9, 9);
+            graphics.setColor(java.awt.Color.MAGENTA);
+            graphics.fillOval(view.px(goal.getX()) - 4, view.pz(goal.getZ()) - 4, 9, 9);
+        } finally {
+            graphics.dispose();
+        }
+        StringBuilder json = new StringBuilder("{\"images\":{");
+        appendImage(json, true, "verified", image);
+        json.append("},\"mode\":\"nbt\",\"pipeline\":\"production-nbt\",\"status\":\"")
+                .append(bundle.verified().status()).append("\",\"reason\":\"").append(bundle.verified().reason())
+                .append("\",\"log\":\"").append(escapeJson(bundle.summary()))
+                .append("preview=").append(view.width()).append('x').append(view.height())
+                .append(" blocksPerPixel=").append(view.scale())
+                .append(water == null ? " schematic background" : " bundled global overview (schematic only)")
+                .append("\"}");
         return json.toString();
     }
 
