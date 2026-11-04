@@ -5,11 +5,6 @@ import com.monpai.sailboatmod.roadplanner.map.RoadMapRenderStyle;
 import com.monpai.sailboatmod.route.terrain.SurfaceSample;
 import com.monpai.sailboatmod.route.terrain.TerrainSurfaceSampler;
 
-import javax.imageio.ImageIO;
-import java.awt.image.BufferedImage;
-import java.io.ByteArrayOutputStream;
-import java.io.IOException;
-import java.io.UncheckedIOException;
 import java.util.Optional;
 
 /**
@@ -110,14 +105,6 @@ public final class MarketWebTellusTileRenderer {
     }
 
     public static byte[] png(Rendered rendered) {
-        BufferedImage image = new BufferedImage(TILE_PIXELS, TILE_PIXELS, BufferedImage.TYPE_INT_ARGB);
-        image.setRGB(0, 0, TILE_PIXELS, TILE_PIXELS, rendered.argb(), 0, TILE_PIXELS);
-        ByteArrayOutputStream out = new ByteArrayOutputStream(64 * 1024);
-        try {
-            ImageIO.write(image, "png", out);
-        } catch (IOException e) {
-            throw new UncheckedIOException(e);
-        }
-        return out.toByteArray();
+        return MarketWebMapPngCodec.encode(TILE_PIXELS, TILE_PIXELS, rendered.argb());
     }
 }

@@ -10,6 +10,7 @@
   /** Finished shipments change rarely; the history list is refetched this often while it is shown. */
   const HISTORY_REFRESH_MS = 30000;
   const MAP_REFRESH_MS = 30000;
+  const TERRAIN_REFRESH_MS = 2000;
   const DESKTOP_TILE_CACHE_LIMIT = 320;
   const MOBILE_TILE_CACHE_LIMIT = 96;
   const TILE_OVERDRAW_PIXELS = 1;
@@ -267,6 +268,9 @@
     terrainGeneration: 0,
     terrainFailedTiles: new Map(),
     terrainPollToken: null,
+    terrainPollTimer: 0,
+    terrainPollOwner: null,
+    terrainVisibilityListener: null,
     lastPointerHitTestAt: 0,
     panels: {
       leftCollapsed: true,
@@ -1027,6 +1031,7 @@
   // Revalidate at most 64 existing images per turn; never redraw a whole Leaflet grid on a background write.
   // On history overflow the generation marks visible images for bounded conditional revalidation.
   function refreshTerrainTiles() {
+    if (!terrainPollingVisible()) return;
     let remaining = 64;
     let pending = false;
     const refresh = (image, zoom, x, z) => {
@@ -1074,7 +1079,7 @@
     const context = captureRequestContext();
     state.leafletRetryTimer = window.setTimeout(() => {
       state.leafletRetryTimer = 0;
-      if (!requestContextCurrent(context)) return;
+      if (!requestContextCurrent(context) || !terrainPollingVisible()) return;
       let remaining = 64;
       for (const [image, failed] of state.terrainFailedTiles) {
         state.terrainFailedTiles.delete(image);
@@ -1090,8 +1095,43 @@
     }, MISSING_TILE_RETRY_MS);
   }
 
+  function terrainPollingVisible() {
+    return !!state.root && (typeof document === "undefined"
+      || (!document.hidden && document.visibilityState !== "hidden"));
+  }
+
+  function stopTerrainPolling() {
+    state.terrainPollOwner = null;
+    if (state.terrainPollTimer) {
+      window.clearInterval(state.terrainPollTimer);
+      state.terrainPollTimer = 0;
+    }
+    if (state.terrainVisibilityListener && typeof document !== "undefined") {
+      document.removeEventListener?.("visibilitychange", state.terrainVisibilityListener);
+    }
+    state.terrainVisibilityListener = null;
+  }
+
+  function startTerrainPolling() {
+    stopTerrainPolling();
+    if (!state.root) return;
+    const owner = { mountedToken: state.mountedToken, root: state.root };
+    state.terrainPollOwner = owner;
+    const poll = () => {
+      if (state.terrainPollOwner !== owner || state.mountedToken !== owner.mountedToken
+        || state.root !== owner.root || !terrainPollingVisible()) return;
+      pollTerrainChanges();
+    };
+    state.terrainPollTimer = window.setInterval(poll, TERRAIN_REFRESH_MS);
+    if (typeof document !== "undefined" && document.addEventListener) {
+      state.terrainVisibilityListener = poll;
+      document.addEventListener("visibilitychange", poll);
+    }
+    poll();
+  }
+
   async function pollTerrainChanges() {
-    if (state.terrainPollToken) return;
+    if (!terrainPollingVisible() || state.terrainPollToken) return;
     const context = captureRequestContext();
     // Login changes discard old callbacks, but public terrain misses still need a fresh retry owner.
     if (state.terrainFailedTiles.size || state.missingTiles.size) scheduleMissingTerrainRetry();
@@ -1101,7 +1141,7 @@
     const dimension = encodeURIComponent(state.terrainDimension);
     try {
       const data = await fetchOptionalJson(`/api/map/changes?dimension=${dimension}&since=${state.terrainRevision}&session=${session}`, null);
-      if (!requestContextCurrent(context)) return;
+      if (!requestContextCurrent(context) || !terrainPollingVisible()) return;
       applyTerrainChanges(data);
       refreshTerrainTiles();
     } finally {
@@ -2582,8 +2622,6 @@
     const [snapshot, markets, territories, shipments, world, airports] = responses;
     applyAirports(airports.airports);
     state.snapshot = snapshot;
-    await pollTerrainChanges();
-    if (!requestContextCurrent(context)) return;
     applyWorldInfo(world);
     state.markets = markets.markets || [];
     state.territories = territories.territories || [];
@@ -2658,8 +2696,10 @@
     if (predictionChanged) {
       state.tellusLayer?.redraw();
     }
-    if (rendererChanged) state.terrainGeneration++;
-    await pollTerrainChanges();
+    if (rendererChanged) {
+      state.terrainGeneration++;
+      refreshTerrainTiles();
+    }
   }
 
   function mount(root, options = {}) {
@@ -2673,6 +2713,7 @@
       renderShipments();
       renderSelection();
       scheduleRender();
+      pollTerrainChanges();
       return;
     }
     unmount();
@@ -2726,9 +2767,11 @@
     });
     state.shipmentTimer = window.setInterval(loadShipments, SHIPMENT_REFRESH_MS);
     state.mapRefreshTimer = window.setInterval(pollMapRefresh, MAP_REFRESH_MS);
+    startTerrainPolling();
   }
 
   function unmount() {
+    stopTerrainPolling();
     clearPrivateShipmentData();
     state.sessionToken = null;
     state.terrainPollToken = null;

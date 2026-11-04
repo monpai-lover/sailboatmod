@@ -74,6 +74,10 @@ public final class MarketWebMapDirtyChunkQueue {
         }
     }
 
+    public synchronized boolean contains(String dimensionId, int chunkX, int chunkZ) {
+        return chunks.contains(new ChunkCoordinate(dimensionId, chunkX, chunkZ));
+    }
+
     public synchronized int size() {
         return chunks.size();
     }

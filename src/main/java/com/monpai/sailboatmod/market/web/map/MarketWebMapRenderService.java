@@ -16,6 +16,7 @@ import java.util.List;
 
 public final class MarketWebMapRenderService {
     private static final int MAX_QUEUE_TASKS = 4096;
+    private static final int RESERVED_LOADED_TASKS = 64;
     private static final int REGION_CHUNK_CHECKS_PER_TICK = 128;
     private static final int DIRTY_REGIONS_PER_TICK = 32;
     private static final int PLAYER_SCAN_INTERVAL_TICKS = 80;
@@ -36,7 +37,7 @@ public final class MarketWebMapRenderService {
     private static final int BLACK_TILE_SCAN_BUDGET = 128;
 
     private static final MarketWebMapRenderService GLOBAL = new MarketWebMapRenderService(
-            new MarketWebMapRenderQueue(MAX_QUEUE_TASKS));
+            new MarketWebMapRenderQueue(MAX_QUEUE_TASKS, RESERVED_LOADED_TASKS));
 
     private final MarketWebMapRenderQueue queue;
     private final MarketWebMapRegionScanService regionScanner;
@@ -50,7 +51,7 @@ public final class MarketWebMapRenderService {
     private int tickCounter;
 
     public MarketWebMapRenderService(MarketWebMapRenderQueue queue) {
-        this.queue = queue == null ? new MarketWebMapRenderQueue(MAX_QUEUE_TASKS) : queue;
+        this.queue = queue == null ? new MarketWebMapRenderQueue(MAX_QUEUE_TASKS, RESERVED_LOADED_TASKS) : queue;
         this.regionScanner = new MarketWebMapRegionScanService(this.queue);
         this.renderManager.bindRenderQueue(this.queue);
     }
@@ -231,7 +232,7 @@ public final class MarketWebMapRenderService {
         }
         int added = 0;
         for (MarketWebMapRegionScanService.RegionFile region : regionScanner.scanRegions(level, maxRegions)) {
-            if (addRegionCursor(region.regionX(), region.regionZ())) {
+            if (addRegionCursor(region.regionX(), region.regionZ(), region.localChunks())) {
                 added++;
             }
         }
@@ -242,9 +243,10 @@ public final class MarketWebMapRenderService {
         while (renderManager.hasSamplingTime()) {
             var region = regionScanner.peekRepairRegion();
             if (region == null) { return; }
+            if (region.localChunks().isEmpty()) { regionScanner.acceptRepairRegion(region); continue; }
             synchronized (regionCursors) {
                 long key = MarketWebMapRegionWatcher.packRegion(region.regionX(), region.regionZ());
-                if (!regionCursors.containsKey(key) && !addRegionCursor(region.regionX(), region.regionZ())) {
+                if (!regionCursors.containsKey(key) && !addRegionCursor(region.regionX(), region.regionZ(), region.localChunks())) {
                     return; // Keep completed output until a cursor slot is available.
                 }
                 regionScanner.acceptRepairRegion(region);
@@ -332,16 +334,18 @@ public final class MarketWebMapRenderService {
         // Idempotent safety for direct callers: this does not reset the fullreader's budget.
         renderManager.beginSnapshotTick(level.getServer().getTickCount());
         renderManager.drainCompletedProbes(level, cache, nowMillis);
-        if (renderManager.hasActiveFullRender()) {
-            return;
-        }
-        int taskChecks = MarketWebMapSettings.maxSnapshotsPerTick() + MarketWebMapSettings.maxProbeStartsPerTick();
+        boolean fullRender = renderManager.hasActiveFullRender();
+        int taskChecks = fullRender ? 2 : MarketWebMapSettings.maxSnapshotsPerTick() + MarketWebMapSettings.maxProbeStartsPerTick();
+        int[] foregroundInspected = {0};
         for (int checked = 0; checked < taskChecks && renderManager.hasSamplingTime(); checked++) {
-            List<MarketWebMapRenderQueue.Task> tasks = queue.pollTracked(1, nowMillis);
-            if (tasks.isEmpty()) {
-                break;
+            MarketWebMapRenderQueue.Task task;
+            if (fullRender) {
+                task = pollForegroundTask(nowMillis, (x, z) -> isChunkLoaded(level, x, z), foregroundInspected);
+            } else {
+                List<MarketWebMapRenderQueue.Task> tasks = queue.pollTracked(1, nowMillis);
+                task = tasks.isEmpty() ? null : tasks.getFirst();
             }
-            MarketWebMapRenderQueue.Task task = tasks.getFirst();
+            if (task == null) { break; }
             try {
                 MarketWebMapRenderManager.SubmitResult result = renderManager.submitSnapshot(level, cache, task, nowMillis);
                 renderManager.recordSubmitResult(result);
@@ -356,6 +360,33 @@ public final class MarketWebMapRenderService {
                 queue.acknowledge(task);
             }
         }
+    }
+
+    private MarketWebMapRenderQueue.Task pollForegroundTask(long nowMillis, ChunkLoadedPredicate loaded, int[] inspected) {
+        while (inspected[0] < 32 && renderManager.hasSamplingTime()) {
+            var selected = queue.pollTrackedLoaded(1, nowMillis);
+            if (selected.isEmpty()) { return null; }
+            inspected[0]++;
+            var task = selected.getFirst();
+            boolean eligible = false;
+            boolean transferred = false;
+            try {
+                if (!renderManager.isCurrentReaderRegion(task.chunkX(), task.chunkZ())) {
+                    eligible = loaded.isLoaded(task.chunkX(), task.chunkZ());
+                    if (!eligible && queue.isReservedForeground(task)) {
+                        transferred = renderManager.retainUnloadedForeground(task);
+                    }
+                }
+                if (eligible) { return task; }
+            } finally {
+                if (!eligible) {
+                    // Current-reader conflicts and full recovery backlogs retain their accepted reservation.
+                    if (!transferred) { queue.enqueue(task.dimensionId(), task.chunkX(), task.chunkZ(), nowMillis, task.quality()); }
+                    queue.acknowledge(task);
+                }
+            }
+        }
+        return null;
     }
 
     static int enqueueTileChunksForTest(MarketWebMapRenderQueue queue,
@@ -513,6 +544,11 @@ public final class MarketWebMapRenderService {
     }
 
     private boolean addRegionCursor(int regionX, int regionZ) {
+        return addRegionCursor(regionX, regionZ, null);
+    }
+
+    private boolean addRegionCursor(int regionX, int regionZ, List<Integer> savedLocalChunks) {
+        if (savedLocalChunks != null && savedLocalChunks.isEmpty()) { return false; }
         long key = MarketWebMapRegionWatcher.packRegion(regionX, regionZ);
         synchronized (regionCursors) {
             if (regionCursors.containsKey(key)) {
@@ -521,7 +557,7 @@ public final class MarketWebMapRenderService {
             if (regionCursors.size() >= MAX_REGION_CURSORS) {
                 return false;
             }
-            regionCursors.put(key, new RegionCursor(regionX, regionZ));
+            regionCursors.put(key, new RegionCursor(regionX, regionZ, savedLocalChunks));
             return true;
         }
     }
@@ -599,19 +635,23 @@ public final class MarketWebMapRenderService {
     private static final class RegionCursor {
         private final int regionX;
         private final int regionZ;
+        private final List<Integer> savedLocalChunks;
         private int nextLocal;
 
-        private RegionCursor(int regionX, int regionZ) {
+        private RegionCursor(int regionX, int regionZ, List<Integer> savedLocalChunks) {
             this.regionX = regionX;
             this.regionZ = regionZ;
+            this.savedLocalChunks = savedLocalChunks == null ? null : List.copyOf(savedLocalChunks);
         }
 
+        private int localChunk() { return savedLocalChunks == null ? nextLocal : savedLocalChunks.get(nextLocal); }
+
         private int chunkX() {
-            return regionX * CHUNKS_PER_REGION_AXIS + Math.floorMod(nextLocal, CHUNKS_PER_REGION_AXIS);
+            return regionX * CHUNKS_PER_REGION_AXIS + Math.floorMod(localChunk(), CHUNKS_PER_REGION_AXIS);
         }
 
         private int chunkZ() {
-            return regionZ * CHUNKS_PER_REGION_AXIS + Math.floorDiv(nextLocal, CHUNKS_PER_REGION_AXIS);
+            return regionZ * CHUNKS_PER_REGION_AXIS + Math.floorDiv(localChunk(), CHUNKS_PER_REGION_AXIS);
         }
 
         private void advance() {
@@ -619,7 +659,7 @@ public final class MarketWebMapRenderService {
         }
 
         private boolean done() {
-            return nextLocal >= CHUNKS_PER_REGION_AXIS * CHUNKS_PER_REGION_AXIS;
+            return nextLocal >= (savedLocalChunks == null ? CHUNKS_PER_REGION_AXIS * CHUNKS_PER_REGION_AXIS : savedLocalChunks.size());
         }
     }
 }
