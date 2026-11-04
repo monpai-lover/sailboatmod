@@ -4,6 +4,7 @@ import com.mojang.logging.LogUtils;
 import com.monpai.sailboatmod.SailboatMod;
 import com.monpai.sailboatmod.route.terrain.TellusWorlds;
 import com.monpai.sailboatmod.route.water.PortAsyncRuntime;
+import com.monpai.sailboatmod.route.water.WaterRouteCancellation;
 import com.sun.net.httpserver.HttpExchange;
 import com.sun.net.httpserver.HttpHandler;
 import com.sun.net.httpserver.HttpServer;
@@ -42,6 +43,7 @@ public final class RouteDebugServer {
     private int port;
     private HttpServer httpServer;
     private ExecutorService executor;
+    private RouteDebugJobManager jobs;
 
     private RouteDebugServer(MinecraftServer minecraftServer, int port, boolean publicAccess) {
         this.minecraftServer = minecraftServer;
@@ -116,6 +118,7 @@ public final class RouteDebugServer {
             return t;
         });
         httpServer.setExecutor(executor);
+        jobs = new RouteDebugJobManager();
         ctx("/ping", ex -> writeText(ex, 200, "route-debug ok"));
         ctx("/api/docks", ex -> {
             var docks = callOnServerThread(() -> RouteDebugService.listDocks(minecraftServer));
@@ -129,35 +132,116 @@ public final class RouteDebugServer {
             data.addProperty("tellusUnavailableReason", available ? "" : "当前世界不是 Tellus 地球世界，使用 NBT 模式");
             writeJson(ex, 200, data.toString());
         });
-        ctx("/api/route", ex -> {
-            String q = ex.getRequestURI().getRawQuery();
-            String requested = paramString(q, "mode", null);
-            RouteDebugMode mode = requested == null ? RouteDebugMode.defaultFor(tellusAvailable()) : RouteDebugMode.parse(requested);
-            if (mode == null) {
-                writeRouteError(ex, 400, "UNKNOWN_MODE", "未知调试模式；请选择 TELLUS、NBT、HYBRID 或 NOISE");
-                return;
-            }
-            if (mode == RouteDebugMode.TELLUS && !tellusAvailable()) {
-                writeRouteError(ex, 400, "TELLUS_UNAVAILABLE", "当前世界不是 Tellus 地球世界，无法运行 Tellus 模式");
-                return;
-            }
-            int ai = paramInt(q, "a", -1);
-            int bi = paramInt(q, "b", -1);
-            var docks = callOnServerThread(() -> RouteDebugService.listDocks(minecraftServer));
-            if (ai < 0 || bi < 0 || ai >= docks.size() || bi >= docks.size()) {
-                writeText(ex, 400, "bad a/b index (a=" + ai + " b=" + bi + " n=" + docks.size() + ")");
-                return;
-            }
-            String json = RouteDebugService.renderBundle(minecraftServer, docks.get(ai), docks.get(bi), mode);
-            writeJson(ex, 200, json);
+        ctx("/api/route/start", ex -> {
+            if (!requireMethod(ex, "POST")) return;
+            handleRoute(ex, true);
         });
+        ctx("/api/route/jobs/", this::handleJob);
+        ctx("/api/route", ex -> handleRoute(ex, false));
         ctx("/", ex -> writeHtml(ex, RouteDebugHtml.PAGE));
         httpServer.start();
         LOGGER.info("[RouteDebug] debug server started on {}:{} (token required: {})",
                 address.getHostString(), port, requiresToken());
     }
 
+    private void handleRoute(HttpExchange ex, boolean asynchronous) throws IOException {
+        String q = ex.getRequestURI().getRawQuery();
+        String requested = paramString(q, "mode", null);
+        RouteDebugMode mode = requested == null ? null : RouteDebugMode.parse(requested);
+        if (requested != null && mode == null) {
+            writeRouteError(ex, 400, "UNKNOWN_MODE", "未知调试模式；请选择 TELLUS、NBT、HYBRID 或 NOISE");
+            return;
+        }
+        int ai = paramInt(q, "a", -1);
+        int bi = paramInt(q, "b", -1);
+        if (asynchronous) {
+            startRouteJob(ex, ai, bi, mode);
+            return;
+        }
+        if (mode == null) mode = RouteDebugMode.defaultFor(tellusAvailable());
+        if (mode == RouteDebugMode.TELLUS && !tellusAvailable()) {
+            writeRouteError(ex, 400, "TELLUS_UNAVAILABLE", "当前世界不是 Tellus 地球世界，无法运行 Tellus 模式");
+            return;
+        }
+        var docks = callOnServerThread(() -> RouteDebugService.listDocks(minecraftServer));
+        if (ai < 0 || bi < 0 || ai >= docks.size() || bi >= docks.size()) {
+            writeText(ex, 400, "bad a/b index (a=" + ai + " b=" + bi + " n=" + docks.size() + ")");
+            return;
+        }
+        String json = RouteDebugService.renderBundle(minecraftServer, docks.get(ai), docks.get(bi), mode);
+        writeJson(ex, 200, json);
+    }
+
+    private void startRouteJob(HttpExchange ex, int ai, int bi, RouteDebugMode requestedMode) throws IOException {
+        try {
+            var job = jobs.submit(cancelled -> WaterRouteCancellation.run(cancelled, () -> {
+                try {
+                    RouteDebugMode mode = requestedMode == null ? RouteDebugMode.defaultFor(tellusAvailable()) : requestedMode;
+                    if (mode == RouteDebugMode.TELLUS && !tellusAvailable())
+                        return routeErrorJson("TELLUS_UNAVAILABLE", "当前世界不是 Tellus 地球世界，无法运行 Tellus 模式");
+                    var docks = callOnServerThread(() -> RouteDebugService.listDocks(minecraftServer));
+                    if (ai < 0 || bi < 0 || ai >= docks.size() || bi >= docks.size())
+                        return routeErrorJson("BAD_DOCK_INDEX", "码头编号已失效，请刷新页面后重新选择码头");
+                    String json = RouteDebugService.renderBundle(minecraftServer, docks.get(ai), docks.get(bi), mode);
+                    // Encoding/invalid result errors belong to the job, never a later polling response.
+                    com.google.gson.JsonParser.parseString(json).getAsJsonObject();
+                    return json;
+                } catch (java.util.concurrent.CancellationException cancelledWork) {
+                    throw cancelledWork;
+                } catch (RuntimeException | Error failed) {
+                    LOGGER.error("[RouteDebug] background route/render failed (mode={})",
+                            requestedMode == null ? "default" : requestedMode.id(), failed);
+                    throw failed;
+                }
+            }));
+            writeJson(ex, 202, jobJson(job));
+        } catch (RouteDebugJobManager.BusyException busy) {
+            writeRouteError(ex, 429, "JOB_QUEUE_FULL", busy.getMessage());
+        }
+    }
+
+    private void handleJob(HttpExchange ex) throws IOException {
+        String suffix = ex.getRequestURI().getPath().substring("/api/route/jobs/".length());
+        boolean cancel = suffix.endsWith("/cancel");
+        if (!requireMethod(ex, cancel ? "POST" : "GET")) return;
+        String id = cancel ? suffix.substring(0, suffix.length() - "/cancel".length()) : suffix;
+        var job = cancel ? jobs.cancel(id) : jobs.get(id);
+        if (job == null) writeRouteError(ex, 404, "JOB_NOT_FOUND", "任务不存在或已过期，请重新生成路线");
+        else writeJson(ex, 200, jobJson(job));
+    }
+
+    private static boolean requireMethod(HttpExchange ex, String method) throws IOException {
+        if (method.equals(ex.getRequestMethod())) return true;
+        ex.getResponseHeaders().set("Allow", method);
+        writeRouteError(ex, 405, "METHOD_NOT_ALLOWED", "此接口需要 " + method);
+        return false;
+    }
+
+    private static String jobJson(RouteDebugJobManager.Snapshot job) {
+        var json = new com.google.gson.JsonObject();
+        json.addProperty("jobId", job.jobId());
+        json.addProperty("status", job.status().name());
+        json.addProperty("elapsedMillis", job.elapsedMillis());
+        if (job.message() != null) json.addProperty("message", job.message());
+        if (job.status() == RouteDebugJobManager.Status.FAILED) json.addProperty("reason", "WORK_FAILED");
+        if (job.status() == RouteDebugJobManager.Status.TIMED_OUT) json.addProperty("reason", "JOB_TIMED_OUT");
+        if (job.result() != null) {
+            var result = com.google.gson.JsonParser.parseString(job.result()).getAsJsonObject();
+            json.add("result", result);
+            // A completed computation can still contain a failed route. Preserve its real reason and log.
+            if (result.has("status") && "FAILED".equals(result.get("status").getAsString())) {
+                json.addProperty("status", "FAILED");
+                for (String key : new String[]{"reason", "message"}) if (result.has(key)) json.add(key, result.get(key));
+            }
+        }
+        return json.toString();
+    }
+
     private void stopInternal() {
+        if (jobs != null) {
+            jobs.close();
+            jobs = null;
+        }
         if (httpServer != null) {
             httpServer.stop(0);
             httpServer = null;
@@ -185,6 +269,10 @@ public final class RouteDebugServer {
                     return;
                 }
                 handler.handle(ex);
+            } catch (ResponseWriteException disconnected) {
+                // The route may have finished after a proxy/browser closed its synchronous connection.
+                // A second response cannot repair that connection; async results remain cached for polling.
+                LOGGER.debug("[RouteDebug] response connection closed {}", ex.getRequestURI().getPath());
             } catch (Exception e) {
                 // Queries may contain the private entry token. Log only the path.
                 LOGGER.error("[RouteDebug] 请求失败 {}", ex.getRequestURI().getPath(), e);
@@ -226,11 +314,15 @@ public final class RouteDebugServer {
     }
 
     private static void writeRouteError(HttpExchange ex, int status, String reason, String message) throws IOException {
+        writeJson(ex, status, routeErrorJson(reason, message));
+    }
+
+    private static String routeErrorJson(String reason, String message) {
         var error = new com.google.gson.JsonObject();
         error.addProperty("status", "FAILED");
         error.addProperty("reason", reason);
         error.addProperty("message", message);
-        writeJson(ex, status, error.toString());
+        return error.toString();
     }
 
     static void writeText(HttpExchange ex, int status, String body) throws IOException {
@@ -251,11 +343,16 @@ public final class RouteDebugServer {
     }
 
     private static void write(HttpExchange ex, int status, String contentType, byte[] bytes) throws IOException {
-        ex.getResponseHeaders().set("Content-Type", contentType);
-        ex.sendResponseHeaders(status, bytes.length);
-        try (OutputStream os = ex.getResponseBody()) {
-            os.write(bytes);
-        }
+        try {
+            ex.getResponseHeaders().set("Content-Type", contentType);
+            ex.sendResponseHeaders(status, bytes.length);
+            try (OutputStream os = ex.getResponseBody()) { os.write(bytes); }
+        } catch (IOException disconnected) { throw new ResponseWriteException(disconnected); }
+    }
+
+    /** Only transport writes use this type; real route/render IO failures remain errors. */
+    private static final class ResponseWriteException extends IOException {
+        ResponseWriteException(IOException cause) { super(cause); }
     }
 
     static int paramInt(String rawQuery, String key, int def) {

@@ -106,14 +106,16 @@ const deferred = () => {
 const flush = async () => { for (let i = 0; i < 4; i++) await new Promise(resolve => setImmediate(resolve)); };
 const renderedContent = element => element.innerHTML + (element.src ?? '') + element.children.map(renderedContent).join('');
 
-function page({ tellus = true, capabilities, dockResponse, route } = {}) {
+function page({ tellus = true, capabilities, dockResponse, route, jobStatus, start, cancel } = {}) {
   const document = documentFromHtml();
   const calls = [];
   const context = vm.createContext({
-    document, console, URL, URLSearchParams, setTimeout, clearTimeout,
+    document, console, URL, URLSearchParams, AbortController,
+    setTimeout: (fn, delay) => setTimeout(fn, delay === 1000 ? 0 : delay), clearTimeout,
     Option: function Option(text, value) { const option = new Element('option'); option.textContent = text; option.value = value; return option; },
-    fetch: async input => {
+    fetch: async (input, options = {}) => {
       const url = new URL(String(input), 'http://route-debug.test');
+      url.method = options.method || 'GET';
       calls.push(url);
       if (url.pathname === '/api/capabilities') return typeof capabilities === 'function' ? capabilities() : capabilities ?? response({
         tellusAvailable: tellus, defaultMode: tellus ? 'tellus' : 'nbt',
@@ -121,6 +123,13 @@ function page({ tellus = true, capabilities, dockResponse, route } = {}) {
       });
       if (url.pathname === '/api/docks') return typeof dockResponse === 'function' ? dockResponse() : dockResponse ?? response(docks);
       if (url.pathname === '/api/route') return typeof route === 'function' ? route(url) : route ?? response(success);
+      if (url.pathname === '/api/route/start') return typeof start === 'function' ? start(url) : start ?? response({ jobId: 'test-job', status: 'QUEUED' }, 202);
+      if (url.pathname === '/api/route/jobs/test-job/cancel') return typeof cancel === 'function' ? cancel(url) : cancel ?? response({ jobId: 'test-job', status: 'CANCELLED' });
+      if (url.pathname === '/api/route/jobs/test-job') {
+        if (jobStatus) return jobStatus(url);
+        const result = typeof route === 'function' ? await route(url) : route ?? response(success);
+        return result.ok ? response({ jobId: 'test-job', status: 'SUCCEEDED', result: await result.json() }) : result;
+      }
       throw new Error(`Unexpected request: ${url}`);
     },
   });
@@ -129,7 +138,7 @@ function page({ tellus = true, capabilities, dockResponse, route } = {}) {
   return {
     document, calls, context,
     element(id) { const element = document.getElementById(id); assert.ok(element, `the page needs #${id}`); return element; },
-    routes() { return calls.filter(url => url.pathname === '/api/route'); },
+    routes() { return calls.filter(url => url.pathname === '/api/route' || url.pathname === '/api/route/start'); },
     go() { assert.equal(typeof context.go, 'function', 'Generate must call go()'); return context.go(); },
   };
 }
@@ -237,10 +246,93 @@ for (const [description, routeResponse, reason] of [
 }
 
 test('network failure during route work restores Generate and displays the error', async () => {
-  const app = page({ route: () => Promise.reject(new Error('Route connection dropped')) });
+  const app = page({ start: () => Promise.reject(new Error('Route connection dropped')) });
   await flush();
   await app.go();
   assert.match(app.element('msg').textContent, /Route connection dropped/);
   assert.doesNotMatch(app.element('msg').textContent, /\bdone\b/i);
   assert.equal(app.element('generate').disabled, false);
+});
+
+test('Generate starts a short POST job and polls queued/running progress before rendering the cached result', async () => {
+  const finish = deferred();
+  let polls = 0;
+  const app = page({ jobStatus: async () => {
+    polls++;
+    if (polls === 1) return response({ jobId: 'test-job', status: 'QUEUED', elapsedMillis: 0 });
+    if (polls === 2) return response({ jobId: 'test-job', status: 'RUNNING', elapsedMillis: 111000 });
+    return finish.promise;
+  } });
+  await flush();
+  const running = app.go();
+  for (let i = 0; polls < 3 && i < 30; i++) await new Promise(resolve => setTimeout(resolve, 2));
+  assert.equal(app.routes()[0].pathname, '/api/route/start');
+  assert.equal(app.routes()[0].method, 'POST');
+  assert.equal(polls, 3, 'long route work must use short polling rather than a held HTTP request');
+  assert.match(app.element('msg').textContent, /RUNNING|运行/);
+  assert.equal(app.element('generate').disabled, true);
+  finish.resolve(response({ jobId: 'test-job', status: 'SUCCEEDED', result: success }));
+  await running;
+  assert.match(app.element('msg').textContent, /done/);
+  assert.match(renderedContent(app.element('imgs')), /FINAL/);
+});
+
+test('a dropped polling connection retries the same job while keeping Cancel available', async () => {
+  let polls = 0;
+  const retry = deferred();
+  const app = page({ jobStatus: async () => {
+    polls++;
+    if (polls === 1) throw new Error('Temporary polling disconnect');
+    return retry.promise;
+  } });
+  await flush();
+  const running = app.go();
+  for (let i = 0; polls < 2 && i < 30; i++) await new Promise(resolve => setTimeout(resolve, 2));
+  assert.equal(polls, 2);
+  assert.equal(app.routes().length, 1, 'reconnection must never start a replacement route');
+  assert.equal(app.element('cancel').disabled, false);
+  assert.match(app.element('msg').textContent, /Temporary polling disconnect/);
+  retry.resolve(response({ jobId: 'test-job', status: 'SUCCEEDED', result: success }));
+  await running;
+  assert.match(app.element('msg').textContent, /done/);
+});
+
+test('an HTML proxy timeout while polling retries the existing job', async () => {
+  let polls = 0;
+  const app = page({ jobStatus: async () => {
+    if (++polls === 1) return { ok: false, status: 504, json: async () => { throw new SyntaxError('Unexpected HTML'); } };
+    return response({ jobId: 'test-job', status: 'SUCCEEDED', result: success });
+  } });
+  await flush();
+  await app.go();
+  assert.equal(polls, 2);
+  assert.equal(app.routes().length, 1);
+  assert.match(app.element('msg').textContent, /done/);
+});
+
+test('Cancel posts to the active job and retains a visible cancellation outcome', async () => {
+  let cancelled = false;
+  const app = page({
+    jobStatus: async () => response({ jobId: 'test-job', status: cancelled ? 'CANCELLED' : 'RUNNING' }),
+    cancel: async () => { cancelled = true; return response({ jobId: 'test-job', status: 'CANCELLED' }); },
+  });
+  await flush();
+  const running = app.go();
+  await flush();
+  assert.equal(app.element('cancel').disabled, false);
+  assert.equal(typeof app.context.cancelJob, 'function');
+  await app.context.cancelJob();
+  await running;
+  assert.ok(app.calls.some(url => url.pathname.endsWith('/cancel') && url.method === 'POST'));
+  assert.match(app.element('msg').textContent, /CANCELLED|取消/);
+  assert.doesNotMatch(app.element('msg').textContent, /done/);
+  assert.equal(app.element('generate').disabled, false);
+});
+
+test('background rendering failures keep their diagnostic reason', async () => {
+  const app = page({ jobStatus: async () => response({ jobId: 'test-job', status: 'FAILED', reason: 'RENDER_FAILED', message: 'PNG encoding failed' }) });
+  await flush();
+  await app.go();
+  assert.match(app.element('msg').textContent, /PNG encoding failed/);
+  assert.doesNotMatch(app.element('msg').textContent, /done/);
 });

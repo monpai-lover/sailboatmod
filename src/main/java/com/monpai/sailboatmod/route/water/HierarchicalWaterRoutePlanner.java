@@ -9,6 +9,7 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.LinkedHashMap;
 import java.util.Map;
+import java.util.function.BiPredicate;
 import java.util.function.UnaryOperator;
 
 /** Bounded global water guidance followed by independently bounded detailed segments. */
@@ -50,6 +51,12 @@ public final class HierarchicalWaterRoutePlanner {
     private List<BlockPos> result = List.of();
     private List<BlockPos> coarseGuidance = List.of();
     private int skippedGuidanceAnchors;
+    private boolean detailedStartValidated;
+    private Segment prefixProbeSegment;
+    private double prefixProbeDistance;
+    private Segment suffixProbeSegment;
+    private double suffixProbeDistance;
+    private BiPredicate<BlockPos, BlockPos> directCertifier;
 
     public HierarchicalWaterRoutePlanner(WaterRouteWorld coarseWorld, WaterRouteWorld detailedWorld,
                                          BlockPos start, BlockPos goal, WaterRoutePolicy detailedPolicy) {
@@ -95,8 +102,23 @@ public final class HierarchicalWaterRoutePlanner {
     static HierarchicalWaterRoutePlanner withGuidance(WaterRouteWorld detailedWorld, BlockPos start, BlockPos goal,
                                                       WaterRoutePolicy detailedPolicy, UnaryOperator<List<BlockPos>> finishSegment,
                                                       List<GlobalWaterGridPlanner.Leg> legs) {
+        return withGuidance(detailedWorld, start, goal, detailedPolicy, finishSegment, legs, null);
+    }
+
+    static HierarchicalWaterRoutePlanner withGuidance(WaterRouteWorld detailedWorld, BlockPos start, BlockPos goal,
+                                                      WaterRoutePolicy detailedPolicy, UnaryOperator<List<BlockPos>> finishSegment,
+                                                      List<GlobalWaterGridPlanner.Leg> legs,
+                                                      BiPredicate<BlockPos, BlockPos> directCertifier) {
+        return withGuidance(detailedWorld, start, goal, detailedPolicy, finishSegment, legs, directCertifier, System::nanoTime);
+    }
+
+    static HierarchicalWaterRoutePlanner withGuidance(WaterRouteWorld detailedWorld, BlockPos start, BlockPos goal,
+                                                      WaterRoutePolicy detailedPolicy, UnaryOperator<List<BlockPos>> finishSegment,
+                                                      List<GlobalWaterGridPlanner.Leg> legs,
+                                                      BiPredicate<BlockPos, BlockPos> directCertifier, LongSupplier clock) {
         HierarchicalWaterRoutePlanner planner = new HierarchicalWaterRoutePlanner(detailedWorld, detailedWorld, start, goal,
-                detailedPolicy, finishSegment);
+                detailedPolicy, finishSegment, clock);
+        planner.directCertifier = directCertifier;
         planner.coarse = false;
         List<BlockPos> guidance = new ArrayList<>();
         for (GlobalWaterGridPlanner.Leg leg : legs) {
@@ -119,17 +141,6 @@ public final class HierarchicalWaterRoutePlanner {
             return status;
         }
         status = Status.RUNNING;
-        if (!coarse && search == null && completedSegments < segments.size() && segments.get(completedSegments).direct()) {
-            Segment leg = segments.get(completedSegments);
-            appendTracked(List.of(leg.from(), leg.to()), true);
-            completedSegments++;
-            if (completedSegments == segments.size()) {
-                result = List.copyOf(accumulated);
-                resultDirect = List.copyOf(edgeDirect);
-                status = Status.SUCCESS;
-            }
-            return status;
-        }
         TrackingWorld world = coarse ? coarseWorld : detailedWorld;
         WaterRoutePolicy policy = coarse ? coarsePolicy : detailWithStep(detailStep);
         if (stageBudget == null) {
@@ -141,7 +152,26 @@ public final class HierarchicalWaterRoutePlanner {
         if (expired != WaterRouteFailureReason.NONE) { fail(expired); return status; }
         if (search == null) {
             if (coarse && coarseExpandedNodes >= MAX_COARSE_NODES) { fail(WaterRouteFailureReason.NODE_BUDGET_EXCEEDED); return status; }
-            if (!coarse && !prepareDetailedEndpoint(policy)) return status;
+            if (!coarse) {
+                if (!prepareDetailedStart(policy) || !prepareDetailedEndpoint(policy)) return status;
+                // A mask-certified edge still needs an actual-water handoff. Checking before
+                // append prevents an artificial land anchor becoming the next search's start.
+                Segment leg = segments.get(completedSegments);
+                if (leg.direct()) {
+                    appendTracked(List.of(leg.from(), leg.to()), true);
+                    completedSegments++;
+                    if (completedSegments == segments.size()) {
+                        result = List.copyOf(accumulated);
+                        resultDirect = List.copyOf(edgeDirect);
+                        status = Status.SUCCESS;
+                    }
+                    stageBudget = null;
+                    searchProgress = null;
+                    detailStep = detailedPolicy.stepSize();
+                    detailExpandedNodes = 0;
+                    return status;
+                }
+            }
             world.unknown = false;
             BlockPos a = coarse ? start : segments.get(completedSegments).from();
             BlockPos b = coarse ? goal : segments.get(completedSegments).to();
@@ -219,15 +249,15 @@ public final class HierarchicalWaterRoutePlanner {
     /** Per edge of {@link #path()}: true when it is an unmodified direct (open-water) guidance leg. */
     public List<Boolean> directEdges() { return status == Status.SUCCESS ? resultDirect : List.of(); }
 
-    /** {@link #appendCompacted} that also tracks which edges came from direct legs (merged edges keep AND). */
+    /** Compact within one certification class; retain the boundary between direct and detailed edges. */
     private void appendTracked(List<BlockPos> incoming, boolean direct) {
         for (BlockPos point : incoming) {
             if (!accumulated.isEmpty() && accumulated.getLast().equals(point)) continue;
             boolean flag = direct;
             while (accumulated.size() >= 2 && collinearForward(accumulated.get(accumulated.size() - 2), accumulated.getLast(), point)) {
+                if (edgeDirect.getLast() != flag) break;
                 accumulated.removeLast();
-                boolean mergedDirect = edgeDirect.removeLast(); // always remove; do not short-circuit
-                flag = flag && mergedDirect;
+                edgeDirect.removeLast();
             }
             if (!accumulated.isEmpty()) edgeDirect.add(flag);
             accumulated.add(point);
@@ -248,6 +278,28 @@ public final class HierarchicalWaterRoutePlanner {
     public List<BlockPos> coarseGuidance() { return coarseGuidance; }
     public int skippedGuidanceAnchors() { return skippedGuidanceAnchors; }
 
+    private boolean prepareDetailedStart(WaterRoutePolicy policy) {
+        if (detailedStartValidated) return true;
+        WaterColumn column = detailedWorld.sample(start.getX(), start.getZ(), policy);
+        if (column == null) return awaitDetailedTerrain();
+        if (!column.passable() || !start.equals(column.surfacePos())
+                || !segments.get(completedSegments).from().equals(start)) {
+            LOGGER.warn("[WaterPath] 真实起点不能验证 start={} actual={} diagnostic={}", start, column,
+                    detailedWorld.sampleDiagnostic(start.getX(), start.getZ(), policy));
+            fail(WaterRouteFailureReason.NO_WATER_PATH);
+            return false;
+        }
+        detailedStartValidated = true;
+        return true;
+    }
+
+    private boolean awaitDetailedTerrain() {
+        WaterRouteFailureReason expired = stageBudget.advance(true);
+        if (expired != WaterRouteFailureReason.NONE) fail(expired);
+        else status = Status.WAITING;
+        return false;
+    }
+
     /**
      * A LOD waypoint is a hint, not a mandatory docking position. Native LOD and
      * actual generator columns differ at some shores. Never force a fine search
@@ -255,27 +307,92 @@ public final class HierarchicalWaterRoutePlanner {
      * Merge that hint into the following segment, preserving the already verified
      * starting point. Real user endpoints are never moved or removed. Unknown data
      * suspends this preparation; it is NOT interpreted as a bad hint or as water.
-     * Each poll is bounded so a long run of bad LOD hints remains cancellable.
+     * A long direct leg is cut only when its handoff needs repair; healthy ocean
+     * legs keep their fast path. Each poll samples at most 32 hints/cutpoints.
      */
     private boolean prepareDetailedEndpoint(WaterRoutePolicy policy) {
         for (int checks = 0; checks < 32; checks++) {
             WaterRouteCancellation.check();
             Segment segment = segments.get(completedSegments);
-            BlockPos hint = segment.to();
-            WaterColumn column = detailedWorld.sample(hint.getX(), hint.getZ(), policy);
-            if (column == null) {
-                WaterRouteFailureReason expired = stageBudget.advance(true);
-                if (expired != WaterRouteFailureReason.NONE) fail(expired);
-                else status = Status.WAITING;
-                return false;
-            }
-            boolean finalEndpoint = completedSegments == segments.size() - 1;
-            if (column.passable() && column.surfacePos() != null) {
-                BlockPos exact = column.surfacePos();
-                if (finalEndpoint && !exact.equals(goal)) {
-                    fail(WaterRouteFailureReason.NO_WATER_PATH);
+            if (prefixProbeSegment == segment) {
+                if (prefixProbeDistance <= 0) {
+                    // No usable prefix anchor was found on the certified line. The existing
+                    // bounded detailed search may still detour, but no prefix is invented.
+                    segments.set(completedSegments, new Segment(segment.from(), segment.to(), false));
+                    prefixProbeSegment = null;
+                    continue;
+                }
+                RepairCut candidate = repairCut(segment.to(), segment.from(), prefixProbeDistance, segment.from().getY());
+                if (candidate == null) { prefixProbeDistance = 0; continue; }
+                BlockPos cut = candidate.point();
+                WaterColumn atCut = detailedWorld.sample(cut.getX(), cut.getZ(), policy);
+                if (atCut == null) return awaitDetailedTerrain();
+                if (atCut.passable() && cut.equals(atCut.surfacePos()) && !cut.equals(segment.from())) {
+                    Boolean certified = certifyRepairCut(segment.from(), cut, candidate.inherited());
+                    if (certified == null) return false;
+                    if (certified) {
+                        segments.set(completedSegments, new Segment(segment.from(), cut, true));
+                        segments.add(completedSegments + 1, new Segment(cut, segment.to(), false));
+                        prefixProbeSegment = null;
+                        return true;
+                    }
+                    // A changed native line may be long. Try at most one such certificate
+                    // per slice; cheap actual-water cutpoint probes keep their 32-check cap.
+                    prefixProbeDistance -= DETAIL_SEGMENT_BLOCKS / 32.0;
                     return false;
                 }
+                prefixProbeDistance -= DETAIL_SEGMENT_BLOCKS / 32.0;
+                continue;
+            }
+            if (suffixProbeSegment == segment) {
+                Segment next = segments.get(completedSegments + 1);
+                if (suffixProbeDistance <= 0) {
+                    mergeFollowingSegment(segment);
+                    suffixProbeSegment = null;
+                    continue;
+                }
+                RepairCut candidate = repairCut(next.from(), next.to(), suffixProbeDistance, segment.from().getY());
+                if (candidate == null) { suffixProbeDistance = 0; continue; }
+                BlockPos cut = candidate.point();
+                WaterColumn atCut = detailedWorld.sample(cut.getX(), cut.getZ(), policy);
+                if (atCut == null) return awaitDetailedTerrain();
+                if (atCut.passable() && cut.equals(atCut.surfacePos()) && !cut.equals(next.to())) {
+                    Boolean certified = certifyRepairCut(cut, next.to(), candidate.inherited());
+                    if (certified == null) return false;
+                    if (certified) {
+                        segments.set(completedSegments, new Segment(segment.from(), cut, false));
+                        segments.set(completedSegments + 1, new Segment(cut, next.to(), true));
+                        skippedGuidanceAnchors++;
+                        suffixProbeSegment = null;
+                        return true;
+                    }
+                    suffixProbeDistance -= DETAIL_SEGMENT_BLOCKS / 32.0;
+                    return false;
+                }
+                suffixProbeDistance -= DETAIL_SEGMENT_BLOCKS / 32.0;
+                continue;
+            }
+            BlockPos hint = segment.to();
+            WaterColumn column = detailedWorld.sample(hint.getX(), hint.getZ(), policy);
+            if (column == null) return awaitDetailedTerrain();
+            boolean finalEndpoint = completedSegments == segments.size() - 1;
+            boolean sameWaterHeight = column.passable() && column.surfacePos() != null
+                    && column.surfacePos().getY() == segment.from().getY();
+            if (finalEndpoint && (!sameWaterHeight || !goal.equals(column.surfacePos()))) {
+                LOGGER.warn("[WaterPath] 真实终点不能验证 goal={} actual={} diagnostic={}", goal, column,
+                        detailedWorld.sampleDiagnostic(hint.getX(), hint.getZ(), policy));
+                fail(WaterRouteFailureReason.NO_WATER_PATH);
+                return false;
+            }
+            if (!finalEndpoint && segment.direct() && (!sameWaterHeight || !hint.equals(column.surfacePos()))
+                    && Math.hypot((double) hint.getX() - segment.from().getX(),
+                    (double) hint.getZ() - segment.from().getZ()) > DETAIL_SEGMENT_BLOCKS) {
+                prefixProbeSegment = segment;
+                prefixProbeDistance = DETAIL_SEGMENT_BLOCKS;
+                continue;
+            }
+            if (sameWaterHeight) {
+                BlockPos exact = column.surfacePos();
                 if (!exact.equals(hint)) {
                     segments.set(completedSegments, new Segment(segment.from(), exact, false));
                     if (!finalEndpoint) {
@@ -285,17 +402,62 @@ public final class HierarchicalWaterRoutePlanner {
                 }
                 return true;
             }
-            if (finalEndpoint) {
-                fail(WaterRouteFailureReason.NO_WATER_PATH);
-                return false;
+            LOGGER.info("[WaterPath] 跳过不可用中间引导点 hint={} actual={} from={} direct={} diagnostic={}",
+                    hint, column, segment.from(), segment.direct(),
+                    detailedWorld.sampleDiagnostic(hint.getX(), hint.getZ(), policy));
+            Segment next = segments.get(completedSegments + 1);
+            if (next.direct() && Math.hypot((double) next.to().getX() - next.from().getX(),
+                    (double) next.to().getZ() - next.from().getZ()) > DETAIL_SEGMENT_BLOCKS) {
+                suffixProbeSegment = segment;
+                suffixProbeDistance = DETAIL_SEGMENT_BLOCKS;
+                continue;
             }
-            Segment next = segments.remove(completedSegments + 1);
-            // Do not jump over terrain: the merged segment is still searched at
-            // full precision, then checked by finishSegment before it is appended.
-            segments.set(completedSegments, new Segment(segment.from(), next.to(), false));
-            skippedGuidanceAnchors++;
+            mergeFollowingSegment(segment);
         }
         return false; // RUNNING: bounded preparation continues on the next slice.
+    }
+
+    private void mergeFollowingSegment(Segment segment) {
+        Segment next = segments.remove(completedSegments + 1);
+        // The merged segment is still searched at full precision and finishSegment-verified.
+        segments.set(completedSegments, new Segment(segment.from(), next.to(), false));
+        skippedGuidanceAnchors++;
+    }
+
+    private record RepairCut(BlockPos point, boolean inherited) { }
+
+    /** Prefer an exact integer subsegment: rounding a diagonal can change its certified hull cells. */
+    private RepairCut repairCut(BlockPos anchor, BlockPos other, double distance, int height) {
+        long dx = (long) other.getX() - anchor.getX(), dz = (long) other.getZ() - anchor.getZ();
+        long divisor = gcd(Math.abs(dx), Math.abs(dz));
+        if (divisor == 0) return null;
+        long ux = dx / divisor, uz = dz / divisor;
+        long hops = Math.min(divisor - 1, (long) Math.floor(distance / Math.hypot(ux, uz)));
+        if (hops > 0) return new RepairCut(new BlockPos((int) (anchor.getX() + ux * hops), height,
+                (int) (anchor.getZ() + uz * hops)), true);
+        if (directCertifier == null) return null;
+        double fraction = Math.min(1.0, distance / Math.hypot(dx, dz));
+        BlockPos cut = new BlockPos((int) Math.round(anchor.getX() + dx * fraction), height,
+                (int) Math.round(anchor.getZ() + dz * fraction));
+        return cut.getX() == anchor.getX() && cut.getZ() == anchor.getZ() ? null : new RepairCut(cut, false);
+    }
+
+    private static long gcd(long a, long b) {
+        while (b != 0) { long remainder = a % b; a = b; b = remainder; }
+        return a;
+    }
+
+    /** Unknown native mask data suspends a changed edge, and never certifies it as open water. */
+    private Boolean certifyRepairCut(BlockPos a, BlockPos b, boolean inherited) {
+        if (inherited) return true;
+        final boolean certified;
+        try { certified = directCertifier != null && directCertifier.test(a, b); }
+        catch (TerrainNotReadyException waiting) { awaitDetailedTerrain(); return null; }
+        WaterRouteFailureReason expired = stageBudget.advance(false);
+        if (Math.max(0, clock.getAsLong() - taskStarted) >= MAX_TASK_MILLIS * 1_000_000L)
+            expired = WaterRouteFailureReason.TIMEOUT;
+        if (expired != WaterRouteFailureReason.NONE) { fail(expired); return null; }
+        return certified;
     }
 
     private WaterRouteFailureReason expandedNode(boolean forward, BlockPos point) {
@@ -421,5 +583,8 @@ public final class HierarchicalWaterRoutePlanner {
         }
         @Override public boolean canLoadMoreChunks(int requested) { return false; }
         @Override public int consumedChunkLoads() { return 0; }
+        @Override public String sampleDiagnostic(int x, int z, WaterRoutePolicy policy) {
+            return delegate.sampleDiagnostic(x, z, policy);
+        }
     }
 }

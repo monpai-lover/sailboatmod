@@ -374,7 +374,9 @@ public final class WaterAutoRouteService {
     private record ResolvedNbtPorts(BlockPos source, BlockPos target) { }
     private record ReadOnlyNbtTerrain(com.monpai.sailboatmod.route.terrain.TerrainPredictor predictor,
                                       PortTerrainProbe probe, int seaY) { }
-    private static final long READ_ONLY_NBT_TIMEOUT_NANOS = java.util.concurrent.TimeUnit.SECONDS.toNanos(120);
+    // Debug jobs share the production task ceiling; HTTP transport no longer owns the calculation lifetime.
+    private static final long READ_ONLY_NBT_TIMEOUT_NANOS = java.util.concurrent.TimeUnit.MILLISECONDS.toNanos(
+            HierarchicalWaterRoutePlanner.MAX_TASK_MILLIS);
 
     /** Worker-thread debug entry. Port validation and the solver are shared with OPTIMAL production requests. */
     public static ReadOnlyNbtPlan planReadOnlyNbt(ServerLevel level, DockBerthResolver.DockZone source,
@@ -731,8 +733,11 @@ public final class WaterAutoRouteService {
             @Nullable FarRouteTerrain far, @Nullable com.monpai.sailboatmod.route.terrain.TerrainPredictor predictor,
             BlockPos source, BlockPos target, int seaY) {
         if (far == null || predictor == null) return predictor;
+        // Tellus seaLevel is the inclusive top water block, while this predictor
+        // accepts boat Y. Keep mask-only columns on the same plane as the validated ports.
+        int boatY = source == null ? seaY : source.getY();
         return new com.monpai.sailboatmod.route.terrain.SurfaceSamplerPredictor(far.landMask(), predictor, source, target,
-                com.monpai.sailboatmod.route.terrain.SurfaceSamplerPredictor.DEFAULT_NEAR_BLOCKS, seaY);
+                com.monpai.sailboatmod.route.terrain.SurfaceSamplerPredictor.DEFAULT_NEAR_BLOCKS, boatY);
     }
 
     /** 同步的陆地遮罩世界(全局网格搜索在路线 worker 线程上运行;遮罩瓦片由 Tellus 缓存,取不到当陆)。 */
@@ -789,13 +794,15 @@ public final class WaterAutoRouteService {
                 // Tellus:全局水域网格(陆地遮罩 + 内置海路概览启发)直接给出导向与开阔直航段,取代逐点 LOD 粗寻。
                 bar.update(4, "全局水域走向");
                 long guidanceStart = System.nanoTime();
+                WaterRouteWorld nativeMask = landMaskWorld(far.landMask(), source.getY());
                 GlobalWaterGridPlanner.Guidance guidance = GlobalWaterGridPlanner.plan(
-                        landMaskWorld(far.landMask(), source.getY()), far.seaDistances(), source, target, source.getY());
+                        nativeMask, far.seaDistances(), source, target, source.getY());
                 LOGGER.info("[WaterPath] 远航全局导向 {} cell={} 扩展={} 航段={} 耗时={}ms", guidance.successful() ? "成功" : guidance.failure(),
                         guidance.cellSize(), guidance.expandedNodes(), guidance.legs().size(), (System.nanoTime() - guidanceStart) / 1_000_000L);
                 if (!guidance.successful()) return WaterRouteResult.failure(guidance.failure());
                 planner = HierarchicalWaterRoutePlanner.withGuidance(detailed, source, target,
-                        WaterRoutePolicy.nbtRefine(), raw -> finishDetailedSegment(map, raw, seaY, boatHalfWidth), guidance.legs());
+                        WaterRoutePolicy.nbtRefine(), raw -> finishDetailedSegment(map, raw, seaY, boatHalfWidth), guidance.legs(),
+                        GlobalWaterGridPlanner.directRecertifier(nativeMask, source.getY()));
             } else {
                 planner = new HierarchicalWaterRoutePlanner(coarse, detailed, source, target,
                         WaterRoutePolicy.nbtRefine(), raw -> finishDetailedSegment(map, raw, seaY, boatHalfWidth));

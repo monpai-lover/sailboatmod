@@ -86,6 +86,15 @@ public final class GlobalWaterGridPlanner {
         return cell;
     }
 
+    /** Re-certify only changed direct geometry, using the native mask rather than precise chunk columns. */
+    static java.util.function.BiPredicate<BlockPos, BlockPos> directRecertifier(WaterRouteWorld nativeMask, int seaY) {
+        GlobalWaterGridPlanner planner = new GlobalWaterGridPlanner(nativeMask, null, seaY);
+        return (a, b) -> {
+            try { return a.getY() == b.getY() && planner.fineClear(a, b, DIRECT_CLEARANCE); }
+            catch (MissingTerrain unavailable) { throw new HierarchicalWaterRoutePlanner.TerrainNotReadyException(); }
+        };
+    }
+
     /** 全局导向 + 航段分级。不通时格边长逐级减半直到 {@link #MIN_CELL}。 */
     public static Guidance plan(WaterRouteWorld world, BlockPos start, BlockPos goal, int seaY) {
         return plan(world, null, start, goal, seaY);

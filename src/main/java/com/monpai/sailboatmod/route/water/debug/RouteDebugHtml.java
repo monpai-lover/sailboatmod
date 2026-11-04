@@ -19,6 +19,7 @@ final class RouteDebugHtml {
               <option value="noise">NOISE (纯噪声)</option>
             </select>
             <button id="generate" onclick="go()" disabled>Generate</button>
+            <button id="cancel" onclick="cancelJob()" disabled>Cancel</button>
             <span id="msg"></span></div>
             <p id="modeHelp">正在识别世界和加载码头……</p>
             <p>TELLUS / NBT 显示当前生产算法的最终结果，不保存航线。底图只作定位示意，不代表真实方块或船宽校验；青点为起点，紫点为终点。</p>
@@ -28,14 +29,33 @@ final class RouteDebugHtml {
             const STAGES_NBT=[['verified','生产求解最终结果（概览底图仅定位示意）']];
             const STAGES_SEG=[['berth','Berth resolve'],['coarse','三段编排原始线 (HYBRID/NOISE 中段产物)'],
               ['smooth','Smooth (平滑)'],['verified','NBT verify (校验删点,红点=NBT判陆)'],['overview','Overview (原始线 vs 校验后)']];
-            let ready=false,busy=false;
+            let ready=false,busy=false,activeJob=null,cancelled=false;
             const generate=document.getElementById('generate');
-            async function readJson(url){
-              const r=await fetch(url);
-              let data;
-              try{data=await r.json();}catch(e){throw new Error('HTTP '+r.status+'：服务返回了无效数据，请检查服务器日志');}
-              if(!r.ok)throw new Error(data.message||data.reason||data.error||('HTTP '+r.status));
+            const cancel=document.getElementById('cancel');
+            async function readJson(url,method='GET'){
+              const controller=new AbortController();
+              const timeout=setTimeout(()=>controller.abort(),15000);
+              let r,data;
+              try{
+                try{r=await fetch(url,{method,signal:controller.signal});}
+                catch(e){e.retryable=true;throw e;}
+                try{data=await r.json();}catch(e){const invalid=new Error('HTTP '+r.status+'：服务返回了无效数据，请检查服务器日志');invalid.retryable=r.status>=500;throw invalid;}
+              }finally{clearTimeout(timeout);}
+              if(!r.ok){const e=new Error(data.message||data.reason||data.error||('HTTP '+r.status));e.retryable=r.status>=500;throw e;}
               return data;
+            }
+            const pause=()=>new Promise(resolve=>setTimeout(resolve,1000));
+            async function cancelJob(){
+              if(!activeJob)return;
+              cancel.disabled=true;
+              try{
+                const job=await readJson('/api/route/jobs/'+encodeURIComponent(activeJob)+'/cancel','POST');
+                cancelled=job.status==='CANCELLED';
+                document.getElementById('msg').textContent=' '+job.status+(job.message?'：'+job.message:'');
+              }catch(e){
+                document.getElementById('msg').textContent='取消失败：'+e.message+'；任务仍可查询';
+                cancel.disabled=false;
+              }
             }
             async function load(){
               generate.disabled=true;
@@ -61,6 +81,7 @@ final class RouteDebugHtml {
             async function go(){
               if(!ready||busy)return;
               busy=true;
+              cancelled=false;
               generate.disabled=true;
               const a=document.getElementById('a').value,b=document.getElementById('b').value;
               const mode=document.getElementById('mode').value;
@@ -68,8 +89,28 @@ final class RouteDebugHtml {
               document.getElementById('imgs').innerHTML='';
               document.getElementById('log').textContent='';
               try{
-                const j=await readJson('/api/route?a='+a+'&b='+b+'&mode='+mode);
+                let job=await readJson('/api/route/start?a='+a+'&b='+b+'&mode='+mode,'POST');
+                activeJob=job.jobId;
+                if(!activeJob)throw new Error('服务未返回任务编号');
+                cancel.disabled=false;
+                let reconnecting=false;
+                while(job.status==='QUEUED'||job.status==='RUNNING'){
+                  if(!reconnecting)document.getElementById('msg').textContent=' '+job.status+' ('+mode+', '+Math.floor((job.elapsedMillis||0)/1000)+'s)，后台处理中，可取消';
+                  await pause();
+                  if(cancelled)throw new Error('CANCELLED：任务已取消');
+                  try{
+                    job=await readJson('/api/route/jobs/'+encodeURIComponent(activeJob));
+                    reconnecting=false;
+                  }catch(e){
+                    if(!e.retryable)throw e;
+                    reconnecting=true;
+                    document.getElementById('msg').textContent='连接暂时中断：'+e.message+'；正在重连原任务，可取消';
+                  }
+                }
+                if(cancelled)throw new Error('CANCELLED：任务已取消');
+                const j=job.result||{};
                 document.getElementById('log').textContent=j.log||'';
+                if(job.status!=='SUCCEEDED')throw new Error(job.message||job.reason||job.status||'Route failed');
                 if(j.status==='FAILED')throw new Error(j.message||j.reason||'Route failed');
                 const stages=(j.pipeline==='production-nbt'||j.mode==='tellus'||j.mode==='nbt'||!j.mode)?STAGES_NBT:STAGES_SEG;
                 const box=document.getElementById('imgs');box.innerHTML='';
@@ -80,7 +121,7 @@ final class RouteDebugHtml {
                   dv.appendChild(title);dv.appendChild(picture);box.appendChild(dv);}
                 document.getElementById('msg').textContent=' done (mode='+(j.mode||mode)+')';
               }catch(e){document.getElementById('msg').textContent=' failed: '+e.message;}
-              finally{busy=false;generate.disabled=!ready;}
+              finally{busy=false;activeJob=null;cancel.disabled=true;generate.disabled=!ready;}
             }
             load();
             </script></body></html>

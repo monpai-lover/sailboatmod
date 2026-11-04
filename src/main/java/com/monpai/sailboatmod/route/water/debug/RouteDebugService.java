@@ -427,7 +427,7 @@ public final class RouteDebugService {
             json.append('"').append(key).append("\":\"data:image/png;base64,").append(b64).append('"');
             return false;
         } catch (java.io.IOException e) {
-            return first;
+            throw new java.io.UncheckedIOException("Route debug PNG encoding failed", e);
         }
     }
 
