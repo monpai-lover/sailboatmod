@@ -98,6 +98,18 @@ class RouteSplicerTest {
         assertEquals(List.of(route.get(3), route.get(2)), spliced.patch().reversed().before());
     }
 
+    @Test
+    void rejectsDetourThatRetainsTheReportedBlockedEdge() {
+        BlockPos start = new BlockPos(37282, 65, -55395);
+        BlockPos end = new BlockPos(37288, 65, -55400);
+        BlockPos after = new BlockPos(37284, 65, -55397);
+        List<Vec3> route = List.of(Vec3.atBottomCenterOf(start), Vec3.atBottomCenterOf(end));
+        RouteLookahead.Obstacle obstacle = new RouteLookahead.Obstacle(0, start, 0, after);
+
+        assertTrue(RouteSplicer.splice(route, obstacle, List.of(start, end, after), 1, 512).isEmpty(),
+                "P,G,Q must not become P,G,Q,G and leave the reported P,G edge unchanged");
+    }
+
     /** waypoints (i*10, 0) for i in 0..n-1. */
     private static List<Vec3> route(int n) {
         List<Vec3> route = new ArrayList<>();

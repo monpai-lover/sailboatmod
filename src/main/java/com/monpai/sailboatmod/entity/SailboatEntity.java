@@ -2365,7 +2365,7 @@ public class SailboatEntity extends Boat implements GeoEntity, MenuProvider, Tra
             finishAutopilotAndUnloadAtDestination();
             return AutopilotCommand.inactive();
         }
-        if (rerouteRequests.isInFlight()) {
+        if (rerouteRequests.blocksMotion()) {
             setNavigationPhase(com.monpai.sailboatmod.route.NavigationPhase.RECOVERING);
             autopilotSafeSpeedCap = 0;
             autopilotNoProgressTicks = 0;
@@ -2391,6 +2391,7 @@ public class SailboatEntity extends Boat implements GeoEntity, MenuProvider, Tra
         autopilotTargetIndex = Mth.clamp(autopilotTargetIndex, 0, autopilotRoute.size() - 1);
         if (lookaheadGuard != null && lookaheadGuard.shouldHold()) {
             setNavigationPhase(com.monpai.sailboatmod.route.NavigationPhase.WAITING_TERRAIN);
+            autopilotSafeSpeedCap = 0;
             autopilotNoProgressTicks = 0; // 主动停船等前方绕行结果,不算卡住(不触发脱困)
             return new AutopilotCommand(true, false, 0.0F, 0.0F, EngineGear.STOP);
         }
@@ -4243,7 +4244,7 @@ public class SailboatEntity extends Boat implements GeoEntity, MenuProvider, Tra
 
         @Override
         public boolean claimRerouteSlot() {
-            AutopilotRerouteRequests.Request claimed = rerouteRequests.claim();
+            AutopilotRerouteRequests.Request claimed = rerouteRequests.claimLookahead();
             if (claimed == null) {
                 return false;
             }

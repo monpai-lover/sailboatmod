@@ -31,7 +31,7 @@ public final class RouteSplicer {
         int from = obstacle.fromSegment();
         int to = obstacle.toSegment() + 1;
         if (detour == null || detour.size() < 2 || isStale(obstacle, targetIndex) || from < 0 || to >= route.size()
-                || from >= to) {
+                || from >= to || !detour.getFirst().equals(obstacle.before()) || !detour.getLast().equals(obstacle.after())) {
             return Optional.empty();
         }
         Vec3 start = route.get(from);
@@ -55,12 +55,19 @@ public final class RouteSplicer {
         after.add(start);
         after.addAll(inserted);
         after.add(end);
+        // A repair that still contains the reported blocked edge cannot make progress. In
+        // particular P,G,Q must not become P,G,Q,G and grow the same route on every scan.
+        for (int i = 1; i < after.size(); i++) {
+            if (sameCell(BlockPos.containing(after.get(i - 1)), route.get(from))
+                    && sameCell(BlockPos.containing(after.get(i)), route.get(from + 1))) return Optional.empty();
+        }
+        if (spliced.equals(route)) return Optional.empty();
         RoutePatch patch = new RoutePatch(new ArrayList<>(route.subList(from, to + 1)), after);
         int newTarget = targetIndex <= from ? targetIndex : from + 1;
         return Optional.of(new Spliced(List.copyOf(spliced), newTarget, patch));
     }
 
     private static boolean sameCell(BlockPos p, Vec3 v) {
-        return p.getX() == Mth.floor(v.x) && p.getZ() == Mth.floor(v.z);
+        return p.getX() == Mth.floor(v.x) && p.getY() == Mth.floor(v.y) && p.getZ() == Mth.floor(v.z);
     }
 }

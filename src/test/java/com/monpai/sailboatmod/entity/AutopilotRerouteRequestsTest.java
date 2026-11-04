@@ -9,6 +9,34 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class AutopilotRerouteRequestsTest {
     @Test
+    void forwardLookaheadSharesTheSlotWithoutStoppingDistantNavigation() throws Exception {
+        AutopilotRerouteRequests requests = new AutopilotRerouteRequests();
+        assertFalse(requests.blocksMotion());
+        AutopilotRerouteRequests.Request lookahead = requests.claimLookahead();
+        assertNotNull(lookahead);
+        assertTrue(requests.isInFlight(), "background lookahead still excludes concurrent rescue work");
+        assertFalse(requests.blocksMotion(), "only the guard's near-obstacle hold should stop forward lookahead");
+        assertNull(requests.claim());
+        assertTrue(requests.complete(lookahead));
+        assertFalse(requests.blocksMotion());
+    }
+
+    @Test
+    void localRescueBlocksMotionAndLateLookaheadCannotReleaseIt() throws Exception {
+        AutopilotRerouteRequests requests = new AutopilotRerouteRequests();
+        AutopilotRerouteRequests.Request lookahead = requests.claimLookahead();
+        requests.invalidate();
+        assertTrue(lookahead.cancelled());
+        AutopilotRerouteRequests.Request rescue = requests.claim();
+        assertTrue(requests.blocksMotion());
+        assertNull(requests.claimLookahead());
+        assertFalse(requests.complete(lookahead));
+        assertTrue(requests.blocksMotion(), "an old forward repair must not release a newer rescue hold");
+        assertTrue(requests.complete(rescue));
+        assertFalse(requests.blocksMotion());
+    }
+
+    @Test
     void onlyOneRerouteCanOwnTheSlot() {
         AutopilotRerouteRequests requests = new AutopilotRerouteRequests();
 

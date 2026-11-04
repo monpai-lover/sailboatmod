@@ -24,8 +24,9 @@ final class LookaheadMaps {
 
     static RealBlockWaterMap wall(int wallEndZ) {
         RealBlockWaterMap map = new RealBlockWaterMap(null, 63);
-        for (int cx = 0; cx < 16; cx++) {
-            for (int cz = 0; cz < 4; cz++) {
+        int border = wallEndZ >= 63 ? 2 : 0;
+        for (int cx = -border; cx < 16 + border; cx++) {
+            for (int cz = -border; cz < 4 + border; cz++) {
                 map.seedChunk(cx, cz, columns(cx, cz, wallEndZ));
             }
         }
@@ -39,7 +40,10 @@ final class LookaheadMaps {
             for (int lx = 0; lx < 16; lx++) {
                 int x = (cx << 4) + lx;
                 int z = (cz << 4) + lz;
-                water[lz * 16 + lx] = !(x == 100 && z <= wallEndZ);
+                // The sealed-wall fixture is surrounded by known dry cells. A failed search
+                // proves no route instead of waiting on unseeded terrain outside the map.
+                boolean boundary = wallEndZ >= 63 && (x <= 0 || x >= 255 || z <= 0 || z >= 63);
+                water[lz * 16 + lx] = !boundary && !(x == 100 && z <= wallEndZ);
                 surface[lz * 16 + lx] = 62;
             }
         }
