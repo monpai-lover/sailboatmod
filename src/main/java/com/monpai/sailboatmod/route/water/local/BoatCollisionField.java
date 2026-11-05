@@ -36,6 +36,11 @@ public final class BoatCollisionField {
     public List<AABB> entities() { return entities; }
     public static long key(int x,int z) { return ((long)x << 32) ^ (z & 0xffffffffL); }
 
+    /** Physical hull collision first; then optional centred coastal reserve. */
+    public Check navfix3$segment(Vec3 a,Vec3 b,double minimumHalfWidth) {
+        return CoastalClearance.check(hull,columns,entities,a,b,minimumHalfWidth);
+    }
+
     public Check segment(Vec3 a, Vec3 b) {
         if (!finite(a) || !finite(b) || Math.abs(a.y-b.y)>1e-6) return Check.BLOCKED;
         boolean unknown=false;
