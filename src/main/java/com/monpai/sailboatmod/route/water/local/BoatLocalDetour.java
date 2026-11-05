@@ -12,24 +12,10 @@ public final class BoatLocalDetour {
     private record Target(Vec3 point,int tail) { }
     private record Node(int x,int z,double cost,double estimate,Node parent) { }
     private BoatLocalDetour() { }
+    /** Use the same real hull and coastal reserve in search, smoothing and execution. */
     public static WaterRouteResult<WaterRescuePlanner.Splice> plan(BoatCollisionField field,Vec3 position,
                                                                    List<Vec3> route,int index) {
-        if(route==null||route.size()<2||index<0||index>=route.size())return WaterRouteResult.failure(WaterRouteFailureReason.NO_WATER_PATH);
-        Vec3 start=new Vec3(position.x,route.get(index).y,position.z);
-        boolean[] unknown={false};int[] budget={10_000};
-        for(Target target:targets(start,route,index)) {
-            WaterRouteCancellation.check();
-            if(budget[0]<=0)break;
-            if(target.tail<route.size()) {
-                Vec3 next=route.get(target.tail);double distance=WaterPolylineFollower.horizontal(target.point,next);
-                Vec3 check=target.point.lerp(next,distance<1e-8?1:Math.min(1,6/distance));
-                BoatCollisionField.Check c=field.segment(target.point,check);
-                if(c!=BoatCollisionField.Check.CLEAR){unknown[0]|=c==BoatCollisionField.Check.UNKNOWN;continue;}
-            }
-            List<Vec3> path=search(field,start,target.point,budget,unknown);
-            if(!path.isEmpty())return WaterRouteResult.success(new WaterRescuePlanner.Splice(path,target.tail));
-        }
-        return WaterRouteResult.failure(unknown[0]?WaterRouteFailureReason.TERRAIN_NOT_READY:WaterRouteFailureReason.NO_WATER_PATH);
+        return BoatSafeDetourPlanner.plan(field,position,route,index);
     }
     private static List<Target> targets(Vec3 start,List<Vec3> route,int index) {
         List<Target> out=new ArrayList<>();double walked=0;
