@@ -39,8 +39,11 @@ final class KnownWaterEntryPlanner {
                     List<Vec3> path=new ArrayList<>();path.add(new Vec3(boat.x,start.getY(),boat.z));
                     for(BlockPos p:connector)add(path,Vec3.atBottomCenterOf(p));
                     add(path,entry.point());for(Vec3 p:entry.suffix().points())add(path,p);
-                    if(path.size()<2||path.size()>65_536)continue;
-                    return WaterRouteResult.success(List.copyOf(path));
+                    // R-menu routes must clear the bank along the complete private voyage,
+                    // not just along the first connector. The saved public lane is unchanged.
+                    List<Vec3> safePath=ShoreRouteRefiner.refine(path,map,terrain::awaitProgress,deadline);
+                    if(safePath.size()<2||safePath.size()>65_536)continue;
+                    return WaterRouteResult.success(safePath);
                 } catch(StrictWaterDetour.Failure fail) {
                     if(fail.reason()!=WaterRouteFailureReason.TIMEOUT&&fail.reason()!=WaterRouteFailureReason.NODE_BUDGET_EXCEEDED)throw fail;
                 }
