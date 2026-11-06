@@ -256,6 +256,7 @@ public final class MarketWebServer {
         createContext("/api/markets", this::handleMarkets);
         createContext("/api/listings", this::handleAggregatedListings);
         createContext("/api/map/snapshot", this::handleMapSnapshot);
+        createContext("/api/map/changes", this::handleMapChanges);
         createContext("/api/map/markets", this::handleMapMarkets);
         createContext("/api/map/airports", this::handleMapAirports);
         createContext("/api/map/territories", this::handleMapTerritories);
@@ -767,22 +768,8 @@ public final class MarketWebServer {
             writeJson(exchange, 404, error("not_found", "Tile not found"));
             return;
         }
-        callOnServerThread(() -> {
-            service.requestMapTile(minecraftServer, lod, tileX, tileZ);
-            return Boolean.TRUE;
-        });
-        // PNG file IO is intentionally performed by this HTTP worker, not the Minecraft server thread.
-        byte[] bytes = service.readMapTile(minecraftServer, lod, tileX, tileZ);
-        if (bytes == null || bytes.length == 0) {
-            writeJson(exchange, 404, error("not_found", "Tile not found"));
-            return;
-        }
-        Headers headers = exchange.getResponseHeaders();
-        // 地形瓦片是"内容寻址"的不可变资源:URL 带 ?v=tileRefreshKey(),内容变则 ?v 变成新 URL。
-        // 长缓存 + immutable 让浏览器对同一 ?v 永不重校验、直接磁盘命中(拖动/缩放复用零网络);
-        // 内容更新走新 URL 自然取新图。修复"地图慢 + 移走回来重下"的根因。
-        headers.set("Cache-Control", "public, max-age=86400, immutable");
-        writeBytes(exchange, 200, "image/png", bytes);
+        serveCachedTerrain(exchange, () -> service.readMapTile(minecraftServer, lod, tileX, tileZ),
+                () -> service.requestMapTile(minecraftServer, lod, tileX, tileZ));
     }
 
     private void handleSquareMapTile(HttpExchange exchange) throws IOException {
@@ -802,19 +789,45 @@ public final class MarketWebServer {
             writeJson(exchange, 404, error("not_found", "Tile not found"));
             return;
         }
-        // This only registers a bounded cursor in a synchronized in-memory queue; it does not touch world state.
-        // Avoid submitting a no-op task and joining the server thread for every browser tile request.
-        service.requestSquareMapTile(minecraftServer, dimension, zoom, tile.x(), tile.z());
-        // Cache reads can hit disk; keep them off the game thread.
-        byte[] bytes = service.readSquareMapTile(minecraftServer, dimension, zoom, tile.x(), tile.z());
+        serveCachedTerrain(exchange, () -> service.readSquareMapTile(minecraftServer, dimension, zoom, tile.x(), tile.z()),
+                () -> service.requestSquareMapTile(minecraftServer, dimension, zoom, tile.x(), tile.z()));
+    }
+
+    /** Cache hits never schedule world work. Miss discovery is bounded and deduplicated by the renderer. */
+    static void serveCachedTerrain(HttpExchange exchange, Supplier<byte[]> read, Runnable discover) throws IOException {
+        byte[] bytes = read.get();
         if (bytes == null || bytes.length == 0) {
+            discover.run();
+            exchange.getResponseHeaders().set("Cache-Control", "no-store");
             writeJson(exchange, 404, error("not_found", "Tile not found"));
             return;
         }
         Headers headers = exchange.getResponseHeaders();
-        // 见 handleMapTile:瓦片 URL 带 ?v 版本号,长缓存 + immutable 安全且能更新。
-        headers.set("Cache-Control", "public, max-age=86400, immutable");
+        String etag = MarketWebStaticResponder.weakEtag(bytes);
+        headers.set("ETag", etag);
+        // Per-tile revision URLs are invalidation hints; only the actual bytes are a cache validator.
+        // Old URLs must revalidate after history overflow or a server restart.
+        headers.set("Cache-Control", "public, no-cache");
+        if (MarketWebStaticResponder.matchesIfNoneMatch(exchange.getRequestHeaders().getFirst("If-None-Match"), etag)) {
+            applySecurityHeaders(headers);
+            exchange.sendResponseHeaders(304, -1);
+            exchange.close();
+            return;
+        }
         writeBytes(exchange, 200, "image/png", bytes);
+    }
+
+    private void handleMapChanges(HttpExchange exchange) throws IOException {
+        if (!"GET".equalsIgnoreCase(exchange.getRequestMethod())) {
+            writeJson(exchange, 405, error("method_not_allowed", "Method not allowed"));
+            return;
+        }
+        long since;
+        try { since = Long.parseLong(queryParam(exchange, "since")); }
+        catch (NumberFormatException exception) { since = -1L; }
+        exchange.getResponseHeaders().set("Cache-Control", "no-store");
+        writeJson(exchange, 200, service.mapTileChanges(minecraftServer, queryParam(exchange, "dimension"),
+                since, queryParam(exchange, "session")));
     }
 
     /** {@code GET /api/map/world}:是否 Tellus 世界、世界比例、预测层最远层级。 */
@@ -845,13 +858,15 @@ public final class MarketWebServer {
             writeJson(exchange, 404, error("not_found", "Tile not found"));
             return;
         }
-        byte[] bytes = callOnServerThread(() -> service.tellusTile(minecraftServer, zoom, tile.x(), tile.z()));
-        if (bytes == null || bytes.length == 0) {
-            writeJson(exchange, 404, error("not_found", "Tile not found"));
-            return;
-        }
-        exchange.getResponseHeaders().set("Cache-Control", "public, max-age=86400, immutable");
-        writeBytes(exchange, 200, "image/png", bytes);
+        serveCachedTerrain(exchange, () -> service.readTellusTile(minecraftServer, zoom, tile.x(), tile.z()),
+                () -> {
+                    if (com.monpai.sailboatmod.market.web.map.MarketWebMapSettings.updatesEnabled()) {
+                        callOnServerThread(() -> {
+                            service.requestTellusTile(minecraftServer, zoom, tile.x(), tile.z());
+                            return null;
+                        });
+                    }
+                });
     }
 
     private void handleMapRenderStatus(HttpExchange exchange) throws IOException {

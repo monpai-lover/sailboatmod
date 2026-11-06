@@ -36,7 +36,7 @@ class SailboatHelmAndRescueTest {
         assertFalse(s.contains("isAutopilotPaused() && !(captain instanceof Player)"));
         assertTrue(s.contains("BoatLocalDetour.plan("));
         assertTrue(s.contains("request::cancelled"));assertTrue(s.contains("!original.equals(autopilotRoute)"));
-        assertTrue(s.contains("if (rerouteRequests.isInFlight()) {\n            setNavigationPhase(com.monpai.sailboatmod.route.NavigationPhase.RECOVERING);\n            autopilotSafeSpeedCap = 0;"));
+        assertTrue(s.contains("if (rerouteRequests.blocksMotion()) {\n            setNavigationPhase(com.monpai.sailboatmod.route.NavigationPhase.RECOVERING);\n            autopilotSafeSpeedCap = 0;"));
     }
     @Test void pausedBoatsCannotStartLookaheadOrLocalRescueAgain()throws Exception {
         String s=Files.readString(Path.of("src/main/java/com/monpai/sailboatmod/entity/SailboatEntity.java"));

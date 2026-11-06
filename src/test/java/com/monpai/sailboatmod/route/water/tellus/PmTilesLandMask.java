@@ -21,7 +21,7 @@ import java.util.zip.GZIPInputStream;
  * Mirrors {@code TellusLandMaskSource}: raster PNG tiles, sample &gt; 0 = land, missing tile = water, zoom chosen from the
  * world scale, block coordinates projected with Tellus' Web-Mercator {@code EarthProjection}.
  */
-public final class PmTilesLandMask {
+public final class PmTilesLandMask implements AutoCloseable {
     static final double METERS_PER_DEGREE = 111319.49166666667D;
     static final double EARTH_RADIUS = 6378137.050041738D;
     private static final double EQUATOR = 4.0075017E7D;
@@ -59,6 +59,18 @@ public final class PmTilesLandMask {
 
     public int zoom() { return zoom; }
     public int minZoom() { return minZoom; }
+
+    @Override
+    public synchronized void close() throws IOException {
+        try {
+            file.close();
+        } finally {
+            tiles.clear();
+            leaves.clear();
+            touched.clear();
+            touchedWithData.clear();
+        }
+    }
 
     /** Simulated synchronous download per tile that carries data (Tellus fetches each tile with one HTTP range request). */
     private volatile long tileLatencyMillis;

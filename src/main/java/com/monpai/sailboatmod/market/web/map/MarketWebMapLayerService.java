@@ -23,21 +23,41 @@ import java.util.List;
 public final class MarketWebMapLayerService {
     private static final int FALLBACK_FILL = 0x5B6573;
     private static final int FALLBACK_BORDER = 0xD7DEE8;
+    private final MarketWebMapPublicDataCache<PublicData> publicDataCache =
+            new MarketWebMapPublicDataCache<>(2_000_000_000L, System::nanoTime);
+
+    private record PublicData(List<MarketWebMapDtos.MarketMarker> markets,
+                              List<MarketWebMapDtos.Territory> territories) {
+        private PublicData {
+            markets = List.copyOf(markets);
+            territories = List.copyOf(territories);
+        }
+    }
+
+    private PublicData publicData(MinecraftServer server) {
+        if (server == null) return new PublicData(List.of(), List.of());
+        return publicDataCache.get(server, () -> new PublicData(loadMarkets(server), loadTerritories(server)));
+    }
 
     public MarketWebMapDtos.Snapshot snapshot(MinecraftServer server, MarketPlayerIdentity identity, String focusedMarketId) {
-        List<MarketWebMapDtos.MarketMarker> markers = markets(server);
+        PublicData data = publicData(server);
+        List<MarketWebMapDtos.MarketMarker> markers = data.markets();
         return new MarketWebMapDtos.Snapshot(
                 MarketWebMapConstants.OVERWORLD,
                 MarketWebMapConstants.UNKNOWN_COLOR,
                 MarketWebMapConstants.TILE_SIZE,
                 MarketWebMapConstants.LOD_BLOCKS_PER_PIXEL,
                 defaultFocus(server, identity, focusedMarketId, markers),
-                territories(server).size(),
+                data.territories().size(),
                 markers.size()
         );
     }
 
     public List<MarketWebMapDtos.MarketMarker> markets(MinecraftServer server) {
+        return publicData(server).markets();
+    }
+
+    private List<MarketWebMapDtos.MarketMarker> loadMarkets(MinecraftServer server) {
         if (server == null) {
             return List.of();
         }
@@ -56,6 +76,10 @@ public final class MarketWebMapLayerService {
     }
 
     public List<MarketWebMapDtos.Territory> territories(MinecraftServer server) {
+        return publicData(server).territories();
+    }
+
+    private List<MarketWebMapDtos.Territory> loadTerritories(MinecraftServer server) {
         if (server == null) {
             return List.of();
         }

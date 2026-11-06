@@ -4,12 +4,48 @@ import org.junit.jupiter.api.Test;
 
 import java.util.List;
 import java.util.Set;
+import java.util.concurrent.atomic.AtomicInteger;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class MarketWebMapRenderQueueTest {
+    @Test
+    void productionOverviewCursorStopsAfter256LoadedLookupsWithoutEnqueuingUnloadedTerrain() {
+        MarketWebMapRenderService.TileCursor cursor = new MarketWebMapRenderService.TileCursor(
+                "minecraft:overworld", 512, 0, 0);
+        MarketWebMapRenderQueue queue = new MarketWebMapRenderQueue(4096);
+        AtomicInteger lookups = new AtomicInteger();
+        while (!cursor.done()) {
+            cursor.enqueue(queue, 1L, 128, (x, z) -> { lookups.incrementAndGet(); return false; }, () -> true);
+        }
+        assertEquals(256, lookups.get(), "an overview must never expand all 262144 candidates");
+        assertEquals(0, queue.size(), "browser misses may only discover loaded chunks");
+    }
+
+    @Test
+    void browserCursorRetainsItsPositionWhilePausedAndStopsAt64QueuedChunks() {
+        MarketWebMapRenderService.TileCursor cursor = new MarketWebMapRenderService.TileCursor(
+                "minecraft:overworld", 512, 0, 0);
+        MarketWebMapRenderQueue queue = new MarketWebMapRenderQueue(4096);
+        assertEquals(0, cursor.enqueue(queue, 1L, 128, (x, z) -> true, () -> false));
+        assertFalse(cursor.done());
+        assertEquals(64, cursor.enqueue(queue, 2L, 128, (x, z) -> true, () -> true));
+        assertTrue(cursor.done());
+        assertEquals(64, queue.size());
+    }
+
+    @Test
+    void pausedPendingTasksSurviveElapsedWallClockAndCapacityPressure() {
+        MarketWebMapRenderQueue queue = new MarketWebMapRenderQueue(2);
+        assertTrue(queue.enqueue("minecraft:overworld", 1, 0, 0L));
+        assertTrue(queue.enqueue("minecraft:overworld", 2, 0, 1L));
+        assertFalse(queue.enqueue("minecraft:overworld", 3, 0, 999_999L),
+                "bounded discovery must not evict already accepted paused work");
+        assertEquals(List.of(1, 2), queue.poll(2, 999_999L).stream().map(MarketWebMapRenderQueue.Task::chunkX).toList());
+    }
+
     @Test
     void queueDeduplicatesChunkTasksAndRespectsBudget() {
         MarketWebMapRenderQueue queue = new MarketWebMapRenderQueue(16);

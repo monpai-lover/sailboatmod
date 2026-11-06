@@ -11,7 +11,7 @@ import java.util.List;
 /**
  * 远航全局导向(2026-11,治「台北→阿姆斯特丹」类超远航线算不出):
  * <ol>
- *   <li><b>全局水域网格 A*</b>:格边长 {@code cell}(随距离取 16~128,不通再逐级减半)。原始数组 + 开放寻址哈希,
+ *   <li><b>全局水域网格 A*</b>:格边长 {@code cell}(随距离取 16~128,不通再有界细化到原生 1 格)。原始数组 + 开放寻址哈希,
  *       百万级节点也只需几秒;双向搜索,<b>任一侧开集耗尽 = 该侧水域在此解析度下封闭</b>,立即判不通换更细格,
  *       不再像旧版那样在一侧封闭时让另一侧把整个大洋扩展完、耗尽预算。</li>
  *   <li><b>任意角拉直</b>:沿网格路径做视线(line-of-sight)拉直,得到大洋上的长直航段。</li>
@@ -24,9 +24,13 @@ import java.util.List;
 public final class GlobalWaterGridPlanner {
     private static final Logger LOGGER = LogUtils.getLogger();
     public static final int DETAIL_PIECE_BLOCKS = 2048;
-    public static final int MIN_CELL = 16;
+    public static final int MIN_CELL = 1;
+    private static final int INITIAL_MIN_CELL = 16;
     public static final int MAX_CELL = 128;
     static final int MAX_EXPANSIONS = 1_500_000; // 台北→阿姆斯特丹实测 0.82M;内存约 200MB 以内
+    /** Fine retries share a fixed additional ceiling; no repeated million-node ocean floods. */
+    static final int MAX_FINE_EXPANSIONS = 262_144;
+    private static final int FINE_ATTEMPT_EXPANSIONS = MAX_FINE_EXPANSIONS / 4;
     /** 加权 A*:实测(台北→阿姆斯特丹)2.0 比 1.25 扩展少 35%、拉直后航线反而更短。 */
     private static final double WEIGHT = 2.0D;
     private static final double SQRT2 = Math.sqrt(2.0D);
@@ -77,9 +81,18 @@ public final class GlobalWaterGridPlanner {
 
     public static int initialCell(BlockPos start, BlockPos goal) {
         double distance = Math.hypot((double) goal.getX() - start.getX(), (double) goal.getZ() - start.getZ());
-        int cell = MIN_CELL;
+        int cell = INITIAL_MIN_CELL;
         while (cell < MAX_CELL && distance / cell > 2048) cell *= 2;
         return cell;
+    }
+
+    /** Re-certify only changed direct geometry, using the native mask rather than precise chunk columns. */
+    static java.util.function.BiPredicate<BlockPos, BlockPos> directRecertifier(WaterRouteWorld nativeMask, int seaY) {
+        GlobalWaterGridPlanner planner = new GlobalWaterGridPlanner(nativeMask, null, seaY);
+        return (a, b) -> {
+            try { return a.getY() == b.getY() && planner.fineClear(a, b, DIRECT_CLEARANCE); }
+            catch (MissingTerrain unavailable) { throw new HierarchicalWaterRoutePlanner.TerrainNotReadyException(); }
+        };
     }
 
     /** 全局导向 + 航段分级。不通时格边长逐级减半直到 {@link #MIN_CELL}。 */
@@ -102,19 +115,36 @@ public final class GlobalWaterGridPlanner {
         }
         GlobalWaterGridPlanner planner = new GlobalWaterGridPlanner(world, overview, seaY);
         WaterRouteFailureReason failure = WaterRouteFailureReason.NO_WATER_PATH;
+        int fineExpanded = 0;
         for (int cell = firstCell; cell >= MIN_CELL; cell /= 2) {
             long t0 = System.nanoTime();
             int before = planner.expanded;
-            Grid grid = planner.new Grid(cell, before + MAX_EXPANSIONS);
-            List<BlockPos> centers = grid.search(start, goal);
+            boolean fine = cell < INITIAL_MIN_CELL;
+            int allowance = fine ? Math.min(FINE_ATTEMPT_EXPANSIONS, MAX_FINE_EXPANSIONS - fineExpanded) : MAX_EXPANSIONS;
+            if (allowance <= 0) break;
+            Grid grid = planner.new Grid(cell, before + allowance);
+            List<BlockPos> centers;
+            try {
+                centers = grid.search(start, goal);
+            } catch (MissingTerrain unavailable) {
+                return new Guidance(List.of(), 0, planner.expanded, WaterRouteFailureReason.TERRAIN_NOT_READY);
+            }
+            if (fine) fineExpanded += planner.expanded - before;
             LOGGER.info("[WaterPath] 全局水域网格 cell={} 扩展={} 结果={} 耗时={}ms", cell, planner.expanded - before,
                     centers == null ? grid.failure : "航点" + centers.size(), (System.nanoTime() - t0) / 1_000_000L);
             if (centers != null) {
-                List<Leg> legs = planner.classify(start, goal, centers, cell);
-                return new Guidance(legs, cell, planner.expanded, WaterRouteFailureReason.NONE);
+                try {
+                    List<Leg> legs = planner.classify(start, goal, centers, cell);
+                    return new Guidance(legs, cell, planner.expanded, WaterRouteFailureReason.NONE);
+                } catch (MissingTerrain unavailable) {
+                    return new Guidance(List.of(), 0, planner.expanded, WaterRouteFailureReason.TERRAIN_NOT_READY);
+                }
             }
             failure = grid.failure;
-            if (failure != WaterRouteFailureReason.NO_WATER_PATH) break;
+            // A fine lattice can miss a waterway just like a coarse one. Its own
+            // budget limit must not prevent the remaining, independently capped finer attempts.
+            if (failure != WaterRouteFailureReason.NO_WATER_PATH
+                    && !(fine && failure == WaterRouteFailureReason.NODE_BUDGET_EXCEEDED)) break;
         }
         return new Guidance(List.of(), 0, planner.expanded, failure);
     }
@@ -128,11 +158,14 @@ public final class GlobalWaterGridPlanner {
         int slot = 31 - Integer.numberOfLeadingZeros(r);
         // 网格边/视线的取样点落在同一格点阵上大量重复:每个(解析度, x, z)只问一次地形源(Tellus 每次取样含投影换算与缓存查找)。
         LongIntMap cache = sampleCache[slot];
-        if (cache == null || cache.size() > SAMPLE_CACHE_LIMIT) sampleCache[slot] = cache = new LongIntMap();
+        if (cache == null) sampleCache[slot] = cache = new LongIntMap();
         long key = key(x, z);
         int cached = cache.get(key);
         if (cached >= 0) return cached == 1;
         boolean result = sampleWorld(x, z, slot);
+        // Reset on a miss before put would double an already-full backing table.
+        // Hits retain a full cache; unavailable terrain never flushes useful data.
+        if (cache.size() >= SAMPLE_CACHE_LIMIT) sampleCache[slot] = cache = new LongIntMap();
         cache.put(key, result ? 1 : 0);
         return result;
     }
@@ -144,7 +177,13 @@ public final class GlobalWaterGridPlanner {
             policies[slot] = policy;
         }
         WaterColumn column = world.sample(x, z, policy);
-        return column != null && column.passable();
+        if (column == null) throw new MissingTerrain();
+        return column.passable();
+    }
+
+    /** Unknown data is neither navigable water nor a cached land barrier. */
+    private static final class MissingTerrain extends RuntimeException {
+        MissingTerrain() { super(null, null, false, false); }
     }
 
     private boolean lineClear(int ax, int az, int bx, int bz, int spacing, int lateral, int resolution) {
@@ -231,8 +270,13 @@ public final class GlobalWaterGridPlanner {
     }
 
     private boolean fineClear(BlockPos a, BlockPos b, int clearance) {
+        // Direct legs bypass the detailed solver. Certify the same exact cell
+        // supercover and 2x2 footprint as final route validation, including a
+        // one-block island or a diagonal corner between the old spaced samples.
+        if (!WaterGridTraversal.all(a.getX(), a.getZ(), b.getX(), b.getZ(), (x, z) ->
+                water(x, z, 1) && water(x + 1, z, 1) && water(x, z + 1, 1) && water(x + 1, z + 1, 1))) return false;
         if (!lineClear(a.getX(), a.getZ(), b.getX(), b.getZ(), 2, DIRECT_CLEARANCE, 1)) return false;
-        // 外圈稀疏检查(每 4 格一列、横向每 6 格一点):只为离岸偏好,内圈 ±4 已逐 2 格密查保证船体安全。
+        // Additional coastal clearance is a preference; exact hull safety is certified above.
         return clearance <= DIRECT_CLEARANCE || lineClear(a.getX(), a.getZ(), b.getX(), b.getZ(), 4, clearance, 1, 6);
     }
 
@@ -290,7 +334,7 @@ public final class GlobalWaterGridPlanner {
         Grid(int cell, int expansionLimit) {
             this.cell = cell;
             this.expansionLimit = expansionLimit;
-            this.edgeSpacing = Math.max(2, cell / 4);
+            this.edgeSpacing = Math.max(1, cell / 4);
             this.resolution = Math.max(2, cell / 4);
         }
 
@@ -373,6 +417,7 @@ public final class GlobalWaterGridPlanner {
                     long nk = key(nx, nz);
                     int existing = self.index.get(nk);
                     if (existing >= 0 && self.closed[existing]) continue;
+                    if (d >= 4 && !cellWater(cx, nz) && !cellWater(nx, cz)) continue; // Both expansion and joining obey the corner rule.
                     int across = other.index.get(nk);
                     if (across >= 0 && other.closed[across] && cellWater(nx, nz) && edge(cx, cz, nx, nz)) {
                         // 邻格已被对侧确定:直接拼接(self 链 → 邻格 → 对侧链)。
@@ -384,7 +429,6 @@ public final class GlobalWaterGridPlanner {
                     double ng = self.g[node] + (d < 4 ? 1.0D : SQRT2) + (coastal(nx, nz) ? COAST_PENALTY : 0);
                     if (existing >= 0 && self.g[existing] <= ng) continue;
                     if (!cellWater(nx, nz) || !edge(cx, cz, nx, nz)) continue;
-                    if (d >= 4 && !cellWater(cx, nz) && !cellWater(nx, cz)) continue; // 两侧都是陆:不切角穿过
                     self.push(nk, ng, node, existing);
                 }
             }

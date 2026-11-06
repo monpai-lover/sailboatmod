@@ -173,9 +173,10 @@ public final class MarketWebService {
         return out;
     }
 
-    /** Queue map tile work on the server thread; disk reads must happen on the HTTP worker. */
+    /** Registers only a bounded discovery cursor; safe on an HTTP worker and used only after a cache miss. */
     public void requestMapTile(MinecraftServer server, String lod, int tileX, int tileZ) {
-        if (server != null && "lod_1".equals(lod)) {
+        if (server != null && "lod_1".equals(lod)
+                && com.monpai.sailboatmod.market.web.map.MarketWebMapSettings.updatesEnabled()) {
             MarketWebMapRenderService.global().enqueueTileRequest(server, lod, tileX, tileZ);
         }
     }
@@ -190,9 +191,10 @@ public final class MarketWebService {
                 .orElse(null);
     }
 
-    /** Queue square-tile discovery on the server thread; cached file IO stays on the HTTP worker. */
+    /** Registers miss-only discovery without accessing world state; cached file IO stays on the HTTP worker. */
     public void requestSquareMapTile(MinecraftServer server, String dimension, int zoom, int tileX, int tileZ) {
-        if (server == null || zoom < 0 || zoom > MarketWebMapPyramidWriter.MAX_ZOOM) {
+        if (server == null || zoom < 0 || zoom > MarketWebMapPyramidWriter.MAX_ZOOM
+                || !com.monpai.sailboatmod.market.web.map.MarketWebMapSettings.updatesEnabled()) {
             return;
         }
         String dimensionId = "overworld".equals(dimension) ? MarketWebMapConstants.OVERWORLD : dimension;
@@ -216,27 +218,39 @@ public final class MarketWebService {
     }
 
     public byte[] mapTile(MinecraftServer server, String lod, int tileX, int tileZ) {
-        if (server == null || !"lod_1".equals(lod)) {
-            return null;
-        }
-        MarketWebMapRenderService.global().enqueueTileRequest(server, lod, tileX, tileZ);
-        return MarketWebMapTileCache.forServer(server)
-                .readPng(MarketWebMapConstants.OVERWORLD, tileX, tileZ)
-                .orElse(null);
+        byte[] bytes = readMapTile(server, lod, tileX, tileZ);
+        if (bytes == null) requestMapTile(server, lod, tileX, tileZ);
+        return bytes;
     }
 
     public byte[] squareMapTile(MinecraftServer server, String dimension, int zoom, int tileX, int tileZ) {
-        if (server == null || zoom < 0 || zoom > MarketWebMapPyramidWriter.MAX_ZOOM) {
-            return null;
+        byte[] bytes = readSquareMapTile(server, dimension, zoom, tileX, tileZ);
+        if (bytes == null) requestSquareMapTile(server, dimension, zoom, tileX, tileZ);
+        return bytes;
+    }
+
+    /** Bounded runtime changes only; no Minecraft sampling or server-thread hop. */
+    public JsonObject mapTileChanges(MinecraftServer server, String dimension, long since, String session) {
+        String dimensionId = dimension == null || dimension.isBlank() || "overworld".equals(dimension)
+                ? MarketWebMapConstants.OVERWORLD : dimension;
+        var changes = MarketWebMapTileCache.forServer(server).changeJournal().changes(dimensionId, since, session);
+        JsonObject json = new JsonObject();
+        json.addProperty("session", changes.session());
+        json.addProperty("dimension", dimensionId);
+        json.addProperty("revision", changes.revision());
+        json.addProperty("reset", changes.reset());
+        JsonArray tiles = new JsonArray();
+        for (var tile : changes.tiles()) {
+            JsonObject out = new JsonObject();
+            out.addProperty("kind", tile.kind());
+            out.addProperty("zoom", tile.zoom());
+            out.addProperty("x", tile.x());
+            out.addProperty("z", tile.z());
+            out.addProperty("revision", tile.revision());
+            tiles.add(out);
         }
-        String dimensionId = "overworld".equals(dimension) ? MarketWebMapConstants.OVERWORLD : dimension;
-        if (!MarketWebMapConstants.OVERWORLD.equals(dimensionId)) {
-            return null;
-        }
-        MarketWebMapRenderService.global().enqueueSquareTileRequest(server, dimensionId, zoom, tileX, tileZ);
-        return MarketWebMapTileCache.forServer(server)
-                .readSquareTile(dimensionId, zoom, tileX, tileZ)
-                .orElse(null);
+        json.add("tiles", tiles);
+        return json;
     }
 
     // Tellus 预测层取样器按主世界缓存:同一取样器跨瓦片共用地表方块子网格缓存。
@@ -256,38 +270,51 @@ public final class MarketWebService {
         return json;
     }
 
-    /**
-     * Tellus 预测层瓦片:有快取就回传;没有就排入专用渲染队列并回 null(前端 404 后重试)。主线程只取取样器与快取,
-     * 渲染在队列线程。失败超过一半的瓦片不存档,下次请求会重画。
-     */
+    /** Cache-only HTTP read: no level access, sampler creation or server-thread handoff. */
+    public byte[] readTellusTile(MinecraftServer server, int zoom, int tileX, int tileY) {
+        if (server == null || zoom < 0
+                || zoom > com.monpai.sailboatmod.route.terrain.TellusSurfaceSamplers.MAX_TILE_ZOOM) return null;
+        return com.monpai.sailboatmod.market.web.map.MarketWebTellusTileStore.forServer(server)
+                .read(zoom, tileX, tileY).orElse(null);
+    }
+
+    /** Compatibility entrypoint; sampler discovery must run on the server thread on cache misses only. */
     public byte[] tellusTile(MinecraftServer server, int zoom, int tileX, int tileY) {
+        byte[] cached = readTellusTile(server, zoom, tileX, tileY);
+        if (cached == null) requestTellusTile(server, zoom, tileX, tileY);
+        return cached;
+    }
+
+    public void requestTellusTile(MinecraftServer server, int zoom, int tileX, int tileY) {
+        if (!com.monpai.sailboatmod.market.web.map.MarketWebMapSettings.updatesEnabled()) return;
         net.minecraft.server.level.ServerLevel level = server == null ? null : server.overworld();
         if (zoom < 0 || zoom > com.monpai.sailboatmod.route.terrain.TellusSurfaceSamplers.MAX_TILE_ZOOM
                 || !com.monpai.sailboatmod.route.terrain.TellusWorlds.isTellusLevel(level)) {
-            return null;
+            return;
         }
         double worldScale = com.monpai.sailboatmod.route.terrain.TellusSurfaceSamplers.worldScale(level).orElse(0.0D);
         if (!com.monpai.sailboatmod.market.web.map.MarketWebTellusTileRenderer.overlapsEarth(zoom, tileX, tileY, worldScale)) {
-            return null;
+            return;
         }
         com.monpai.sailboatmod.route.terrain.TerrainSurfaceSampler sampler = tellusSampler(level);
         if (sampler == null) {
-            return null;
+            return;
         }
         com.monpai.sailboatmod.market.web.map.MarketWebTellusTileStore store =
                 com.monpai.sailboatmod.market.web.map.MarketWebTellusTileStore.forServer(server);
-        java.util.Optional<byte[]> cached = store.read(zoom, tileX, tileY);
-        if (cached.isPresent()) {
-            return cached.get();
-        }
         com.monpai.sailboatmod.market.web.map.MarketWebTellusTileQueue.global().request(zoom, tileX, tileY, () -> {
+            // Another request may finish between the HTTP cache miss and this queued job.
+            if (store.read(zoom, tileX, tileY).isPresent()) return;
             com.monpai.sailboatmod.market.web.map.MarketWebTellusTileRenderer.Rendered rendered =
-                    com.monpai.sailboatmod.market.web.map.MarketWebTellusTileRenderer.render(sampler, zoom, tileX, tileY);
+                    com.monpai.sailboatmod.market.web.map.MarketWebTellusTileRenderer.render(sampler, zoom, tileX, tileY,
+                            com.monpai.sailboatmod.market.web.map.MarketWebMapSettings::updatesEnabled);
+            if (!com.monpai.sailboatmod.market.web.map.MarketWebMapSettings.updatesEnabled()) {
+                throw new com.monpai.sailboatmod.market.web.map.MarketWebMapWorkSuspendedException();
+            }
             if (rendered.worthSaving()) {
                 store.write(zoom, tileX, tileY, com.monpai.sailboatmod.market.web.map.MarketWebTellusTileRenderer.png(rendered));
             }
         });
-        return null;
     }
 
     private com.monpai.sailboatmod.route.terrain.TerrainSurfaceSampler tellusSampler(net.minecraft.server.level.ServerLevel level) {

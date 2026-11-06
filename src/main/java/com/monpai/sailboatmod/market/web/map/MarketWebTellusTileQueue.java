@@ -32,6 +32,7 @@ public final class MarketWebTellusTileQueue {
     private final Set<Key> known = new HashSet<>(); // 排队中或执行中
     private boolean shutdown;
     private boolean drainScheduled;
+    private Map.Entry<Key, Runnable> suspendedJob;
 
     public MarketWebTellusTileQueue(int capacity, Executor worker) {
         this.capacity = Math.max(1, capacity);
@@ -61,29 +62,47 @@ public final class MarketWebTellusTileQueue {
         }
     }
 
+    /** Wake retained work without creating a queue when the addon has not started one. */
+    public static void resumeGlobal() {
+        MarketWebTellusTileQueue queue;
+        synchronized (MarketWebTellusTileQueue.class) { queue = global; }
+        if (queue != null) queue.resumePending();
+    }
+
     /** @return 是否新排入(已在排队/执行中、或已关闭 → false)。 */
     public boolean request(int zoom, int tileX, int tileY, Runnable job) {
+        boolean accepted;
         synchronized (this) {
             Key key = new Key(zoom, tileX, tileY);
-            if (shutdown) {
+            if (shutdown || !MarketWebMapSettings.updatesEnabled()) {
                 return false;
             }
             if (!known.add(key)) {
                 moveToFront(key); // 玩家回到看过的区域:还在排队的瓦片挪回最前面
-                return false;
-            }
-            pending.addLast(new AbstractMap.SimpleImmutableEntry<>(key, job));
-            while (pending.size() > capacity) {
-                known.remove(pending.pollFirst().getKey());
-            }
-            // One worker owns the bounded deque until it is empty. Scheduling one runnable per request would
-            // otherwise move the unbounded backlog into the executor, even after old tile jobs are dropped here.
-            if (!drainScheduled) {
-                drainScheduled = true;
-                worker.execute(this::drain);
+                accepted = false;
+            } else {
+                accepted = true;
+                pending.addLast(new AbstractMap.SimpleImmutableEntry<>(key, job));
+                while (pending.size() > capacity) {
+                    known.remove(pending.pollFirst().getKey());
+                }
             }
         }
-        return true;
+        resumePending();
+        return accepted;
+    }
+
+    public void resumePending() {
+        synchronized (this) {
+            if (shutdown || drainScheduled || !MarketWebMapSettings.updatesEnabled()
+                    || (pending.isEmpty() && suspendedJob == null)) return;
+            drainScheduled = true;
+        }
+        try { worker.execute(this::drain); }
+        catch (RuntimeException exception) {
+            synchronized (this) { drainScheduled = false; }
+            LOGGER.warn("[WebMap] Tellus worker could not be scheduled: {}", exception.toString());
+        }
     }
 
     private void moveToFront(Key key) {
@@ -101,26 +120,42 @@ public final class MarketWebTellusTileQueue {
         shutdown = true;
         pending.clear();
         known.clear();
+        suspendedJob = null;
     }
 
     private void drain() {
         while (true) {
             Map.Entry<Key, Runnable> next;
             synchronized (this) {
-                if (shutdown || pending.isEmpty()) {
+                if (shutdown || !MarketWebMapSettings.updatesEnabled()
+                        || (pending.isEmpty() && suspendedJob == null)) {
                     drainScheduled = false;
                     return;
                 }
-                next = pending.pollLast();
+                next = suspendedJob == null ? pending.pollLast() : suspendedJob;
+                suspendedJob = null;
             }
+            boolean suspended = false;
             try {
+                if (!MarketWebMapSettings.updatesEnabled()) throw new MarketWebMapWorkSuspendedException();
                 next.getValue().run();
+            } catch (MarketWebMapWorkSuspendedException pause) {
+                suspended = true;
+                synchronized (this) {
+                    if (!shutdown) suspendedJob = next;
+                    drainScheduled = false;
+                }
             } catch (Throwable t) {
                 LOGGER.warn("[WebMap] Tellus tile {} failed: {}", next.getKey(), t.toString());
             } finally {
                 synchronized (this) {
-                    known.remove(next.getKey());
+                    if (!suspended) known.remove(next.getKey());
                 }
+            }
+            if (suspended) {
+                // A resume may race with suspension while the old drain was still marked scheduled.
+                resumePending();
+                return;
             }
         }
     }

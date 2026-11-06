@@ -2,7 +2,6 @@ package com.monpai.sailboatmod.market.web.map;
 
 import com.monpai.sailboatmod.market.map.MarketWebMapConstants;
 
-import com.google.gson.Gson;
 import com.google.gson.JsonArray;
 import com.google.gson.JsonElement;
 import com.google.gson.JsonObject;
@@ -12,12 +11,11 @@ import org.slf4j.Logger;
 
 import java.io.IOException;
 import java.io.Reader;
-import java.io.Writer;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
-import java.nio.file.StandardCopyOption;
 import java.util.ArrayList;
+import java.util.Collection;
 import java.util.LinkedHashSet;
 import java.util.List;
 
@@ -27,13 +25,26 @@ import java.util.List;
  */
 public final class MarketWebMapDirtyRegionQueue {
     private static final Logger LOGGER = LogUtils.getLogger();
-    private static final Gson GSON = new Gson();
     private static final int CHUNKS_PER_REGION_AXIS = MarketWebMapRegionImage.CHUNKS_PER_REGION_AXIS;
     private static final int CHUNKS_PER_REGION = CHUNKS_PER_REGION_AXIS * CHUNKS_PER_REGION_AXIS;
 
     private final LinkedHashSet<RegionCoordinate> regions = new LinkedHashSet<>();
+    private final MarketWebMapStateWriter.JsonFileWriter fileWriter;
+    private final Object saveLock = new Object();
     private RegionCoordinate currentRegion;
     private int currentLocalChunk;
+
+    public MarketWebMapDirtyRegionQueue() {
+        this(MarketWebMapStateWriter::writeJson);
+    }
+
+    MarketWebMapDirtyRegionQueue(MarketWebMapStateWriter.JsonFileWriter fileWriter) {
+        this.fileWriter = fileWriter;
+    }
+
+    public boolean requestSave(MarketWebMapStateWriter writer, Path file) {
+        return writer != null && file != null && writer.request(file, () -> saveSnapshot(file));
+    }
 
     public synchronized void clear() {
         regions.clear();
@@ -48,6 +59,24 @@ public final class MarketWebMapDirtyRegionQueue {
         RegionCoordinate region = new RegionCoordinate(dimensionId, regionX, regionZ);
         if (region.equals(currentRegion)) {
             return false;
+        }
+        return regions.add(region);
+    }
+
+    /**
+     * Transfers already accepted work from bounded shutdown/recovery sources. A current region
+     * must replay its prefix because those chunks may still be queued for rendering or disk IO.
+     * Ordinary discovery continues to use markDirty and its caller's admission limit.
+     */
+    public synchronized boolean markDirtyFromStart(String dimensionId, int regionX, int regionZ) {
+        if (!MarketWebMapConstants.OVERWORLD.equals(dimensionId)) {
+            return false;
+        }
+        RegionCoordinate region = new RegionCoordinate(dimensionId, regionX, regionZ);
+        if (region.equals(currentRegion)) {
+            boolean rewound = currentLocalChunk != 0;
+            currentLocalChunk = 0;
+            return rewound;
         }
         return regions.add(region);
     }
@@ -108,36 +137,56 @@ public final class MarketWebMapDirtyRegionQueue {
         return removed;
     }
 
-    public synchronized boolean save(Path file) {
+    public boolean save(Path file) {
         if (file == null) {
             return false;
         }
-        JsonObject root = new JsonObject();
-        if (currentRegion != null) {
-            JsonObject current = toJson(currentRegion);
-            current.addProperty("localChunk", currentLocalChunk);
-            root.add("current", current);
-        }
-        JsonArray array = new JsonArray();
-        for (RegionCoordinate region : regions) {
-            array.add(toJson(region));
-        }
-        root.add("regions", array);
         try {
-            Files.createDirectories(file.toAbsolutePath().normalize().getParent());
-            Path tmp = file.resolveSibling(file.getFileName() + ".tmp");
-            try (Writer writer = Files.newBufferedWriter(tmp, StandardCharsets.UTF_8)) {
-                GSON.toJson(root, writer);
-            }
-            try {
-                Files.move(tmp, file, StandardCopyOption.REPLACE_EXISTING, StandardCopyOption.ATOMIC_MOVE);
-            } catch (IOException atomicFailure) {
-                Files.move(tmp, file, StandardCopyOption.REPLACE_EXISTING);
-            }
+            saveSnapshot(file);
             return true;
         } catch (IOException exception) {
             LOGGER.warn("Failed to save market web dirty regions to {}", file, exception);
             return false;
+        }
+    }
+
+    private void saveSnapshot(Path file) throws IOException {
+        synchronized (saveLock) {
+            writeSnapshot(file, snapshotForSave());
+        }
+    }
+
+    synchronized Snapshot snapshotForSave() {
+        return new Snapshot(currentRegion, currentLocalChunk, List.copyOf(regions));
+    }
+
+    /** Conservative durable replay only; the live expansion cursor is never modified. */
+    synchronized Snapshot snapshotForRecovery(Collection<RegionCoordinate> acceptedRegions) {
+        LinkedHashSet<RegionCoordinate> replay = new LinkedHashSet<>();
+        if (currentRegion != null) replay.add(currentRegion);
+        replay.addAll(regions);
+        if (acceptedRegions != null) {
+            for (RegionCoordinate region : acceptedRegions) {
+                if (region != null && MarketWebMapConstants.OVERWORLD.equals(region.dimensionId())) replay.add(region);
+            }
+        }
+        return new Snapshot(null, 0, List.copyOf(replay));
+    }
+
+    void writeSnapshot(Path file, Snapshot snapshot) throws IOException {
+        synchronized (saveLock) {
+            JsonObject root = new JsonObject();
+            if (snapshot.current() != null) {
+                JsonObject current = toJson(snapshot.current());
+                current.addProperty("localChunk", snapshot.localChunk());
+                root.add("current", current);
+            }
+            JsonArray array = new JsonArray();
+            for (RegionCoordinate region : snapshot.regions()) {
+                array.add(toJson(region));
+            }
+            root.add("regions", array);
+            fileWriter.write(file, root);
         }
     }
 
@@ -206,4 +255,6 @@ public final class MarketWebMapDirtyRegionQueue {
             dimensionId = dimensionId == null ? "" : dimensionId;
         }
     }
+
+    record Snapshot(RegionCoordinate current, int localChunk, List<RegionCoordinate> regions) { }
 }

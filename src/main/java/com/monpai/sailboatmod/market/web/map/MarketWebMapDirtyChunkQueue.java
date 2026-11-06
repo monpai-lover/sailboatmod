@@ -2,7 +2,6 @@ package com.monpai.sailboatmod.market.web.map;
 
 import com.monpai.sailboatmod.market.map.MarketWebMapConstants;
 
-import com.google.gson.Gson;
 import com.google.gson.JsonArray;
 import com.google.gson.JsonElement;
 import com.google.gson.JsonObject;
@@ -12,11 +11,9 @@ import org.slf4j.Logger;
 
 import java.io.IOException;
 import java.io.Reader;
-import java.io.Writer;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
-import java.nio.file.StandardCopyOption;
 import java.util.ArrayList;
 import java.util.LinkedHashSet;
 import java.util.List;
@@ -27,9 +24,21 @@ import java.util.Set;
  */
 public final class MarketWebMapDirtyChunkQueue {
     private static final Logger LOGGER = LogUtils.getLogger();
-    private static final Gson GSON = new Gson();
-
     private final LinkedHashSet<ChunkCoordinate> chunks = new LinkedHashSet<>();
+    private final MarketWebMapStateWriter.JsonFileWriter fileWriter;
+    private final Object saveLock = new Object();
+
+    public MarketWebMapDirtyChunkQueue() {
+        this(MarketWebMapStateWriter::writeJson);
+    }
+
+    MarketWebMapDirtyChunkQueue(MarketWebMapStateWriter.JsonFileWriter fileWriter) {
+        this.fileWriter = fileWriter;
+    }
+
+    public boolean requestSave(MarketWebMapStateWriter writer, Path file) {
+        return writer != null && file != null && writer.request(file, () -> saveSnapshot(file));
+    }
 
     public synchronized boolean markDirty(String dimensionId, int chunkX, int chunkZ) {
         if (!MarketWebMapConstants.OVERWORLD.equals(dimensionId)) {
@@ -65,37 +74,50 @@ public final class MarketWebMapDirtyChunkQueue {
         }
     }
 
+    public synchronized boolean contains(String dimensionId, int chunkX, int chunkZ) {
+        return chunks.contains(new ChunkCoordinate(dimensionId, chunkX, chunkZ));
+    }
+
     public synchronized int size() {
         return chunks.size();
     }
 
-    public synchronized boolean save(Path file) {
+    public boolean save(Path file) {
         if (file == null) {
             return false;
         }
-        JsonArray array = new JsonArray();
-        for (ChunkCoordinate chunk : chunks) {
-            JsonObject json = new JsonObject();
-            json.addProperty("dimensionId", chunk.dimensionId());
-            json.addProperty("chunkX", chunk.chunkX());
-            json.addProperty("chunkZ", chunk.chunkZ());
-            array.add(json);
-        }
         try {
-            Files.createDirectories(file.toAbsolutePath().normalize().getParent());
-            Path tmp = file.resolveSibling(file.getFileName() + ".tmp");
-            try (Writer writer = Files.newBufferedWriter(tmp, StandardCharsets.UTF_8)) {
-                GSON.toJson(array, writer);
-            }
-            try {
-                Files.move(tmp, file, StandardCopyOption.REPLACE_EXISTING, StandardCopyOption.ATOMIC_MOVE);
-            } catch (IOException atomicFailure) {
-                Files.move(tmp, file, StandardCopyOption.REPLACE_EXISTING);
-            }
+            saveSnapshot(file);
             return true;
         } catch (IOException exception) {
             LOGGER.warn("Failed to save market web dirty chunks to {}", file, exception);
             return false;
+        }
+    }
+
+    private void saveSnapshot(Path file) throws IOException {
+        // Serialize synchronous callers too. Take the snapshot after acquiring this lock so a
+        // caller delayed by an older write cannot subsequently overwrite newer state with it.
+        synchronized (saveLock) {
+            writeSnapshot(file, snapshotForSave());
+        }
+    }
+
+    synchronized Snapshot snapshotForSave() {
+        return new Snapshot(List.copyOf(chunks));
+    }
+
+    void writeSnapshot(Path file, Snapshot snapshot) throws IOException {
+        synchronized (saveLock) {
+            JsonArray array = new JsonArray();
+            for (ChunkCoordinate chunk : snapshot.chunks()) {
+                JsonObject json = new JsonObject();
+                json.addProperty("dimensionId", chunk.dimensionId());
+                json.addProperty("chunkX", chunk.chunkX());
+                json.addProperty("chunkZ", chunk.chunkZ());
+                array.add(json);
+            }
+            fileWriter.write(file, array);
         }
     }
 
@@ -134,4 +156,6 @@ public final class MarketWebMapDirtyChunkQueue {
             dimensionId = dimensionId == null ? "" : dimensionId;
         }
     }
+
+    record Snapshot(List<ChunkCoordinate> chunks) { }
 }

@@ -16,7 +16,6 @@ import org.slf4j.Logger;
 
 import java.io.IOException;
 import java.io.Reader;
-import java.io.Writer;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -32,7 +31,10 @@ import java.util.Optional;
 import java.util.Set;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ExecutorService;
-import java.util.concurrent.Executors;
+import java.util.concurrent.ArrayBlockingQueue;
+import java.util.concurrent.ThreadPoolExecutor;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.RejectedExecutionException;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.function.IntSupplier;
 
@@ -48,30 +50,11 @@ public final class MarketWebMapRenderManager {
     private static final int CHUNKS_PER_REGION_AXIS = MarketWebMapRegionImage.CHUNKS_PER_REGION_AXIS;
     private static final int CHUNKS_PER_REGION = CHUNKS_PER_REGION_AXIS * CHUNKS_PER_REGION_AXIS;
 
-    // ── 未加载区块的主线程 probe + force-load 采样节流(squaremap 模式,见 marketweb_snapshot_deadlock 修复) ──
-    // 崩服根因:后台 renderExecutor 调 chunkMap.read().thenApplyAsync(decode) 并发遍历共享 CompoundTag 的 HashMap,
-    // 被 vanilla 在 ForkJoinPool 并发 datafix 改写 → 桶损坏崩。唯一安全=主线程对【已生成】区块 force 加载拿区块再采样。
-    // force-load 已生成虽比生成轻,full render 上千区块仍要限量;wall-clock 双闸保底不卡 tick。
-    // 离线异步读模式吞吐量:每个 chunk 跨多 tick(发起异步读→等读盘→解码),不像旧版 force 1 tick 完成。
-    // 所以这些配额按"同时挂多个在途异步读"放大,否则管线被旧版的小配额(4/8/32)卡死、渲染显著变慢。
-    // 解码纯内存快,GENERATED_SAMPLES_PER_TICK 实为"每 tick 解码完成数";wall-clock 闸兜底不卡 tick。
-    // spark 实测:fullrender 卡服热点是 vanilla ServerChunkCache$MainThreadExecutor + 海量 chunk
-    // CompletableFuture 完成回调淹主线程(beginProbe 的读盘完成全涌回主线程)。下调这些节流量减轻主线程压力:
-    // 每 tick 解码量、发起量、在途上限都减半左右,牺牲 fullrender 速度换 tick 不超时。可继续按服务器负载调。
-    private static final int GENERATED_SAMPLES_PER_TICK = 24;
-    private static final long MAX_GENERATED_SAMPLE_MILLIS_PER_TICK = 15L;
-    private static final int PROBE_STARTS_PER_TICK = 16;
+    // All loaded captures, north-neighbor captures and offline decodes use the same
+    // GENERATED_SAMPLES_PER_TICK quota and nanosecond deadline from addon settings.
     private static final int MAX_PROBE_WAIT_TICKS = 60;
-    // 读盘超时不再立刻判"未生成":磁盘上 chunk 实际存在、只是 IO 抖动读得慢(VMware/机械盘)。
-    // 旧逻辑超时即 UNGENERATED → acceptMissingSnapshot 永久记 missing → 该 16×16 区写黑且永不重读 → 黑块永久。
-    // 改为超时后重新 beginProbe 重试,最多 MAX_PROBE_RETRIES 次,只有真 empty/非 FULL 才算未生成。
-    private static final int MAX_PROBE_RETRIES = 3;
-    // 在途异步读硬上限(背压):每个 pending probe 的 future 完成后挂一整块区块 NBT(几十 KB~MB)。
-    // 无此上限 + 高发起速度 + 读盘慢(VMware IO 抖)会堆积成百上千块 → 内存暴涨 → Full GC → watchdog 卡死。
-    // 256→96:在途 probe 越多,它们同时完成时涌回主线程的 CompletableFuture 回调越多(spark 实测主线程热点)。
-    // 96 仍能填满 IOWorker 流水线(单线程读盘,96 个排队足够),但完成回调峰值更低 → 主线程不被淹 → tick 不超时。
-    private static final int MAX_INFLIGHT_PROBES = 96;
     private static final int MAX_SKIPPED_UNGENERATED = 4096;
+    private static final int MAX_RENDER_BACKLOG = 8;
 
     private final MarketWebMapRegionRenderer regionRenderer = new MarketWebMapRegionRenderer();
     private final MarketWebSquareMapImageIOExecutor imageIO = new MarketWebSquareMapImageIOExecutor();
@@ -84,6 +67,7 @@ public final class MarketWebMapRenderManager {
     private final LinkedHashMap<Long, int[]> chunkBottomRowCache = new LinkedHashMap<>();
     private static final int MAX_CHUNK_BOTTOM_ROW_CACHE = 200_000;
     private final AtomicInteger renderingRegions = new AtomicInteger();
+    private final Map<Long, Integer> scheduledRegionReferences = new HashMap<>();
     private final AtomicInteger failedChunks = new AtomicInteger();
     // === 诊断累计计数器(只增,定位 fullrender 卡点用)。imageIO/渲染线程可更新,故用 AtomicLong。 ===
     private final java.util.concurrent.atomic.AtomicLong diagProbesStarted = new java.util.concurrent.atomic.AtomicLong();
@@ -103,14 +87,23 @@ public final class MarketWebMapRenderManager {
     private final LinkedHashSet<Long> skippedUngenerated = new LinkedHashSet<>();
     // drainCompletedProbes 锁内解码后的临时暂存(chunkKey → snapshot),锁外 accept 时取出。仅主线程读写。
     private final Map<Long, MarketWebMapChunkSnapshot> pendingDecoded = new HashMap<>();
-    // 本 tick force-load 采样配额计数(beginSnapshotTick 重置)。仅主线程读写。
-    private int generatedSamplesThisTick;
-    private long generatedSampleMillisThisTick;
-    private int probeStartsThisTick;
+    private final Set<Long> completedProbeTasks = new HashSet<>();
+    private final MarketWebMapTickBudget tickBudget = new MarketWebMapTickBudget(System::nanoTime);
+    private final MarketWebMapRefreshCooldown loadedCooldown = new MarketWebMapRefreshCooldown(32768);
+    private final MarketWebMapStateWriter stateWriter = new MarketWebMapStateWriter();
+    private final java.util.concurrent.atomic.AtomicLong diagCooldownSkipped = new java.util.concurrent.atomic.AtomicLong();
+    private final java.util.concurrent.atomic.AtomicLong diagDirtyRegionOverflow = new java.util.concurrent.atomic.AtomicLong();
+    private final java.util.concurrent.atomic.AtomicLong diagStateCheckpointRequests = new java.util.concurrent.atomic.AtomicLong();
     private long snapshotTick;
     private RenderJob activeJob;
+    private MarketWebMapRenderQueue transientQueue;
+    private boolean progressInvalidated;
     private boolean paused;
     private int tickCounter;
+    private long lastBackgroundSnapshotTick = Long.MIN_VALUE;
+    private final MarketWebMapBackgroundCadence backgroundCadence = new MarketWebMapBackgroundCadence();
+    private final LinkedHashMap<Long, Long> lastRegionFlushTick = new LinkedHashMap<>();
+    private boolean progressCheckpointPending;
     // ── fullrender 专用 region 读取器(完全绕开全局 queue/defer)──
     // 为什么:fullrender 之前把当前 region 的 1024 chunk 塞进全局共享 queue,被黑块修复/玩家区域/历史残留 task 混杂、
     // 被 submitSnapshot 每 tick 只 poll 96 个 + 无限 DEFER 回队尾搅乱 → 当前 region 的 chunk 沉在队底轮不到 →
@@ -131,14 +124,10 @@ public final class MarketWebMapRenderManager {
     // 诊断:写盘回调命中/总数(定位"region 写了但读取器没放行"类卡死)。
     private final java.util.concurrent.atomic.AtomicLong diagWriteCallbacks = new java.util.concurrent.atomic.AtomicLong();
     private final java.util.concurrent.atomic.AtomicLong diagWriteHits = new java.util.concurrent.atomic.AtomicLong();
-    private int readerRegionWaitTicks;                        // 当前 region 已等待的后台 interval tick 数(整 region 级超时)
-    // 整 region 级超时:极端情况下个别 chunk 的 probe 永远 done 不了(sweepStale 重试也救不回),等够这么多个后台
-    // interval tick(默认 interval=40,30 次≈1200 tick≈60s)就把未到的 chunk 当 missing 强制 complete,不无限卡死。
-    private static final int READER_REGION_TIMEOUT_TICKS = 30;
-
     public MarketWebMapRenderManager() {
-        int threads = configuredRenderThreads();
-        this.renderExecutor = Executors.newFixedThreadPool(threads, runnable -> {
+        int threads = MarketWebMapSettings.renderThreads();
+        this.renderExecutor = new ThreadPoolExecutor(threads, threads, 0L, TimeUnit.MILLISECONDS,
+                new ArrayBlockingQueue<>(MAX_RENDER_BACKLOG), runnable -> {
             Thread thread = new Thread(runnable, "SailboatMarketWebMap-RegionRender");
             thread.setDaemon(true);
             return thread;
@@ -148,119 +137,106 @@ public final class MarketWebMapRenderManager {
     public void tickBackground(ServerLevel level,
                                MarketWebMapRenderQueue queue,
                                long nowMillis) {
-        if (level == null || queue == null) {
-            return;
-        }
-        RenderJob job;
-        boolean intervalPass;
-        synchronized (this) {
-            job = activeJob;
-            if (paused) {
-                return;
-            }
-            tickCounter++;
-            int interval = Math.max(1, configuredInt(ModConfig::marketWebBackgroundIntervalTicks, 200));
-            intervalPass = (tickCounter % interval == 0);
-            // fullrender 专用读取器【每 tick】都跑(其 probe 发起 / 解码已有 per-tick 双闸节流,不需要外层 interval 再节流;
-            // 若也按 interval=40 节流,读取器每 2s 才动一次,极慢)。非 fullrender 路径仍按 interval 节流(沿用旧行为)。
-            boolean fullRenderActive = job != null && job.fullRender();
-            if (!fullRenderActive && !intervalPass) {
-                return;
-            }
-        }
-        int budget = Math.max(1, configuredInt(ModConfig::marketWebBackgroundMaxChunksPerInterval, 512));
-        List<RegionState> residualReady = null;
+        if (level == null || queue == null || !MarketWebMapSettings.updatesEnabled()) { return; }
+        bindRenderQueue(queue);
+        beginSnapshotTick(level.getServer().getTickCount());
         MarketWebMapTileCache cache = null;
-        RegionState readerReady = null; // fullrender 专用读取器本 tick complete 的 region(锁外 schedule)
+        RegionState readerReady = null;
+        List<RegionState> partialReady;
         synchronized (this) {
+            if (paused || lastBackgroundSnapshotTick == snapshotTick) { return; }
+            lastBackgroundSnapshotTick = snapshotTick;
+            tickCounter++;
+            int checkpointInterval = Math.max(1, configuredInt(ModConfig::marketWebBackgroundIntervalTicks, 200));
+            checkpointBackgroundState(level, checkpointInterval);
+            RenderJob job = activeJob;
+            boolean admissionPass = backgroundCadence.admissionDue(snapshotTick);
+            int admissionBudget = Math.min(32, Math.max(1, configuredInt(ModConfig::marketWebBackgroundMaxChunksPerInterval, 512)));
             if (job != null && job.fullRender()) {
-                // ── fullrender 专用 region 读取器:完全绕开 queue/defer,自己读当前 region 的 chunk ──
-                // 自管 per-tick 节流计数(probe 发起 / 解码额度),不依赖 processSnapshotBudget.beginSnapshotTick 的时序。
-                snapshotTick++;
-                generatedSamplesThisTick = 0;
-                generatedSampleMillisThisTick = 0L;
-                probeStartsThisTick = 0;
                 cache = MarketWebMapTileCache.forServer(level.getServer());
                 readerReady = driveRegionReader(level, cache, job, nowMillis);
                 if (job.done()) {
                     clearProgress(level);
                     activeJob = null;
                     resetRegionReader();
-                    if (!expectedRegionChunks.isEmpty()) {
-                        expectedRegionChunks.clear();
-                    }
+                    expectedRegionChunks.clear();
                     paused = false;
                 }
-            } else if (job != null) {
-                // 非 fullrender(radius/area/border):沿用旧 queue 流水线。
+            } else if (job != null && admissionPass) {
                 int attempted = 0;
-                while (attempted < budget && activeJob == job && !job.done()) {
-                    MarketWebMapDirtyChunkQueue.ChunkCoordinate chunk = job.chunk();
-                    queue.enqueue(chunk.dimensionId(), chunk.chunkX(), chunk.chunkZ(), nowMillis, MarketWebMapTileQuality.SERVER_REGION_SCAN);
+                while (attempted < admissionBudget && activeJob == job && !job.done() && hasSamplingTime()) {
+                    var chunk = job.chunk();
+                    if (!enqueueAccepted(queue, chunk, nowMillis)) { break; }
                     job.advance();
                     job.processedChunks = job.completedChunkCount();
                     attempted++;
                 }
                 if (attempted > 0) {
+                    backgroundCadence.markDirty();
                     job.processedRegions = job.completedRegionCount();
                     int saveInterval = Math.max(1, configuredInt(ModConfig::marketWebProgressSaveIntervalChunks, 512));
-                    if (job.done() || job.processedChunks - job.lastSavedChunkIndex >= saveInterval) {
+                    if (job.processedChunks - job.lastSavedChunkIndex >= saveInterval) {
                         job.lastSavedChunkIndex = job.processedChunks;
-                        saveProgress(level, job);
+                        progressCheckpointPending = true;
                     }
                 }
                 if (job.done()) {
                     clearProgress(level);
                     activeJob = null;
+                    progressCheckpointPending = false;
                     paused = false;
                 }
-            } else {
+            } else if (job == null && admissionPass) {
                 expandDirtyRegions(level);
-                List<MarketWebMapDirtyChunkQueue.ChunkCoordinate> dirty = dirtyChunks.poll(budget);
-                for (MarketWebMapDirtyChunkQueue.ChunkCoordinate chunk : dirty) {
-                    queue.enqueue(chunk.dimensionId(), chunk.chunkX(), chunk.chunkZ(), nowMillis, MarketWebMapTileQuality.SERVER_REGION_SCAN);
-                }
-                if (!dirty.isEmpty()) {
-                    saveDirtyChunks(level);
-                }
-            }
-
-            // 排空兜底 flush(仅非 fullrender 收尾):无活跃 job、读盘/渲染已清空时,把仍攒着 chunk 但没到 complete、
-            // 从未排程的残留 RegionState schedule 出去(覆盖增量更新尾部"NBT 读了但没 image"的稀疏 region)。
-            // fullrender 由专用读取器自管,不走这里。
-            if (activeJob == null
-                    && pendingProbe.isEmpty()
-                    && dirtyChunks.size() == 0
-                    && renderingRegions.get() == 0
-                    && !regionStates.isEmpty()) {
-                residualReady = new ArrayList<>();
-                Iterator<Map.Entry<Long, RegionState>> iterator = regionStates.entrySet().iterator();
-                while (iterator.hasNext()) {
-                    Map.Entry<Long, RegionState> entry = iterator.next();
-                    RegionState state = entry.getValue();
-                    if (state != null && state.count() > 0 && !state.renderScheduled) {
-                        state.renderScheduled = true;
-                        residualReady.add(state);
+                var dirty = dirtyChunks.poll(Math.min(admissionBudget, queue.remainingCapacity()));
+                for (var chunk : dirty) {
+                    if (!hasSamplingTime() || !enqueueAccepted(queue, chunk, nowMillis)) {
+                        dirtyChunks.markDirty(chunk.dimensionId(), chunk.chunkX(), chunk.chunkZ());
                     }
-                    iterator.remove();
                 }
-                if (!expectedRegionChunks.isEmpty()) {
-                    expectedRegionChunks.clear();
-                }
-                if (!residualReady.isEmpty()) {
-                    cache = MarketWebMapTileCache.forServer(level.getServer());
-                }
+                if (!dirty.isEmpty()) { backgroundCadence.markDirty(); }
+            }
+            // A small region has its own deadline; unrelated slow probes and dirty work cannot starve it.
+            partialReady = collectTimedPartialRegions();
+            if (!partialReady.isEmpty() && cache == null) { cache = MarketWebMapTileCache.forServer(level.getServer()); }
+            if (activeJob == null && pendingProbe.isEmpty() && dirtyChunks.size() == 0 && queue.size() == 0
+                    && regionStates.isEmpty()) {
+                expectedRegionChunks.clear();
             }
         }
-        // 锁外 schedule(scheduleRegionRender 内部会取锁,避免锁内嵌套)。
-        if (readerReady != null && cache != null) {
-            scheduleRegionRender(cache, readerReady, nowMillis);
+        if (readerReady != null && cache != null) { scheduleRegionRender(cache, readerReady, nowMillis); }
+        if (cache != null) {
+            for (RegionState state : partialReady) { scheduleRegionRender(cache, state, nowMillis); }
         }
-        if (residualReady != null && cache != null) {
-            for (RegionState ready : residualReady) {
-                scheduleRegionRender(cache, ready, nowMillis);
+    }
+
+    private synchronized void checkpointBackgroundState(ServerLevel level, int interval) {
+        if (backgroundCadence.checkpointDue(tickCounter, interval)) { saveDirtyChunks(level); }
+        if (tickCounter % interval == 0 && progressCheckpointPending && activeJob != null) {
+            saveProgress(level, activeJob);
+            progressCheckpointPending = false;
+        }
+    }
+
+    private synchronized List<RegionState> collectTimedPartialRegions() {
+        List<RegionState> ready = new ArrayList<>();
+        int capacity = Math.max(0, MAX_RENDER_BACKLOG - renderingRegions.get() - imageIO.pendingTasks());
+        for (var entry : regionStates.entrySet()) {
+            if (ready.size() >= capacity || !hasSamplingTime()) { break; }
+            RegionState state = entry.getValue();
+            if (!state.renderScheduled && state.count() > 0
+                    && MarketWebMapBackgroundCadence.partialFlushDue(snapshotTick, state.firstPendingTick,
+                    lastRegionFlushTick.get(entry.getKey()))) {
+                state.renderScheduled = true;
+                ready.add(state);
             }
         }
+        return ready;
+    }
+
+    private boolean regionFlushAllowed(long key) {
+        Long last = lastRegionFlushTick.get(key);
+        return last == null || snapshotTick - last >= MarketWebMapBackgroundCadence.PIPELINE_INTERVAL_TICKS;
     }
 
     /**
@@ -275,6 +251,7 @@ public final class MarketWebMapRenderManager {
             if (readerRegionWritten) {
                 // 该 region 已落盘:推进 job 游标到下一 region,复位读取器,下 tick 开新 region。
                 advanceJobPastReaderRegion(job);
+                saveProgress(level, job);
                 resetRegionReaderForNextRegion();
             }
             return null;
@@ -287,9 +264,9 @@ public final class MarketWebMapRenderManager {
         if (readerRegionIndex != cursorRegion || readerState == null) {
             readerRegionIndex = cursorRegion;
             readerState = newRegionState(MarketWebMapConstants.OVERWORLD, job.currentRegionX(), job.currentRegionZ());
+            backgroundCadence.markDirty();
             readerProbes.clear();
             readerNextLocalChunk = 0;
-            readerRegionWaitTicks = 0;
         }
         List<Integer> localChunks = job.currentRegionLocalChunks();
         int regionX = job.currentRegionX();
@@ -298,87 +275,68 @@ public final class MarketWebMapRenderManager {
         int baseChunkZ = regionZ * CHUNKS_PER_REGION_AXIS;
 
         // 3) 发起 probe:本 tick 在 inflight 上限 + 发起额度内,把还没发起的 chunk 发出去。
-        while (readerNextLocalChunk < localChunks.size()
-                && readerProbes.size() < MAX_INFLIGHT_PROBES
-                && probeStartsThisTick < PROBE_STARTS_PER_TICK) {
-            int local = localChunks.get(readerNextLocalChunk++);
+        while (readerNextLocalChunk < localChunks.size() && hasRenderCapacity()
+                && tickBudget.tryStartProbe(pendingProbe.size() + readerProbes.size(), MarketWebMapSettings.maxInflightProbes())) {
+            int local = localChunks.get(readerNextLocalChunk);
             int chunkX = baseChunkX + Math.floorMod(local, CHUNKS_PER_REGION_AXIS);
             int chunkZ = baseChunkZ + Math.floorDiv(local, CHUNKS_PER_REGION_AXIS);
-            long chunkKey = ChunkPos.asLong(chunkX, chunkZ);
             try {
-                CompletableFuture<Optional<CompoundTag>> future =
-                        OfflineChunkNbtReader.beginProbe(level, new ChunkPos(chunkX, chunkZ));
-                readerProbes.put(chunkKey, new ChunkProbe(future, snapshotTick));
-                probeStartsThisTick++;
+                var future = OfflineChunkNbtReader.beginProbe(level, new ChunkPos(chunkX, chunkZ));
+                readerProbes.put(ChunkPos.asLong(chunkX, chunkZ), new ChunkProbe(future, snapshotTick));
+                readerNextLocalChunk++;
                 diagProbesStarted.incrementAndGet();
-            } catch (RuntimeException ignored) {
-                // 发起失败:当 missing,不卡死。
-                markSnapshotMissing(readerState, chunkX, chunkZ, MarketWebMapTileQuality.SERVER_REGION_SCAN);
-                diagSnapshotsMissing.incrementAndGet();
+            } catch (RuntimeException exception) {
+                // Read failures are retryable and are not evidence that terrain is missing.
+                break;
             }
         }
 
-        // 4) drain done 的 probe:受双闸(解码数 / wall-clock)节流,解码成 snapshot 或判 missing。
         Iterator<Map.Entry<Long, ChunkProbe>> iterator = readerProbes.entrySet().iterator();
-        while (iterator.hasNext()) {
-            if (generatedSamplesThisTick >= GENERATED_SAMPLES_PER_TICK
-                    || generatedSampleMillisThisTick >= MAX_GENERATED_SAMPLE_MILLIS_PER_TICK) {
-                break; // 本 tick 解码额度用尽,剩下的下 tick 继续
-            }
+        while (iterator.hasNext() && hasSamplingTime()) {
             Map.Entry<Long, ChunkProbe> entry = iterator.next();
             ChunkProbe probe = entry.getValue();
-            if (probe == null || !probe.future().isDone()) {
-                continue;
-            }
             long chunkKey = entry.getKey();
             int chunkX = ChunkPos.getX(chunkKey);
             int chunkZ = ChunkPos.getZ(chunkKey);
-            iterator.remove();
-            Optional<CompoundTag> tag;
-            try {
-                tag = probe.future().getNow(Optional.empty());
-            } catch (RuntimeException ex) {
-                tag = Optional.empty();
+            if (!probe.future().isDone() || probe.future().isCompletedExceptionally()) {
+                if (snapshotTick - probe.startedTick() == MAX_PROBE_WAIT_TICKS) {
+                    diagProbesTimedOut.incrementAndGet();
+                }
+                if (probe.future().isCompletedExceptionally()
+                        && tickBudget.tryStartProbe(pendingProbe.size() + readerProbes.size() - 1, MarketWebMapSettings.maxInflightProbes())) {
+                    try {
+                        var retry = OfflineChunkNbtReader.beginProbe(level, new ChunkPos(chunkX, chunkZ));
+                        entry.setValue(new ChunkProbe(retry, snapshotTick, probe.attempts() + 1));
+                        diagProbesStarted.incrementAndGet();
+                        diagProbesTimedOut.incrementAndGet();
+                    } catch (RuntimeException ignored) { }
+                }
+                continue;
             }
-            diagProbesCompleted.incrementAndGet();
+            Optional<CompoundTag> tag = probe.future().getNow(Optional.empty());
             if (tag.isEmpty() || OfflineChunkNbtReader.classify(tag) != OfflineChunkNbtReader.ChunkStatusClass.FULL) {
+                iterator.remove();
+                diagProbesCompleted.incrementAndGet();
                 markSnapshotMissing(readerState, chunkX, chunkZ, MarketWebMapTileQuality.SERVER_REGION_SCAN);
                 diagSnapshotsMissing.incrementAndGet();
                 continue;
             }
-            long startNanos = System.nanoTime();
+            if (!tickBudget.tryCapture()) {
+                break; // Keep the completed future and real terrain for the next actual tick.
+            }
+            iterator.remove();
+            diagProbesCompleted.incrementAndGet();
             Optional<MarketWebMapChunkSnapshot> snapshot = MarketWebMapNbtChunkSnapshotReader.capture(
                     MarketWebMapConstants.OVERWORLD, chunkX, chunkZ, tag.get(),
                     level.getMinBuildHeight(), level.getMaxBuildHeight());
-            generatedSamplesThisTick++;
-            generatedSampleMillisThisTick += (System.nanoTime() - startNanos) / 1_000_000L;
             if (snapshot.isPresent()) {
                 diagSnapshotsDecoded.incrementAndGet();
                 readerState.put(snapshot.get(), MarketWebMapTileQuality.SERVER_REGION_SCAN);
                 cacheBottomRow(snapshot.get());
+                loadedCooldown.record(chunkKey, nowMillis);
             } else {
                 markSnapshotMissing(readerState, chunkX, chunkZ, MarketWebMapTileQuality.SERVER_REGION_SCAN);
                 diagSnapshotsMissing.incrementAndGet();
-            }
-        }
-
-        // 5) 整 region 级超时:个别 chunk 的 probe 永远 done 不了 → 等够 READER_REGION_TIMEOUT_TICKS 就把【尚未发起 +
-        //    在途未决】的 chunk 全当 missing,强制 complete,不无限卡死。
-        boolean allEnqueued = readerNextLocalChunk >= localChunks.size();
-        if (allEnqueued && !readerState.complete()) {
-            readerRegionWaitTicks++;
-            if (readerRegionWaitTicks >= READER_REGION_TIMEOUT_TICKS) {
-                for (Integer local : localChunks) {
-                    int chunkX = baseChunkX + Math.floorMod(local, CHUNKS_PER_REGION_AXIS);
-                    int chunkZ = baseChunkZ + Math.floorDiv(local, CHUNKS_PER_REGION_AXIS);
-                    if (!readerState.accounted(
-                            chunkX - regionX * CHUNKS_PER_REGION_AXIS,
-                            chunkZ - regionZ * CHUNKS_PER_REGION_AXIS)) {
-                        markSnapshotMissing(readerState, chunkX, chunkZ, MarketWebMapTileQuality.SERVER_REGION_SCAN);
-                        diagSnapshotsMissing.incrementAndGet();
-                    }
-                }
-                readerProbes.clear();
             }
         }
 
@@ -415,7 +373,6 @@ public final class MarketWebMapRenderManager {
         readerAwaitWriteValid = false;
         readerAwaitWriteKey = 0L;
         readerRegionWritten = false;
-        readerRegionWaitTicks = 0;
         readerRegionIndex = -1; // 强制下 tick 按游标重新绑定
     }
 
@@ -428,7 +385,6 @@ public final class MarketWebMapRenderManager {
         readerAwaitWriteValid = false;
         readerAwaitWriteKey = 0L;
         readerRegionWritten = false;
-        readerRegionWaitTicks = 0;
         readerRegionIndex = -1;
     }
 
@@ -441,51 +397,43 @@ public final class MarketWebMapRenderManager {
         DEFER
     }
 
-    /**
-     * 每 tick 开始(processSnapshotBudget 入口)调用一次:重置本 tick 的 probe 发起 / force-load 采样配额。
-     */
-    public synchronized void beginSnapshotTick() {
-        snapshotTick++;
-        generatedSamplesThisTick = 0;
-        generatedSampleMillisThisTick = 0L;
-        probeStartsThisTick = 0;
-        sweepStalePendingProbes();
+    /** Idempotent: every sampling path receives the actual server tick id. */
+    public synchronized void beginSnapshotTick(long serverTickId) {
+        if (tickBudget.beginTick(serverTickId, MarketWebMapSettings.mainThreadBudgetNanos(),
+                MarketWebMapSettings.maxSnapshotsPerTick(), MarketWebMapSettings.maxProbeStartsPerTick())) {
+            snapshotTick++;
+        }
     }
 
-    /**
-     * 每 tick 主动清理超时未决 probe。原本超时判定(resolveSnapshotRead 行内)只在该 chunk 的 task
-     * <b>再次被 poll</b> 时触发;但 task 队列很长(数千)时,卡死/读盘极慢的 future 长期轮不到复查,
-     * 一直占着 {@link #MAX_INFLIGHT_PROBES} 在途槽位 → 新 chunk 一直发起不了(背压满)→ region 攒不齐 →
-     * 不写图(底图全黑)。这里每 tick 扫一遍,超时的直接移除腾槽,下次该 chunk 被 poll 时重新 beginProbe。
-     * <p>只丢弃 pendingProbe 引用(不调 future.cancel:beginProbe 走 IOWorker,丢引用后 future 自行
-     * 跑完并 GC 其 NBT,不泄漏);只<b>减少</b>在途 future,内存上界更低,不放大发起速度、不动背压上限。</p>
-     */
-    private void sweepStalePendingProbes() {
-        if (pendingProbe.isEmpty()) {
-            return;
-        }
-        Iterator<Map.Entry<Long, ChunkProbe>> iterator = pendingProbe.entrySet().iterator();
-        while (iterator.hasNext()) {
-            ChunkProbe probe = iterator.next().getValue();
-            if (probe != null
-                    && !probe.future().isDone()
-                    && snapshotTick - probe.startedTick() >= MAX_PROBE_WAIT_TICKS) {
-                iterator.remove();
-            }
-        }
+    public synchronized boolean isPaused() {
+        return paused || !MarketWebMapSettings.updatesEnabled();
+    }
+
+    public synchronized boolean hasSamplingTime() {
+        return !isPaused() && tickBudget.hasTime() && hasRenderCapacity();
+    }
+
+    private synchronized boolean hasRenderCapacity() {
+        return renderingRegions.get() + imageIO.pendingTasks() < MAX_RENDER_BACKLOG;
+    }
+
+    private static boolean enqueueAccepted(MarketWebMapRenderQueue queue,
+                                            MarketWebMapDirtyChunkQueue.ChunkCoordinate chunk, long nowMillis) {
+        return queue.enqueue(chunk.dimensionId(), chunk.chunkX(), chunk.chunkZ(), nowMillis, MarketWebMapTileQuality.SERVER_REGION_SCAN)
+                || queue.contains(chunk.dimensionId(), chunk.chunkX(), chunk.chunkZ());
     }
 
     /**
      * 每 tick 主动排干【已完成】的在途 probe(解码或判未生成),不依赖该 chunk 的 task 再次被 poll。
      * <p><b>死锁根因</b>:旧逻辑里 future done 的 probe 只在其 task 被 {@link #submitSnapshot} 重新处理时才解码;
      * 但 fullrender 队列有数十万 task、每 tick 只 poll ~96 个,DEFER 重入队到队尾后要数千 tick 才轮到 →
-     * 已 done 的 256 个 probe 长期占着 {@link #MAX_INFLIGHT_PROBES} 槽位不释放 → inflight 永满 → 新 probe
+     * 已 done 的 256 个 probe 长期占着 the shared in-flight cap 槽位不释放 → inflight 永满 → 新 probe
      * 发不出 → 整个管线冻结(实测:probes/decoded/tilesWritten 全停,只有 defer 疯涨)。
      * <p>这里每 tick 把所有 done 的 probe 直接解码完、accept 出去、腾空槽位,受同一 GENERATED_SAMPLES/wall-clock
      * 双闸节流(不卡主线程)。槽位及时释放后 inflight 不再永满,新 chunk 持续流入,管线恢复流动。</p>
      */
     public void drainCompletedProbes(ServerLevel level, MarketWebMapTileCache cache, long nowMillis) {
-        if (level == null || cache == null) {
+        if (level == null || cache == null || isPaused()) {
             return;
         }
         List<long[]> readyToDecode = new ArrayList<>();
@@ -497,8 +445,7 @@ public final class MarketWebMapRenderManager {
             Iterator<Map.Entry<Long, ChunkProbe>> iterator = pendingProbe.entrySet().iterator();
             while (iterator.hasNext()) {
                 // 解码闸:本 tick 解码额度用尽就停,剩下的 done probe 留到下 tick(不删,槽位下 tick 再腾)。
-                if (generatedSamplesThisTick >= GENERATED_SAMPLES_PER_TICK
-                        || generatedSampleMillisThisTick >= MAX_GENERATED_SAMPLE_MILLIS_PER_TICK) {
+                if (!hasSamplingTime()) {
                     break;
                 }
                 Map.Entry<Long, ChunkProbe> entry = iterator.next();
@@ -513,22 +460,28 @@ public final class MarketWebMapRenderManager {
                 try {
                     tag = probe.future().getNow(Optional.empty());
                 } catch (RuntimeException exception) {
-                    tag = Optional.empty();
+                    // A fullrender temporarily stops polling the ordinary queue. Restart failed
+                    // completed reads here too, or they can occupy every shared probe slot forever.
+                    resolveSnapshotRead(level, chunkX, chunkZ, chunkKey, MarketWebMapConstants.OVERWORLD);
+                    continue;
                 }
-                diagProbesCompleted.incrementAndGet();
-                iterator.remove(); // 无论结果都腾槽位
                 if (tag.isEmpty() || OfflineChunkNbtReader.classify(tag) != OfflineChunkNbtReader.ChunkStatusClass.FULL) {
-                    skippedUngenerated.remove(chunkKey);
-                    skippedUngenerated.add(chunkKey);
+                    iterator.remove();
+                    diagProbesCompleted.incrementAndGet();
+                    completedProbeTasks.add(chunkKey);
+                    markSkippedUngenerated(chunkKey);
                     ungenerated.add(new long[]{chunkX, chunkZ});
                     continue;
                 }
-                long startNanos = System.nanoTime();
+                if (!tickBudget.tryCapture()) {
+                    break;
+                }
+                iterator.remove();
+                diagProbesCompleted.incrementAndGet();
+                completedProbeTasks.add(chunkKey);
                 Optional<MarketWebMapChunkSnapshot> snapshot = MarketWebMapNbtChunkSnapshotReader.capture(
                         MarketWebMapConstants.OVERWORLD, chunkX, chunkZ, tag.get(),
                         level.getMinBuildHeight(), level.getMaxBuildHeight());
-                generatedSamplesThisTick++;
-                generatedSampleMillisThisTick += (System.nanoTime() - startNanos) / 1_000_000L;
                 if (snapshot.isPresent()) {
                     diagSnapshotsDecoded.incrementAndGet();
                     readyToDecode.add(new long[]{chunkX, chunkZ});
@@ -542,8 +495,9 @@ public final class MarketWebMapRenderManager {
         // 锁外 accept:解码成功的入 region,未生成的记 missing。
         for (long[] xz : readyToDecode) {
             long key = ChunkPos.asLong((int) xz[0], (int) xz[1]);
-            MarketWebMapChunkSnapshot snapshot = pendingDecoded.remove(key);
+            MarketWebMapChunkSnapshot snapshot = takePendingDecoded(key);
             if (snapshot != null) {
+                loadedCooldown.record(key, nowMillis);
                 acceptSnapshot(cache, snapshot, MarketWebMapTileQuality.SERVER_REGION_SCAN, nowMillis);
             }
         }
@@ -575,15 +529,31 @@ public final class MarketWebMapRenderManager {
         if (level == null || cache == null || task == null || !MarketWebMapConstants.OVERWORLD.equals(task.dimensionId())) {
             return SubmitResult.CONSUMED;
         }
-        // 已加载旁路(保留不动):主线程直接 capture 并消费。
-        Optional<MarketWebMapChunkSnapshot> loaded = MarketWebMapChunkSnapshot.capture(level, task.chunkX(), task.chunkZ());
-        if (loaded.isPresent()) {
-            MarketWebMapChunkSnapshot.capture(level, task.chunkX(), task.chunkZ() - 1).ifPresent(this::cacheBottomRow);
-            acceptSnapshot(cache, loaded.get(), task.quality(), nowMillis);
+        if (!hasSamplingTime()) {
+            return SubmitResult.DEFER;
+        }
+        long chunkKey = ChunkPos.asLong(task.chunkX(), task.chunkZ());
+        if (consumeCompletedProbeTask(chunkKey)) {
             return SubmitResult.CONSUMED;
         }
+        if (!loadedCooldown.ready(chunkKey, nowMillis, MarketWebMapSettings.loadedRefreshCooldownMillis(),
+                task.quality() == MarketWebMapTileQuality.SERVER_REGION_SCAN)) {
+            diagCooldownSkipped.incrementAndGet();
+            return SubmitResult.CONSUMED;
+        }
+        if (level.getChunkSource().getChunkNow(task.chunkX(), task.chunkZ()) != null) {
+            if (!tickBudget.tryCapture()) {
+                return SubmitResult.DEFER;
+            }
+            Optional<MarketWebMapChunkSnapshot> loaded = MarketWebMapChunkSnapshot.capture(level, task.chunkX(), task.chunkZ());
+            if (loaded.isPresent()) {
+                captureGeneratedNorthNeighbor(level, task.chunkX(), task.chunkZ() - 1).ifPresent(this::cacheBottomRow);
+                acceptSnapshot(cache, loaded.get(), task.quality(), nowMillis);
+                loadedCooldown.record(chunkKey, nowMillis);
+                return SubmitResult.CONSUMED;
+            }
+        }
 
-        long chunkKey = ChunkPos.asLong(task.chunkX(), task.chunkZ());
         if (isSkippedUngenerated(chunkKey)) {
             acceptMissingSnapshot(cache, task.dimensionId(), task.chunkX(), task.chunkZ(), task.quality(), nowMillis);
             return SubmitResult.CONSUMED;
@@ -610,6 +580,7 @@ public final class MarketWebMapRenderManager {
                 captureGeneratedNorthNeighbor(level, task.chunkX(), task.chunkZ() - 1).ifPresent(this::cacheBottomRow);
                 if (read.snapshot().isPresent()) {
                     acceptSnapshot(cache, read.snapshot().get(), task.quality(), nowMillis);
+                    loadedCooldown.record(chunkKey, nowMillis);
                 } else {
                     // tag 是 full 但解码失败(罕见):标记缺失,不无限重试。
                     failedChunks.incrementAndGet();
@@ -626,22 +597,20 @@ public final class MarketWebMapRenderManager {
     /**
      * 北邻底行采样:北邻已加载时直接 {@link MarketWebMapChunkSnapshot#capture} 采;未加载则查异步读盘结果,
      * 若已解码成快照就返回喂 bottomRow,否则返回 empty(接缝退化为 unknownLastY,可接受)。<b>绝不 force</b>。
-     * 北邻解码不计入主配额(轻量、最多一次),DECODE_THROTTLED/PENDING 当作拿不到处理。
+     * 北邻采样与主区块共用捕获配额和截止时间;不足时保留已有种子,不触发额外读盘。
      */
     private Optional<MarketWebMapChunkSnapshot> captureGeneratedNorthNeighbor(ServerLevel level, int chunkX, int chunkZ) {
-        Optional<MarketWebMapChunkSnapshot> loadedNorth = MarketWebMapChunkSnapshot.capture(level, chunkX, chunkZ);
-        if (loadedNorth.isPresent()) {
-            return loadedNorth;
-        }
-        long northKey = ChunkPos.asLong(chunkX, chunkZ);
-        if (isSkippedUngenerated(northKey)) {
+        if (!hasSamplingTime() || getChunkBottomRow(chunkX, chunkZ) != null) {
             return Optional.empty();
         }
-        SnapshotReadResult read = resolveSnapshotRead(level, chunkX, chunkZ, northKey, MarketWebMapConstants.OVERWORLD);
-        if (read.state() == SnapshotReadState.UNGENERATED) {
-            markSkippedUngenerated(northKey);
+        if (level.getChunkSource().getChunkNow(chunkX, chunkZ) != null) {
+            if (!tickBudget.tryCapture()) {
+                return Optional.empty();
+            }
+            return MarketWebMapChunkSnapshot.capture(level, chunkX, chunkZ);
         }
-        return read.snapshot();
+        // Optional seam hints never launch extra disk probes. Existing decoded rows remain usable.
+        return Optional.empty();
     }
 
     private enum SnapshotReadState {
@@ -670,81 +639,59 @@ public final class MarketWebMapRenderManager {
      */
     private synchronized SnapshotReadResult resolveSnapshotRead(ServerLevel level, int chunkX, int chunkZ,
                                                                 long chunkKey, String dimensionId) {
+        if (!hasSamplingTime()) {
+            return SnapshotReadResult.of(SnapshotReadState.DECODE_THROTTLED);
+        }
         ChunkProbe probe = pendingProbe.get(chunkKey);
-        if (probe == null) {
-            if (probeStartsThisTick >= PROBE_STARTS_PER_TICK) {
-                return SnapshotReadResult.of(SnapshotReadState.PENDING); // 本 tick 发起额度用尽:下 tick 再发起
-            }
-            // 背压硬上限:每个在途 probe 的 future 完成后挂着一整块区块 NBT(几十 KB~MB)。
-            // 读盘慢时(VMware IO 抖动)若无上限,堆积成百上千块 → 内存暴涨 → Full GC → watchdog 卡死。
-            // 达上限就不再发起,等已有的完成腾空间。内存占用因此有界 = MAX_INFLIGHT × 单块 NBT。
-            if (pendingProbe.size() >= MAX_INFLIGHT_PROBES) {
+        if (probe == null || probe.future().isCompletedExceptionally()) {
+            int inflight = pendingProbe.size() + readerProbes.size() - (probe == null ? 0 : 1);
+            if (!tickBudget.tryStartProbe(inflight, MarketWebMapSettings.maxInflightProbes())) {
                 return SnapshotReadResult.of(SnapshotReadState.PENDING);
             }
             try {
-                CompletableFuture<Optional<CompoundTag>> future =
-                        OfflineChunkNbtReader.beginProbe(level, new ChunkPos(chunkX, chunkZ));
-                pendingProbe.put(chunkKey, new ChunkProbe(future, snapshotTick));
-                probeStartsThisTick++;
+                var future = OfflineChunkNbtReader.beginProbe(level, new ChunkPos(chunkX, chunkZ));
+                pendingProbe.put(chunkKey, new ChunkProbe(future, snapshotTick, probe == null ? 1 : probe.attempts() + 1));
+                backgroundCadence.markDirty();
                 diagProbesStarted.incrementAndGet();
+                if (probe != null) {
+                    diagProbesTimedOut.incrementAndGet();
+                }
             } catch (RuntimeException exception) {
-                return SnapshotReadResult.of(SnapshotReadState.UNGENERATED); // 发起失败:保守当未生成
+                // Preserve this task for retry; failed/slow IO is not proof of a missing chunk.
             }
-            return SnapshotReadResult.of(SnapshotReadState.PENDING); // 刚发起,未决
+            return SnapshotReadResult.of(SnapshotReadState.PENDING);
         }
         if (!probe.future().isDone()) {
-            if (snapshotTick - probe.startedTick() >= MAX_PROBE_WAIT_TICKS) {
-                // 读太久:不再立刻判未生成(chunk 实际存在、只是 IO 抖动)。还有重试额度就重新发起 beginProbe,
-                // 耗尽才保守当未生成。避免把"存在但读慢"误杀成永久 missing → 永久黑块。
-                pendingProbe.remove(chunkKey);
-                if (probe.attempts() < MAX_PROBE_RETRIES && probeStartsThisTick < PROBE_STARTS_PER_TICK
-                        && pendingProbe.size() < MAX_INFLIGHT_PROBES) {
-                    try {
-                        CompletableFuture<Optional<CompoundTag>> retry =
-                                OfflineChunkNbtReader.beginProbe(level, new ChunkPos(chunkX, chunkZ));
-                        pendingProbe.put(chunkKey, new ChunkProbe(retry, snapshotTick, probe.attempts() + 1));
-                        probeStartsThisTick++;
-                        diagProbesStarted.incrementAndGet();
-                        diagProbesTimedOut.incrementAndGet();
-                        return SnapshotReadResult.of(SnapshotReadState.PENDING); // 重试已发起,下 tick 再看
-                    } catch (RuntimeException exception) {
-                        return SnapshotReadResult.of(SnapshotReadState.UNGENERATED); // 重新发起失败:保守当未生成
-                    }
-                }
-                return SnapshotReadResult.of(SnapshotReadState.UNGENERATED); // 重试耗尽:保守当未生成
+            if (snapshotTick - probe.startedTick() == MAX_PROBE_WAIT_TICKS) {
+                diagProbesTimedOut.incrementAndGet();
             }
-            return SnapshotReadResult.of(SnapshotReadState.PENDING); // 仍在读盘,下 tick 再看
+            return SnapshotReadResult.of(SnapshotReadState.PENDING);
         }
-        // future done:取独占 tag。非 full → 未生成;full → 配额内主线程解码。
-        diagProbesCompleted.incrementAndGet();
-        Optional<CompoundTag> tag;
-        try {
-            tag = probe.future().getNow(Optional.empty());
-        } catch (RuntimeException exception) {
-            pendingProbe.remove(chunkKey);
-            return SnapshotReadResult.of(SnapshotReadState.UNGENERATED); // 读出错:保守当未生成
-        }
+        Optional<CompoundTag> tag = probe.future().getNow(Optional.empty());
         if (tag.isEmpty() || OfflineChunkNbtReader.classify(tag) != OfflineChunkNbtReader.ChunkStatusClass.FULL) {
             pendingProbe.remove(chunkKey);
-            return SnapshotReadResult.of(SnapshotReadState.UNGENERATED); // 磁盘没有 / 非 full → 未生成
+            diagProbesCompleted.incrementAndGet();
+            return SnapshotReadResult.of(SnapshotReadState.UNGENERATED);
         }
-        // 解码限速(纯内存快,但一 tick 太多 tag 解码仍占主线程):配额满则保留 tag,下 tick 解码。
-        if (generatedSamplesThisTick >= GENERATED_SAMPLES_PER_TICK
-                || generatedSampleMillisThisTick >= MAX_GENERATED_SAMPLE_MILLIS_PER_TICK) {
-            return SnapshotReadResult.of(SnapshotReadState.DECODE_THROTTLED); // tag 留在 pendingProbe,下 tick 解码
+        if (!tickBudget.tryCapture()) {
+            return SnapshotReadResult.of(SnapshotReadState.DECODE_THROTTLED);
         }
         pendingProbe.remove(chunkKey);
-        long startNanos = System.nanoTime();
+        diagProbesCompleted.incrementAndGet();
         Optional<MarketWebMapChunkSnapshot> snapshot = MarketWebMapNbtChunkSnapshotReader.capture(
-                dimensionId, chunkX, chunkZ, tag.get(),
-                level.getMinBuildHeight(), level.getMaxBuildHeight());
-        long elapsedMillis = (System.nanoTime() - startNanos) / 1_000_000L;
-        generatedSamplesThisTick++;
-        generatedSampleMillisThisTick += elapsedMillis;
+                dimensionId, chunkX, chunkZ, tag.get(), level.getMinBuildHeight(), level.getMaxBuildHeight());
         if (snapshot.isPresent()) {
             diagSnapshotsDecoded.incrementAndGet();
         }
         return SnapshotReadResult.ready(snapshot);
+    }
+
+    private synchronized MarketWebMapChunkSnapshot takePendingDecoded(long key) {
+        return pendingDecoded.remove(key);
+    }
+
+    private synchronized boolean consumeCompletedProbeTask(long key) {
+        return completedProbeTasks.remove(key);
     }
 
     private synchronized boolean isSkippedUngenerated(long chunkKey) {
@@ -843,35 +790,18 @@ public final class MarketWebMapRenderManager {
         return true;
     }
 
-    /**
-     * 把若干黑块 region 的全部 chunk 标脏入 dirtyChunks 队列(非独占,不抢 activeJob、不互相丢弃)。
-     * 黑块修复专用:旧路径每次只能 startAreaRender 一个 region(activeJob 互斥)→ 一轮只修 1 个 → 极慢。
-     * 走 dirtyChunks 后可一次塞进成百上千 region 的 chunk,由 tickBackground 空闲时持续消费,大幅提速。
-     * 返回实际入队的 region 数(已在队列上限内的部分可能被 markDirty 丢弃)。
-     */
+    /** Queue cheap region coordinates; chunk expansion stays inside subsequent tick budgets. */
     public synchronized int enqueueRegionsForRepair(ServerLevel level, List<int[]> regions) {
-        if (level == null || regions == null || regions.isEmpty()) {
+        if (level == null || regions == null || regions.isEmpty() || !MarketWebMapSettings.updatesEnabled()) {
             return 0;
         }
         int queuedRegions = 0;
         for (int[] region : regions) {
-            int baseChunkX = region[0] * CHUNKS_PER_REGION_AXIS;
-            int baseChunkZ = region[1] * CHUNKS_PER_REGION_AXIS;
-            boolean any = false;
-            for (int cz = 0; cz < CHUNKS_PER_REGION_AXIS; cz++) {
-                for (int cx = 0; cx < CHUNKS_PER_REGION_AXIS; cx++) {
-                    if (dirtyChunks.markDirty(MarketWebMapConstants.OVERWORLD, baseChunkX + cx, baseChunkZ + cz)) {
-                        any = true;
-                    }
-                }
-            }
-            if (any) {
-                queuedRegions++;
+            if (region != null && region.length >= 2) {
+                queuedRegions += markRegionDirty(region[0], region[1]);
             }
         }
-        if (queuedRegions > 0) {
-            saveDirtyChunks(level);
-        }
+        if (queuedRegions > 0) { backgroundCadence.markDirty(); }
         return queuedRegions;
     }
 
@@ -907,7 +837,7 @@ public final class MarketWebMapRenderManager {
     }
 
     public synchronized boolean pause() {
-        if (activeJob == null) {
+        if (paused) {
             return false;
         }
         paused = true;
@@ -915,7 +845,7 @@ public final class MarketWebMapRenderManager {
     }
 
     public synchronized boolean resume() {
-        if (activeJob == null) {
+        if (!paused) {
             return false;
         }
         paused = false;
@@ -930,9 +860,7 @@ public final class MarketWebMapRenderManager {
         expectedRegionChunks.clear();
         paused = false;
         resetRegionReader();
-        if (level != null) {
-            clearProgress(level);
-        }
+        clearProgress(level);
         return true;
     }
 
@@ -951,11 +879,15 @@ public final class MarketWebMapRenderManager {
         chunkBottomRowCache.clear();
         pendingProbe.clear();
         pendingDecoded.clear();
+        completedProbeTasks.clear();
         skippedUngenerated.clear();
+        loadedCooldown.clear();
+        lastRegionFlushTick.clear();
+        progressCheckpointPending = false;
         dirtyChunks.clear();
         dirtyRegions.clear();
+        clearProgress(level);
         if (level != null) {
-            clearProgress(level);
             saveDirtyChunks(level); // 把"已清空"持久化,避免重启又从盘上读回旧 dirty
         }
     }
@@ -969,11 +901,18 @@ public final class MarketWebMapRenderManager {
         return activeJob != null && activeJob.fullRender();
     }
 
+    /** A foreground image must not race the older snapshots still accumulating in this region. */
+    public synchronized boolean isCurrentReaderRegion(int chunkX, int chunkZ) {
+        RenderJob job = activeJob;
+        return job != null && job.fullRender() && !job.done()
+                && regionX(chunkX) == job.currentRegionX() && regionZ(chunkZ) == job.currentRegionZ();
+    }
+
     public synchronized RenderStatus status(int queueSize) {
         RenderJob job = activeJob;
         return new RenderStatus(
                 job == null ? "idle" : job.type,
-                paused,
+                isPaused(),
                 queueSize,
                 // fullrender 走专用读取器(probe 在 readerProbes,不在 pendingProbe;state 是 readerState,不在 regionStates),
                 // 这里把读取器的在途 probe / 当前 state 也计入,否则 status 显示全 0、误以为 idle。
@@ -1031,6 +970,10 @@ public final class MarketWebMapRenderManager {
                 + " probes=" + readerProbesSnapshot()
                 + " await=" + readerAwaitSnapshot()
                 + " writeCb=" + diagWriteHits.get() + "/" + diagWriteCallbacks.get()
+                + " | tick captures=" + tickBudget.captures() + " starts=" + tickBudget.probeStarts()
+                + " elapsedNanos=" + tickBudget.elapsedNanos() + " cooldownSkipped=" + diagCooldownSkipped.get()
+                + " dirtyRegionOverflow=" + diagDirtyRegionOverflow.get()
+                + " stateSaves=" + diagStateCheckpointRequests.get()
                 + " | captureOK=" + MarketWebMapNbtChunkSnapshotReader.DIAG_OK.get()
                 + " failStatus=" + MarketWebMapNbtChunkSnapshotReader.DIAG_FAIL_STATUS.get()
                 + " failNoSections=" + MarketWebMapNbtChunkSnapshotReader.DIAG_FAIL_NO_SECTIONS.get();
@@ -1070,20 +1013,115 @@ public final class MarketWebMapRenderManager {
         dirtyRegions.load(dirtyRegionsFile(level));
     }
 
+    public synchronized void savePendingWork(ServerLevel level, MarketWebMapRenderQueue queue) {
+        if (queue != null) {
+            for (var task : queue.snapshot()) {
+                dirtyChunks.markDirty(task.dimensionId(), task.chunkX(), task.chunkZ());
+            }
+        }
+        for (long key : pendingProbe.keySet()) {
+            dirtyChunks.markDirty(MarketWebMapConstants.OVERWORLD, ChunkPos.getX(key), ChunkPos.getZ(key));
+        }
+        for (RegionState state : regionStates.values()) {
+            dirtyRegions.markDirtyFromStart(state.dimensionId, state.regionX, state.regionZ);
+        }
+        for (long key : scheduledRegionReferences.keySet()) {
+            dirtyRegions.markDirtyFromStart(MarketWebMapConstants.OVERWORLD,
+                    MarketWebMapRegionWatcher.unpackRegionX(key), MarketWebMapRegionWatcher.unpackRegionZ(key));
+        }
+        if (readerState != null) {
+            dirtyRegions.markDirtyFromStart(readerState.dimensionId, readerState.regionX, readerState.regionZ);
+        }
+        if (activeJob != null) { saveProgress(level, activeJob); }
+        saveDirtyChunks(level);
+    }
+
     public synchronized void saveDirtyChunks(ServerLevel level) {
-        dirtyChunks.save(dirtyChunksFile(level));
-        dirtyRegions.save(dirtyRegionsFile(level));
+        diagStateCheckpointRequests.incrementAndGet();
+        if (stateWriter.requestDirtyQueues(this, dirtyChunks, dirtyChunksFile(level), dirtyRegions, dirtyRegionsFile(level),
+                this::recoveryRegionsForSnapshot)) {
+            backgroundCadence.checkpointRequested();
+        }
+    }
+
+    public synchronized void bindRenderQueue(MarketWebMapRenderQueue queue) {
+        transientQueue = queue;
+    }
+
+    /** Called by the state writer under this mutation lock; no IO or live queue mutation. */
+    private synchronized List<MarketWebMapDirtyRegionQueue.RegionCoordinate> recoveryRegionsForSnapshot() {
+        Set<MarketWebMapDirtyRegionQueue.RegionCoordinate> regions = new LinkedHashSet<>();
+        if (transientQueue != null) {
+            for (var task : transientQueue.snapshot()) {
+                regions.add(new MarketWebMapDirtyRegionQueue.RegionCoordinate(task.dimensionId(), regionX(task.chunkX()), regionZ(task.chunkZ())));
+            }
+        }
+        for (long key : pendingProbe.keySet()) {
+            regions.add(new MarketWebMapDirtyRegionQueue.RegionCoordinate(MarketWebMapConstants.OVERWORLD,
+                    regionX(ChunkPos.getX(key)), regionZ(ChunkPos.getZ(key))));
+        }
+        Set<Long> decodedOrAwaitingAcknowledgement = new HashSet<>(pendingDecoded.keySet());
+        decodedOrAwaitingAcknowledgement.addAll(completedProbeTasks);
+        for (long key : decodedOrAwaitingAcknowledgement) {
+            regions.add(new MarketWebMapDirtyRegionQueue.RegionCoordinate(MarketWebMapConstants.OVERWORLD,
+                    regionX(ChunkPos.getX(key)), regionZ(ChunkPos.getZ(key))));
+        }
+        for (RegionState state : regionStates.values()) {
+            regions.add(new MarketWebMapDirtyRegionQueue.RegionCoordinate(state.dimensionId, state.regionX, state.regionZ));
+        }
+        for (long key : scheduledRegionReferences.keySet()) {
+            regions.add(new MarketWebMapDirtyRegionQueue.RegionCoordinate(MarketWebMapConstants.OVERWORLD,
+                    MarketWebMapRegionWatcher.unpackRegionX(key), MarketWebMapRegionWatcher.unpackRegionZ(key)));
+        }
+        if (readerState != null) {
+            regions.add(new MarketWebMapDirtyRegionQueue.RegionCoordinate(readerState.dimensionId, readerState.regionX, readerState.regionZ));
+        }
+        for (long key : readerProbes.keySet()) {
+            regions.add(new MarketWebMapDirtyRegionQueue.RegionCoordinate(MarketWebMapConstants.OVERWORLD,
+                    regionX(ChunkPos.getX(key)), regionZ(ChunkPos.getZ(key))));
+        }
+        return List.copyOf(regions);
+    }
+
+    /** Transfer ownership before a reserved foreground claim is released; never grow past backlog capacity. */
+    public synchronized boolean retainUnloadedForeground(MarketWebMapRenderQueue.Task task) {
+        if (task == null || !MarketWebMapConstants.OVERWORLD.equals(task.dimensionId())) { return false; }
+        boolean existing = dirtyChunks.contains(task.dimensionId(), task.chunkX(), task.chunkZ());
+        int limit = Math.max(1, configuredInt(ModConfig::marketWebMaxDirtyChunks, 200000));
+        if (!existing && dirtyChunks.size() >= limit) { return false; }
+        dirtyChunks.markDirty(task.dimensionId(), task.chunkX(), task.chunkZ());
+        backgroundCadence.markDirty();
+        return true;
+    }
+
+    public synchronized int remainingDirtyRegionCapacity() {
+        int limit = Math.max(MarketWebMapRegionWatcher.MAX_DIRTY_REGIONS,
+                configuredInt(ModConfig::marketWebMaxDirtyChunks, 200000) / CHUNKS_PER_REGION);
+        return Math.max(0, limit - dirtyRegions.size());
     }
 
     public synchronized int markRegionDirty(int regionX, int regionZ) {
-        boolean marked = dirtyRegions.markDirty(MarketWebMapConstants.OVERWORLD, regionX, regionZ);
-        dirtyRegions.trimToMaxRegions(configuredInt(ModConfig::marketWebMaxDirtyChunks, 200000) / CHUNKS_PER_REGION);
-        return marked ? 1 : 0;
+        if (remainingDirtyRegionCapacity() <= 0) {
+            diagDirtyRegionOverflow.incrementAndGet();
+            return 0;
+        }
+        skippedUngenerated.removeIf(key -> regionX(ChunkPos.getX(key)) == regionX && regionZ(ChunkPos.getZ(key)) == regionZ);
+        boolean changed = dirtyRegions.markDirty(MarketWebMapConstants.OVERWORLD, regionX, regionZ);
+        if (changed) { backgroundCadence.markDirty(); }
+        return changed ? 1 : 0;
+    }
+
+    /** Recovery replays accepted work; ordinary admission limits must never truncate it. */
+    public synchronized int retainRegionForRecovery(int regionX, int regionZ) {
+        boolean changed = dirtyRegions.markDirtyFromStart(MarketWebMapConstants.OVERWORLD, regionX, regionZ);
+        if (changed) { backgroundCadence.markDirty(); }
+        return changed ? 1 : 0;
     }
 
     public void shutdown() {
         renderExecutor.shutdownNow();
         imageIO.shutdown();
+        stateWriter.shutdown(5000L);
         synchronized (this) {
             // 离线异步读不 force、不占票据(beginProbe 走 IOWorker),清掉未决读盘 future 即可,无残留。
             pendingProbe.clear();
@@ -1105,10 +1143,10 @@ public final class MarketWebMapRenderManager {
                     regionZ(snapshot.chunkZ())));
             state.put(snapshot, quality == null ? MarketWebMapTileQuality.SERVER_REGION_SCAN : quality);
             int partialFlushChunks = currentPartialFlushChunks();
-            if ((state.complete() || state.count() >= partialFlushChunks) && !state.renderScheduled) {
+            backgroundCadence.markDirty();
+            if ((state.complete() || state.count() >= partialFlushChunks) && !state.renderScheduled && regionFlushAllowed(key)) {
                 state.renderScheduled = true;
                 readyStates.add(state);
-                regionStates.remove(key);
             }
             collectOverflowRegionStates(readyStates);
         }
@@ -1133,10 +1171,10 @@ public final class MarketWebMapRenderManager {
             markSnapshotMissing(state, chunkX, chunkZ, quality == null ? MarketWebMapTileQuality.SERVER_REGION_SCAN : quality);
             diagSnapshotsMissing.incrementAndGet();
             int partialFlushChunks = currentPartialFlushChunks();
-            if ((state.complete() || state.count() >= partialFlushChunks) && !state.renderScheduled) {
+            backgroundCadence.markDirty();
+            if ((state.complete() || state.count() >= partialFlushChunks) && !state.renderScheduled && regionFlushAllowed(key)) {
                 state.renderScheduled = true;
                 readyStates.add(state);
-                regionStates.remove(key);
             }
             collectOverflowRegionStates(readyStates);
         }
@@ -1147,79 +1185,133 @@ public final class MarketWebMapRenderManager {
 
     private void collectOverflowRegionStates(List<RegionState> readyStates) {
         int maxTracked = Math.max(1, configuredInt(ModConfig::marketWebMaxTrackedRegionStates, 512));
-        while (regionStates.size() > maxTracked) {
-            Iterator<Map.Entry<Long, RegionState>> iterator = regionStates.entrySet().iterator();
-            if (!iterator.hasNext()) {
-                return;
-            }
-            Map.Entry<Long, RegionState> eldest = iterator.next();
-            iterator.remove();
-            RegionState state = eldest.getValue();
-            if (state != null && state.complete() && !state.renderScheduled) {
+        int excess = regionStates.size() - maxTracked;
+        for (RegionState state : regionStates.values()) {
+            if (excess <= 0) { return; }
+            if (state != null && !state.renderScheduled && regionFlushAllowed(packRegion(state.regionX, state.regionZ))) {
                 state.renderScheduled = true;
                 readyStates.add(state);
+                excess--;
             }
         }
     }
 
-    private void scheduleRegionRender(MarketWebMapTileCache cache, RegionState state, long nowMillis) {
-        renderingRegions.incrementAndGet();
-        renderExecutor.execute(() -> {
-            try {
-                MarketWebMapRegionImage image = new MarketWebMapRegionImage(state.dimensionId, state.regionX, state.regionZ);
-                int[][] northDiskRows = seedDiskRows(cache, state.regionX, state.regionZ);
-                int baseChunkX = state.regionX * CHUNKS_PER_REGION_AXIS;
-                int baseChunkZ = state.regionZ * CHUNKS_PER_REGION_AXIS;
-                // seam 必须来自 region 的真实最南行;内部 chunk 的高度不能冒充 row 511。
-                int[][] regionBottomSeed = new int[CHUNKS_PER_REGION_AXIS][];
-                for (int localX = 0; localX < CHUNKS_PER_REGION_AXIS; localX++) {
-                    for (int localZ = 0; localZ < CHUNKS_PER_REGION_AXIS; localZ++) {
-                        int chunkX = baseChunkX + localX;
-                        int chunkZ = baseChunkZ + localZ;
-                        MarketWebMapChunkSnapshot snapshot = state.snapshotOrNull(localX, localZ);
-                        if (snapshot == null) {
-                            if (state.accounted(localX, localZ) || !state.expected(localX, localZ)) {
-                                image.markChunkSkipped(chunkX, chunkZ);
-                            }
-                            if (localZ == CHUNKS_PER_REGION_AXIS - 1 && state.accounted(localX, localZ)) {
-                                regionBottomSeed[localX] = regionRenderer.unknownLastY();
-                            }
-                            continue;
-                        }
-                        int[] lastY = seedChunkLastY(state, localX, localZ, northDiskRows);
-                        image.putChunkPixels(chunkX, chunkZ, regionRenderer.renderChunk(snapshot, lastY));
-                        if (localZ == CHUNKS_PER_REGION_AXIS - 1) {
-                            regionBottomSeed[localX] = regionRenderer.lastYFromBottomRow(snapshot);
+    private synchronized void retainRenderState(RegionState state) {
+        state.renderScheduled = false;
+        if (state == readerState) {
+            readerScheduled = false;
+            readerAwaitWriteValid = false;
+        } else {
+            long key = packRegion(state.regionX, state.regionZ);
+            RegionState existing = regionStates.get(key);
+            if (existing != null && existing != state) {
+                for (int localZ = 0; localZ < CHUNKS_PER_REGION_AXIS; localZ++) {
+                    for (int localX = 0; localX < CHUNKS_PER_REGION_AXIS; localX++) {
+                        var snapshot = existing.snapshotOrNull(localX, localZ);
+                        if (snapshot != null) {
+                            state.put(snapshot, existing.bestQuality());
+                        } else if (existing.accounted(localX, localZ)) {
+                            state.missing(state.regionX * CHUNKS_PER_REGION_AXIS + localX,
+                                    state.regionZ * CHUNKS_PER_REGION_AXIS + localZ, existing.bestQuality());
                         }
                     }
                 }
-                cacheBottomRows(cache, state, regionBottomSeed);
-                diagRegionsScheduled.incrementAndGet();
-                final long regionKey = packRegion(state.regionX, state.regionZ);
-                imageIO.submit(() -> {
-                    boolean wrote = image.writeDirty(cache, state.bestQuality(), nowMillis);
-                    if (wrote) {
-                        diagTilesWritten.incrementAndGet();
-                    }
-                    // fullrender 读取器:此 region 真正写盘落地后,若它正是读取器在等的 region,置 readerRegionWritten → 下一个。
-                    // 无论 writeDirty 是否真写像素(全 missing 的 region 无像素变化 writeDirty=false,但它已处理完)都置位,
-                    // 否则读取器永远等不到 → 卡死。
-                    markReaderRegionWritten(regionKey);
-                });
-            } catch (RuntimeException exception) {
-                LOGGER.warn("Market web map region render failed for {},{}", state.regionX, state.regionZ, exception);
-            } finally {
-                renderingRegions.decrementAndGet();
             }
-        });
+            regionStates.put(key, state);
+        }
+    }
+
+    private void scheduleRegionRender(MarketWebMapTileCache cache, RegionState state, long nowMillis) {
+        long regionKey = packRegion(state.regionX, state.regionZ);
+        synchronized (this) {
+            if (!hasRenderCapacity() || renderExecutor.isShutdown()) {
+                retainRenderState(state);
+                return;
+            }
+            renderingRegions.incrementAndGet();
+            scheduledRegionReferences.merge(regionKey, 1, Integer::sum);
+            lastRegionFlushTick.remove(regionKey);
+            lastRegionFlushTick.put(regionKey, snapshotTick);
+            while (lastRegionFlushTick.size() > 4096) {
+                var oldest = lastRegionFlushTick.keySet().iterator(); oldest.next(); oldest.remove();
+            }
+            // Transfer ownership under one lock so persistence never observes a detached state.
+            regionStates.remove(regionKey, state);
+        }
+        try {
+            renderExecutor.execute(() -> {
+                try {
+                    MarketWebMapRegionImage image = new MarketWebMapRegionImage(state.dimensionId, state.regionX, state.regionZ);
+                    int[][] northDiskRows = seedDiskRows(cache, state.regionX, state.regionZ);
+                    int baseChunkX = state.regionX * CHUNKS_PER_REGION_AXIS;
+                    int baseChunkZ = state.regionZ * CHUNKS_PER_REGION_AXIS;
+                    int[][] regionBottomSeed = new int[CHUNKS_PER_REGION_AXIS][];
+                    for (int localX = 0; localX < CHUNKS_PER_REGION_AXIS; localX++) {
+                        for (int localZ = 0; localZ < CHUNKS_PER_REGION_AXIS; localZ++) {
+                            int chunkX = baseChunkX + localX;
+                            int chunkZ = baseChunkZ + localZ;
+                            MarketWebMapChunkSnapshot snapshot = state.snapshotOrNull(localX, localZ);
+                            if (snapshot == null) {
+                                if (state.accounted(localX, localZ) || !state.expected(localX, localZ)) {
+                                    image.markChunkSkipped(chunkX, chunkZ);
+                                }
+                                if (localZ == CHUNKS_PER_REGION_AXIS - 1 && state.accounted(localX, localZ)) {
+                                    regionBottomSeed[localX] = regionRenderer.unknownLastY();
+                                }
+                                continue;
+                            }
+                            int[] lastY = seedChunkLastY(state, localX, localZ, northDiskRows);
+                            image.putChunkPixels(chunkX, chunkZ, regionRenderer.renderChunk(snapshot, lastY));
+                            if (localZ == CHUNKS_PER_REGION_AXIS - 1) {
+                                regionBottomSeed[localX] = regionRenderer.lastYFromBottomRow(snapshot);
+                            }
+                        }
+                    }
+                    cacheBottomRows(cache, state, regionBottomSeed);
+                    diagRegionsScheduled.incrementAndGet();
+                    imageIO.submit(() -> {
+                        try {
+                            boolean wrote = image.writeDirty(cache, state.bestQuality(), nowMillis);
+                            if (wrote) { diagTilesWritten.incrementAndGet(); }
+                            // Complete all-missing regions also finish without changed pixels.
+                            markReaderRegionWritten(regionKey, state);
+                        } catch (RuntimeException exception) {
+                            retainRenderState(state);
+                            throw exception;
+                        } finally {
+                            releaseScheduledRegion(regionKey);
+                        }
+                    });
+                } catch (RuntimeException exception) {
+                    retainRenderState(state);
+                    releaseScheduledRegion(regionKey);
+                    LOGGER.warn("Market web map region render failed for {},{}", state.regionX, state.regionZ, exception);
+                } finally {
+                    renderingRegions.decrementAndGet();
+                }
+            });
+        } catch (RejectedExecutionException exception) {
+            renderingRegions.decrementAndGet();
+            retainRenderState(state);
+            releaseScheduledRegion(regionKey);
+        }
+    }
+
+    private synchronized void releaseScheduledRegion(long key) {
+        backgroundCadence.markDirty();
+        Integer count = scheduledRegionReferences.get(key);
+        if (count == null || count <= 1) {
+            scheduledRegionReferences.remove(key);
+        } else {
+            scheduledRegionReferences.put(key, count - 1);
+        }
     }
 
     private synchronized RegionState newRegionState(String dimensionId, int regionX, int regionZ) {
-        return new RegionState(
-                dimensionId,
-                regionX,
-                regionZ,
+        RegionState state = new RegionState(dimensionId, regionX, regionZ,
                 expectedRegionChunks.get(packRegion(regionX, regionZ)));
+        state.firstPendingTick = snapshotTick;
+        return state;
     }
 
     /** 一次性读北邻 region 的持久化底行(磁盘),供本 region 32 列 seed 复用,避免每列各读一次磁盘。无则 null。 */
@@ -1377,8 +1469,11 @@ public final class MarketWebMapRenderManager {
     }
 
     private void restoreProgress(ServerLevel level, RenderJob job) {
-        Path file = progressFile(level);
-        if (file == null || !Files.isRegularFile(file)) {
+        restoreProgress(progressFile(level), job);
+    }
+
+    private void restoreProgress(Path file, RenderJob job) {
+        if (progressInvalidated || file == null || !Files.isRegularFile(file)) {
             return;
         }
         try (Reader reader = Files.newBufferedReader(file, StandardCharsets.UTF_8)) {
@@ -1415,36 +1510,32 @@ public final class MarketWebMapRenderManager {
         if (file == null || job == null) {
             return;
         }
-        JsonObject json = new JsonObject();
-        json.addProperty("type", job.type);
-        json.addProperty("chunkIndex", job.completedChunkCount());
-        json.addProperty("regionIndex", job.regionIndex);
-        json.addProperty("localChunkIndex", job.localChunkIndex);
-        json.addProperty("processedChunks", job.processedChunks);
-        json.addProperty("processedRegions", job.processedRegions);
-        json.addProperty("totalChunks", job.totalChunks());
-        json.addProperty("totalRegions", job.totalRegions());
-        try {
-            Files.createDirectories(file.getParent());
-            Path tmp = file.resolveSibling(file.getFileName() + ".tmp");
-            try (Writer writer = Files.newBufferedWriter(tmp, StandardCharsets.UTF_8)) {
-                GSON.toJson(json, writer);
-            }
-            Files.move(tmp, file, java.nio.file.StandardCopyOption.REPLACE_EXISTING);
-        } catch (IOException exception) {
-            LOGGER.warn("Failed to save market web map render progress", exception);
-        }
+        ProgressSnapshot progress = new ProgressSnapshot(job.type, job.completedChunkCount(), job.regionIndex,
+                job.localChunkIndex, job.processedChunks, job.processedRegions, job.totalChunks(), job.totalRegions());
+        stateWriter.request(file, () -> {
+            JsonObject json = new JsonObject();
+            json.addProperty("type", progress.type());
+            json.addProperty("chunkIndex", progress.chunkIndex());
+            json.addProperty("regionIndex", progress.regionIndex());
+            json.addProperty("localChunkIndex", progress.localChunkIndex());
+            json.addProperty("processedChunks", progress.processedChunks());
+            json.addProperty("processedRegions", progress.processedRegions());
+            json.addProperty("totalChunks", progress.totalChunks());
+            json.addProperty("totalRegions", progress.totalRegions());
+            MarketWebMapStateWriter.writeJson(file, json);
+        });
     }
 
+    private record ProgressSnapshot(String type, int chunkIndex, int regionIndex, int localChunkIndex,
+                                    int processedChunks, int processedRegions, int totalChunks, int totalRegions) { }
+
     private void clearProgress(ServerLevel level) {
+        // Invalidate synchronously: deletion is queued and a new job may start before it runs.
+        progressInvalidated = true;
+        progressCheckpointPending = false;
         Path file = progressFile(level);
-        if (file == null) {
-            return;
-        }
-        try {
-            Files.deleteIfExists(file);
-        } catch (IOException exception) {
-            LOGGER.warn("Failed to clear market web map render progress", exception);
+        if (file != null) {
+            stateWriter.delete(file);
         }
     }
 
@@ -1490,7 +1581,10 @@ public final class MarketWebMapRenderManager {
         if (available <= 0) {
             return;
         }
-        int budget = Math.min(available, Math.max(1, configuredInt(ModConfig::marketWebDirtyRegionChunksPerInterval, 512)));
+        int budget = Math.min(Math.min(available, 32), Math.max(1, configuredInt(ModConfig::marketWebDirtyRegionChunksPerInterval, 512)));
+        if (!hasSamplingTime()) {
+            return;
+        }
         List<MarketWebMapDirtyChunkQueue.ChunkCoordinate> chunks = dirtyRegions.expandChunks(budget);
         if (chunks.isEmpty()) {
             return;
@@ -1498,50 +1592,21 @@ public final class MarketWebMapRenderManager {
         for (MarketWebMapDirtyChunkQueue.ChunkCoordinate chunk : chunks) {
             dirtyChunks.markDirty(chunk.dimensionId(), chunk.chunkX(), chunk.chunkZ());
         }
-        saveDirtyChunks(level);
+        backgroundCadence.markDirty();
     }
 
-    private static int configuredRenderThreads() {
-        int configured = configuredInt(ModConfig::marketWebRenderThreads, 0);
-        if (configured > 0) {
-            return configured;
-        }
-        return Math.max(1, Runtime.getRuntime().availableProcessors() / 3);
-    }
 
-    /**
-     * 本次渲染该用的 partial-flush 阈值。
-     * <p>曾尝试 fullrender 模式下"满 region(1024)才 flush"以求种子完整无线,但实测会卡死:inflight 上限(96)
-     * 下总有几个 chunk 还在途,region 永远差几个 complete 不了 → 解码出的 chunk 全憋在 regionStates 出不来
-     * (decoded 飞涨但 regionsScheduled/tilesWritten 冻结)。这正是 effectivePartialRegionFlushChunks 注释
-     * 警告的"等满 → 永不写图"。故回退:始终用配置的小阈值,让 region 渐进 flush、不憋死。
-     * 条纹由 RegionRenderer "北邻种子缺失时不画阴影(delta=0)"兜底解决,不再依赖满-region 攒齐种子。</p>
-     */
+    /** The fullreader gates its own state; ordinary visible work keeps a short partial threshold. */
     private int currentPartialFlushChunks() {
-        // fullrender(行同步)模式:【满 region 才 flush】,不提前 partial flush。
-        // 为什么:partial flush(攒 32 chunk 就写一版 + 从 regionStates 移除)会让 region 写出只含 32/1024 chunk 的
-        // 残缺图(实测=网页行内那些黑色断块),且提前 remove 后 regionStates 提前为空 → 行屏障误判"整行落盘"放行。
-        // 行同步下不会死锁:同一时刻只处理一行,inflight(96)足够让一行的 region 逐个 complete;个别永远读不到的
-        // chunk 由 tickBackground 的"行内残留主动 flush"(pipeline idle 时)兜底 flush 出去 → region 仍能落盘、行能推进。
-        // 返回 CHUNKS_PER_REGION 即"仅 complete() 才 flush"(complete 用的是 region 真实 expectedCount,稀疏 region 也能满)。
-        // 非 fullrender(黑块修复/area/radius):保持小阈值,渐进出图、不憋死(那些路径无行屏障兜底)。
-        if (activeJobIsFullRender()) {
-            return CHUNKS_PER_REGION;
-        }
-        return effectivePartialRegionFlushChunks(
-                MarketWebMapTileQuality.SERVER_REGION_SCAN,
+        // The fullreader has its own complete-only state. Ordinary visible work can flush independently.
+        return effectivePartialRegionFlushChunks(MarketWebMapTileQuality.SERVER_REGION_SCAN,
                 configuredInt(ModConfig::marketWebPartialRegionFlushChunks, 32));
     }
 
-    private boolean activeJobIsFullRender() {
-        RenderJob job = activeJob;
-        return job != null && job.fullRender();
-    }
-
     /** fullrender 读取器:某 region 写盘落地后调用(imageIO 线程,故 synchronized)。若它正是读取器在等的 region,置位放行。 */
-    private synchronized void markReaderRegionWritten(long regionKey) {
+    private synchronized void markReaderRegionWritten(long regionKey, RegionState completedState) {
         diagWriteCallbacks.incrementAndGet();
-        if (readerAwaitWriteValid && regionKey == readerAwaitWriteKey) {
+        if (readerAwaitWriteValid && regionKey == readerAwaitWriteKey && readerState == completedState) {
             readerRegionWritten = true;
             diagWriteHits.incrementAndGet();
         }
@@ -1776,6 +1841,7 @@ public final class MarketWebMapRenderManager {
         private final int expectedCount;
         private MarketWebMapTileQuality bestQuality = MarketWebMapTileQuality.UNKNOWN;
         private int count;
+        private long firstPendingTick;
         private boolean renderScheduled;
 
         private RegionState(String dimensionId, int regionX, int regionZ, List<Integer> expectedLocalChunks) {
@@ -1883,6 +1949,8 @@ public final class MarketWebMapRenderManager {
         private final List<MarketWebMapDirtyChunkQueue.ChunkCoordinate> chunks;
         private final int radiusBlocks;
         private final int totalRegions;
+        private final int totalChunkCount;
+        private final int[] completedChunkPrefix;
         private int regionIndex;
         private int localChunkIndex;
         private int chunkIndex;
@@ -1899,6 +1967,11 @@ public final class MarketWebMapRenderManager {
             this.chunks = chunks == null ? List.of() : List.copyOf(chunks);
             this.radiusBlocks = radiusBlocks;
             this.totalRegions = this.regions.isEmpty() ? countRegions(this.chunks) : this.regions.size();
+            this.completedChunkPrefix = new int[this.regions.size() + 1];
+            for (int i = 0; i < this.regions.size(); i++) {
+                this.completedChunkPrefix[i + 1] = this.completedChunkPrefix[i] + this.regions.get(i).localChunks().size();
+            }
+            this.totalChunkCount = this.regions.isEmpty() ? this.chunks.size() : this.completedChunkPrefix[this.regions.size()];
         }
 
         private static RenderJob full(List<MarketWebMapRegionScanService.RegionFile> regions) {
@@ -1959,14 +2032,7 @@ public final class MarketWebMapRenderManager {
         }
 
         private int totalChunks() {
-            if (fullRender()) {
-                int total = 0;
-                for (MarketWebMapRegionScanService.RegionFile region : regions) {
-                    total += region.localChunks().size();
-                }
-                return total;
-            }
-            return chunks.size();
+            return totalChunkCount;
         }
 
         private int totalRegions() {
@@ -2048,12 +2114,7 @@ public final class MarketWebMapRenderManager {
         }
 
         private int completedChunksBeforeRegion(int endRegionIndex) {
-            int total = 0;
-            int limit = Math.min(Math.max(0, endRegionIndex), regions.size());
-            for (int i = 0; i < limit; i++) {
-                total += regions.get(i).localChunks().size();
-            }
-            return total;
+            return completedChunkPrefix[Math.min(Math.max(0, endRegionIndex), regions.size())];
         }
 
         @SuppressWarnings("unused")

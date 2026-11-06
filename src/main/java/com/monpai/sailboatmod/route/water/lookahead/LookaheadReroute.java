@@ -21,11 +21,15 @@ public final class LookaheadReroute {
     /** @return a..b 的绕行航点(含首尾);找不到返回空。 */
     public static List<BlockPos> compute(RealBlockWaterMap map, BlockPos a, BlockPos b, int halfWidth) {
         try {
-            return com.monpai.sailboatmod.route.water.StrictWaterDetour.find(map, a, b, halfWidth, null,
-                    System.nanoTime() + 30_000_000_000L, ASTAR_MAX_EXPANSIONS);
+            return compute(map, a, b, halfWidth, System.nanoTime() + 30_000_000_000L);
         } catch (com.monpai.sailboatmod.route.water.StrictWaterDetour.Failure failed) {
             return List.of();
         }
+    }
+
+    static List<BlockPos> compute(RealBlockWaterMap map, BlockPos a, BlockPos b, int halfWidth, long deadline) {
+        return com.monpai.sailboatmod.route.water.StrictWaterDetour.find(map, a, b, halfWidth, null,
+                deadline, ASTAR_MAX_EXPANSIONS);
     }
 
     /** 贪婪拉直:从每个点出发,取窗口内最远的、连线仍 2×2 全水的点。 */

@@ -109,12 +109,10 @@ public final class MarketWebMapRegionImage {
         int[] base = cache.readSquareTilePixels(dimensionId, 0, regionX, regionZ);
         boolean changed = mergeTouchedPixels(base, pixels);
         boolean wrote = changed && cache.writeSquareTilePixels(dimensionId, 0, regionX, regionZ, base);
-        // base tile 有改动就同步更新 zoom 金字塔(部分完成也更新,否则缩略级别永远落后仍全黑)。
-        // writeZoomTile 内部逐像素 diff,反复部分刷新不会无谓重写未变的 zoom tile。
-        if (wrote) {
-            for (int zoom = 1; zoom <= MarketWebMapPyramidWriter.MAX_ZOOM; zoom++) {
-                wrote |= writeZoomTile(cache, zoom, base);
-            }
+        // A prior attempt may have saved the base before a zoom write failed. Check each zoom
+        // even when the base is unchanged; writeZoomTile's diff prevents redundant disk writes.
+        for (int zoom = 1; zoom <= MarketWebMapPyramidWriter.MAX_ZOOM; zoom++) {
+            wrote |= writeZoomTile(cache, zoom, base);
         }
         written = wrote;
         return wrote;

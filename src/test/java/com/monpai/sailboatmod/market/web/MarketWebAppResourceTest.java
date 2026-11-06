@@ -75,20 +75,21 @@ class MarketWebAppResourceTest {
                 "map tile endpoint should remain read-only");
         assertTrue(method.contains("writeJson(exchange, 405"),
                 "map tile endpoint should reject writes");
-        assertTrue(method.contains("\"Cache-Control\", \"public, max-age=86400, immutable\""),
-                "map tile PNGs should retain their public immutable cache policy");
-        var request = java.util.regex.Pattern.compile(
-                "callOnServerThread\\(\\(\\) -> \\{(.*?)\\}\\);", java.util.regex.Pattern.DOTALL).matcher(method);
-        assertTrue(request.find(), "tile discovery should be queued on the Minecraft server thread");
-        assertTrue(request.group(1).contains("service.requestMapTile(minecraftServer, lod, tileX, tileZ)"));
-        assertFalse(request.group(1).contains("readMapTile("),
-                "cached PNG disk reads must stay outside the Minecraft server-thread callback");
-        int cachedRead = method.indexOf("service.readMapTile(minecraftServer, lod, tileX, tileZ)");
-        assertTrue(cachedRead > request.end(),
-                "the HTTP worker should read cached PNG bytes after the server-thread request returns");
-        assertFalse(method.substring(request.end()).contains("callOnServerThread("),
-                "the cache read must not be wrapped in a second server-thread callback");
-        assertTrue(method.contains("writeBytes(exchange, 200, \"image/png\", bytes)"));
+        assertTrue(method.contains("serveCachedTerrain(exchange, () -> service.readMapTile"),
+                "map tile endpoint must read cache before miss-only discovery");
+        assertFalse(method.contains("callOnServerThread"), "cached PNG browsing never waits for the game thread");
+        int read = source.indexOf("byte[] bytes = read.get()", end);
+        int miss = source.indexOf("if (bytes == null || bytes.length == 0)", read);
+        int discovery = source.indexOf("discover.run()", miss);
+        assertTrue(read > end && miss > read && discovery > miss,
+                "discovery belongs inside the cache-miss branch");
+
+        int helperEnd = source.indexOf("private void handleMapChanges", read);
+        assertTrue(helperEnd > read);
+        String cacheResponder = source.substring(read, helperEnd);
+        assertTrue(cacheResponder.contains("\"Cache-Control\", \"public, no-cache\""),
+                "cached terrain must revalidate the actual PNG bytes after changed tiles or restarts");
+        assertTrue(cacheResponder.contains("writeBytes(exchange, 200, \"image/png\", bytes)"));
 
         String service = Files.readString(MARKET_WEB_SERVICE, StandardCharsets.UTF_8);
         int requestStart = service.indexOf("public void requestMapTile(");
@@ -99,7 +100,7 @@ class MarketWebAppResourceTest {
         String cachedReader = service.substring(readStart, readEnd);
         assertTrue(requestBody.contains(".enqueueTileRequest("));
         assertFalse(requestBody.contains(".readPng("),
-                "server-thread tile requests must not perform cached PNG disk IO");
+                "miss discovery must not perform cached PNG disk IO");
         assertTrue(cachedReader.contains("MarketWebMapTileCache.forServer(server)"));
         assertTrue(cachedReader.contains(".readPng(MarketWebMapConstants.OVERWORLD, tileX, tileZ)"),
                 "HTTP workers should read only already-rendered tile cache bytes");
@@ -220,9 +221,9 @@ class MarketWebAppResourceTest {
 
         assertTrue(mapJs.contains("function tileRefreshKey("),
                 "map client should derive a stable refresh key for tile image URLs");
-        assertTrue(mapJs.contains("?v=${encodeURIComponent(tileRefreshKey())}"),
-                "map tile image URLs need a cache-busting render/snapshot version query");
-        assertTrue(server.contains("\"Cache-Control\", \"no-cache, max-age=0\""),
+        assertTrue(mapJs.contains("?v=${encodeURIComponent(tileRefreshKey(tileZoom, tileX, tileZ))}"),
+                "map tile image URLs must carry the changed coordinate's terrain revision");
+        assertTrue(server.contains("\"Cache-Control\", \"public, no-cache\""),
                 "tile endpoint should require revalidation after map cache resets");
         assertTrue(commands.contains("clearall"),
                 "admin map commands should expose a full tile cache clear for bad current-version server tiles");
@@ -286,8 +287,8 @@ class MarketWebAppResourceTest {
                 "terrain layer should load cached images through Leaflet's native tile layer");
         assertTrue(mapJs.contains("/api/map/square/tile/overworld/${tileZoom}/"),
                 "terrain layer should use the server's squaremap tile endpoint");
-        assertTrue(mapJs.contains("encodeURIComponent(tileRefreshKey())"),
-                "tile URLs should carry a render version to refresh changed images");
+        assertTrue(mapJs.contains("encodeURIComponent(tileRefreshKey(tileZoom, tileX, tileZ))"),
+                "tile URLs should carry a per-coordinate render version to refresh changed images");
         assertTrue(mapJs.contains("errorTileUrl"),
                 "missing squaremap tiles should render as transparent placeholders instead of broken images");
         assertFalse(mapJs.contains("fetch(this.getTileUrl(coords), { cache: \"no-store\" })"),
@@ -465,8 +466,9 @@ class MarketWebAppResourceTest {
                 "admin commands should expose pause/resume/cancel for long renders");
         assertTrue(commands.contains("Dirty regions/chunks") && commands.contains("currentRegionX()"),
                 "admin render status should expose dirty queue and current cursor diagnostics");
-        assertTrue(renderService.contains("loadDirtyChunks") && renderService.contains("saveDirtyChunks"),
-                "render service should persist dirty chunk state across restarts");
+        assertTrue(renderService.contains("loadDirtyChunks") && renderService.contains("savePendingWork")
+                        && renderManager.contains("requestDirtyQueues"),
+                "render service should transfer pending work before saving a consistent dirty-state pair");
         assertTrue(renderService.contains("markRegionDirty"),
                 "region watcher events should feed the persistent dirty chunk queue");
         assertTrue(renderManager.contains("writeDirty"),

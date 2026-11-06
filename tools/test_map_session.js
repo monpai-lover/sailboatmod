@@ -35,6 +35,9 @@ function mapHarness() {
     cancelAnimationFrame() {},
     requestAnimationFrame: () => 1,
     fetch(url, options) {
+      if (String(url).includes("/api/map/changes?")) {
+        return Promise.resolve({ ok: true, json: async () => ({ revision: 0, session: "test-world", reset: false, tiles: [] }) });
+      }
       return new Promise((resolve) => requests.push({ url, options, resolve }));
     }
   };

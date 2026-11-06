@@ -69,7 +69,7 @@ class RouteLookaheadGuardTest {
             return LookaheadMaps.LOADED.contains(key)
                     ? LookaheadMaps.columns(ChunkPos.getX(key), ChunkPos.getZ(key), wallEnd) : null;
         };
-        return new RouteLookaheadGuard(host, columns, () -> new RealBlockWaterMap(null, 63),
+        return new RouteLookaheadGuard(host, columns, () -> LookaheadMaps.wall(wallEnd),
                 deferBackground ? background::add : Runnable::run, Runnable::run);
     }
 

@@ -1,17 +1,23 @@
 package com.monpai.sailboatmod.route.water.local;
 
 import com.monpai.sailboatmod.entity.SailboatEntity;
+import com.monpai.sailboatmod.entity.CarriageEntity;
 import com.monpai.sailboatmod.route.water.PortAsyncRuntime;
 import net.minecraft.core.BlockPos;
 import net.minecraft.server.level.ServerLevel;
 import net.minecraft.tags.FluidTags;
+import net.minecraft.world.entity.Entity;
+import net.minecraft.world.entity.boss.enderdragon.EndCrystal;
+import net.minecraft.world.entity.decoration.ArmorStand;
+import net.minecraft.world.entity.decoration.HangingEntity;
+import net.minecraft.world.entity.vehicle.Boat;
+import net.minecraft.world.entity.vehicle.ChestBoat;
 import net.minecraft.world.level.BlockGetter;
 import net.minecraft.world.level.block.Blocks;
 import net.minecraft.world.level.block.entity.BlockEntity;
 import net.minecraft.world.level.block.state.BlockState;
 import net.minecraft.world.level.material.FluidState;
 import net.minecraft.world.phys.AABB;
-import net.minecraft.world.phys.Vec3;
 import net.minecraft.world.phys.shapes.CollisionContext;
 import java.util.*;
 import java.util.concurrent.CompletableFuture;
@@ -22,7 +28,23 @@ import java.util.function.BooleanSupplier;
  */
 public final class LoadedBoatCollisionField {
     public static final int RADIUS=24;
+    private static final double PARKED_HORIZONTAL_SPEED_SQUARED=1.0E-6;
     private LoadedBoatCollisionField() { }
+
+    /** A temporary pause never makes a creature or an unknown vehicle into fixed route geometry.
+     * This only selects planner input; vanilla collision and pushing remain authoritative.
+     */
+    private static boolean staticDetourObstacle(Entity entity) {
+        if(entity.isPassenger()||entity.isVehicle()
+                ||entity.getDeltaMovement().horizontalDistanceSqr()>PARKED_HORIZONTAL_SPEED_SQUARED)return false;
+        if(entity instanceof SailboatEntity vessel)
+            return !vessel.isAutopilotActive()&&vessel.getEngineGear()==SailboatEntity.EngineGear.STOP;
+        if(entity instanceof CarriageEntity carriage)
+            return !carriage.isAutopilotActive()&&carriage.getEngineGear()==SailboatEntity.EngineGear.STOP;
+        // Unknown boat subclasses may drive themselves even while momentarily stationary.
+        return entity.getClass()==Boat.class||entity.getClass()==ChestBoat.class
+                ||entity instanceof ArmorStand||entity instanceof HangingEntity||entity instanceof EndCrystal;
+    }
     public static final class Probe {
         private final ServerLevel level;
         private final CollisionContext context;
@@ -36,14 +58,11 @@ public final class LoadedBoatCollisionField {
             this.level=level;this.capacity=capacity;this.context=CollisionContext.of(boat);
             this.hull=BoatCollisionField.Hull.at(boat.getBoundingBox(),interfaceY);
             this.view=new LoadedView(level);
-            // Velocity-expanded envelopes avoid immediately steering into a moving vessel.
+            // Only fixed decorations and genuinely parked known vehicles are static detour inputs.
+            // Creatures/traffic retain vanilla physical collision without repeatedly rewriting a route.
             var nearby=level.getEntities(boat,boat.getBoundingBox().inflate(RADIUS+8),
-                    e->e.isAlive()&&!e.isPassengerOfSameVehicle(boat)&&boat.canCollideWith(e));
-            this.entities=nearby.stream().limit(256).map(e->{
-                Vec3 v=e.getDeltaMovement();double distance=Math.hypot(v.x,v.z);
-                double scale=distance<1e-8?0:Math.min(8,3/distance);
-                return e.getBoundingBox().expandTowards(v.x*scale,0,v.z*scale);
-            }).toList();
+                    e->e.isAlive()&&!e.isPassengerOfSameVehicle(boat)&&boat.canCollideWith(e)&&staticDetourObstacle(e));
+            this.entities=nearby.stream().limit(256).map(Entity::getBoundingBox).toList();
             // Too many physical obstacles: do not silently omit the remainder and say CLEAR.
             if(nearby.size()>256)throw new IllegalStateException("Local vessel density exceeds collision snapshot budget");
         }

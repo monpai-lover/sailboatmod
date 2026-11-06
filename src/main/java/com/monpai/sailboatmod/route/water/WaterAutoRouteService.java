@@ -332,33 +332,16 @@ public final class WaterAutoRouteService {
                 sourceSnapshot.pos(), targetSnapshot.pos());
         var metas = new java.util.concurrent.atomic.AtomicReference<List<WaypointMeta>>(List.of());
         java.util.function.Supplier<WaterRouteResult<List<BlockPos>>> search = () -> {
-            probe.start(true, 10_000, () -> false);
-            var start = PortBerthValidator.Result.pending();
-            var end = PortBerthValidator.Result.pending();
-            do {
-                WaterRouteCancellation.check();
-                bar.update(1, "验证泊位 / 等待地形");
-                if (!start.usable()) start = probe.resolve(sourceZone);
-                if (start.verdict() == PortBerthValidator.Verdict.INVALID)
-                    return WaterRouteResult.failure(WaterRouteFailureReason.NO_SOURCE_BERTH);
-                if (!end.usable()) end = probe.resolve(targetZone);
-                if (end.verdict() == PortBerthValidator.Verdict.INVALID)
-                    return WaterRouteResult.failure(WaterRouteFailureReason.NO_TARGET_BERTH);
-                if (start.usable() && end.usable()) {
-                    BlockPos a = new BlockPos(start.berth().x(), start.berth().y(), start.berth().z());
-                    BlockPos b = new BlockPos(end.berth().x(), end.berth().y(), end.berth().z());
-                    WaterRouteResult<List<BlockPos>> reused = tryReuseNetwork(level, a, b, seaY,
-                            Math.max(1, policy.boatHalfWidth()), policy, metas, bar, predictor, probe.realSnapshots(), network);
-                    if (reused != null && reused.successful()) return reused;
-                    WaterRouteCancellation.check();
-                    return runSingleSegmentNbt(level, a, b, seaY, Math.max(1, policy.boatHalfWidth()),
-                            policy, metas, bar, predictor,
-                            com.monpai.sailboatmod.route.terrain.PredictionBudget.sixtySeconds(), probe.realSnapshots());
-                }
-                probe.retryPending();
-                java.util.concurrent.locks.LockSupport.parkNanos(50_000_000L);
-            } while (!probe.expired());
-            return WaterRouteResult.failure(WaterRouteFailureReason.TERRAIN_NOT_READY);
+            var ports = resolveNbtPorts(probe, sourceZone, targetZone, bar);
+            if (!ports.successful()) return WaterRouteResult.failure(ports.reason());
+            BlockPos a = ports.value().source(), b = ports.value().target();
+            WaterRouteResult<List<BlockPos>> reused = tryReuseNetwork(level, a, b, seaY,
+                    Math.max(1, policy.boatHalfWidth()), policy, metas, bar, predictor, probe.realSnapshots(), network);
+            if (reused != null && reused.successful()) return reused;
+            WaterRouteCancellation.check();
+            return runSingleSegmentNbt(level, a, b, seaY, Math.max(1, policy.boatHalfWidth()),
+                    policy, metas, bar, predictor,
+                    com.monpai.sailboatmod.route.terrain.PredictionBudget.sixtySeconds(), probe.realSnapshots());
         };
         WaterRouteTask task = new WaterRouteTask(level.dimension().location().toString(), sourceSnapshot.pos(),
                 targetSnapshot.pos(), sourceSnapshot.pos(), targetSnapshot.pos(), playerName(player), policy, search, result -> {
@@ -382,6 +365,139 @@ public final class WaterAutoRouteService {
         if (session != null) session.attach(task);
         bar.show();
         return WaterRouteResult.success(null);
+    }
+
+    /** A diagnostic calculation only: no route registration, network import, dock update, or save. */
+    public record ReadOnlyNbtPlan(@Nullable BlockPos sourceBerth, @Nullable BlockPos targetBerth,
+                                  WaterRouteResult<List<BlockPos>> result, List<WaypointMeta> metas) { }
+
+    private record ResolvedNbtPorts(BlockPos source, BlockPos target) { }
+    private record ReadOnlyNbtTerrain(com.monpai.sailboatmod.route.terrain.TerrainPredictor predictor,
+                                      PortTerrainProbe probe, int seaY) { }
+    // Debug jobs share the production task ceiling; HTTP transport no longer owns the calculation lifetime.
+    private static final long READ_ONLY_NBT_TIMEOUT_NANOS = java.util.concurrent.TimeUnit.MILLISECONDS.toNanos(
+            HierarchicalWaterRoutePlanner.MAX_TASK_MILLIS);
+
+    /** Worker-thread debug entry. Port validation and the solver are shared with OPTIMAL production requests. */
+    public static ReadOnlyNbtPlan planReadOnlyNbt(ServerLevel level, DockBerthResolver.DockZone source,
+                                                 DockBerthResolver.DockZone target) {
+        if (level == null || source == null || target == null)
+            return new ReadOnlyNbtPlan(null, null, WaterRouteResult.failure(WaterRouteFailureReason.NO_WATER_PATH), List.of());
+        var server = level.getServer();
+        if (server.isStopped())
+            return new ReadOnlyNbtPlan(null, null, WaterRouteResult.failure(WaterRouteFailureReason.CANCELLED), List.of());
+        if (server.isSameThread()) throw new IllegalStateException("Read-only route planning requires a worker");
+        return boundedReadOnlyNbt(null, null, deadline -> {
+            var sourceZone = PortTerrainProbe.zone(source);
+            var targetZone = PortTerrainProbe.zone(target);
+            // MinecraftServer.submit can execute inline after shutdown. This mailbox is drained
+            // only by server ticks, and cancelled entries never read live world metadata later.
+            var capture = PortAsyncRuntime.onMain(server, () -> {
+                if (server.isStopped() || System.nanoTime() >= deadline)
+                    throw new java.util.concurrent.CancellationException("Read-only port capture expired");
+                var predictor = com.monpai.sailboatmod.route.terrain.TellusTerrain.forLevel(level).orElse(null);
+                return new ReadOnlyNbtTerrain(predictor,
+                        PortTerrainProbe.capture(level, List.of(sourceZone, targetZone), predictor), level.getSeaLevel());
+            });
+            ReadOnlyNbtTerrain terrain;
+            try {
+                terrain = awaitReadOnlyCapture(capture, deadline);
+            } catch (InterruptedException stopped) {
+                capture.cancel(false);
+                Thread.currentThread().interrupt();
+                throw new java.util.concurrent.CancellationException("Read-only route interrupted");
+            } catch (java.util.concurrent.TimeoutException expired) {
+                capture.cancel(false);
+                return new ReadOnlyNbtPlan(null, null, WaterRouteResult.failure(WaterRouteFailureReason.TIMEOUT), List.of());
+            } catch (java.util.concurrent.ExecutionException failed) {
+                if (server.isStopped())
+                    throw new java.util.concurrent.CancellationException("Read-only route server stopped");
+                throw new java.util.concurrent.CompletionException(failed.getCause());
+            }
+            WaterRouteCancellation.check();
+            var ports = resolveNbtPorts(terrain.probe(), sourceZone, targetZone,
+                    new WaterRouteProgressBar(null, null, "", ""));
+            if (!ports.successful())
+                return new ReadOnlyNbtPlan(null, null, WaterRouteResult.failure(ports.reason()), List.of());
+            return runReadOnlyNbt(level, ports.value().source(), ports.value().target(), terrain.seaY(),
+                    terrain.predictor(), terrain.probe().realSnapshots());
+        });
+    }
+
+    private static <T> T awaitReadOnlyCapture(java.util.concurrent.CompletableFuture<T> capture, long deadline)
+            throws InterruptedException, java.util.concurrent.ExecutionException, java.util.concurrent.TimeoutException {
+        try {
+            while (true) {
+                WaterRouteCancellation.check();
+                long remaining = deadline - System.nanoTime();
+                if (remaining <= 0) throw new java.util.concurrent.TimeoutException("Read-only port capture expired");
+                try {
+                    return capture.get(Math.min(remaining, java.util.concurrent.TimeUnit.MILLISECONDS.toNanos(50)),
+                            java.util.concurrent.TimeUnit.NANOSECONDS);
+                } catch (java.util.concurrent.TimeoutException waitingForTick) {
+                    if (System.nanoTime() >= deadline) throw waitingForTick;
+                }
+            }
+        } finally {
+            if (!capture.isDone()) capture.cancel(false);
+        }
+    }
+
+    /** Same production solver for callers that already own validated berths and authoritative port snapshots. */
+    public static ReadOnlyNbtPlan planReadOnlyNbt(@Nullable ServerLevel level, BlockPos sourceBerth, BlockPos targetBerth,
+                                                 int seaY,
+                                                 @Nullable com.monpai.sailboatmod.route.terrain.TerrainPredictor predictor,
+                                                 java.util.Map<Long, NbtChunkWaterReader.ChunkColumns> portSnapshots) {
+        if (level != null && level.getServer().isSameThread())
+            throw new IllegalStateException("Read-only route planning requires a worker");
+        return boundedReadOnlyNbt(sourceBerth, targetBerth,
+                deadline -> runReadOnlyNbt(level, sourceBerth, targetBerth, seaY, predictor, portSnapshots));
+    }
+
+    private static ReadOnlyNbtPlan boundedReadOnlyNbt(@Nullable BlockPos sourceBerth, @Nullable BlockPos targetBerth,
+            java.util.function.LongFunction<ReadOnlyNbtPlan> work) {
+        long deadline = System.nanoTime() + READ_ONLY_NBT_TIMEOUT_NANOS;
+        try {
+            return WaterRouteCancellation.run(() -> System.nanoTime() >= deadline, () -> work.apply(deadline));
+        } catch (java.util.concurrent.CancellationException stopped) {
+            var reason = System.nanoTime() >= deadline ? WaterRouteFailureReason.TIMEOUT : WaterRouteFailureReason.CANCELLED;
+            return new ReadOnlyNbtPlan(sourceBerth, targetBerth, WaterRouteResult.failure(reason), List.of());
+        }
+    }
+
+    private static ReadOnlyNbtPlan runReadOnlyNbt(@Nullable ServerLevel level, BlockPos sourceBerth, BlockPos targetBerth,
+            int seaY, @Nullable com.monpai.sailboatmod.route.terrain.TerrainPredictor predictor,
+            java.util.Map<Long, NbtChunkWaterReader.ChunkColumns> portSnapshots) {
+        var metas = new java.util.concurrent.atomic.AtomicReference<List<WaypointMeta>>(List.of());
+        WaterRoutePolicy policy = WaterRoutePolicy.defaults();
+        var result = runSingleSegmentNbt(level, sourceBerth, targetBerth, seaY, Math.max(1, policy.boatHalfWidth()),
+                policy, metas, new WaterRouteProgressBar(null, null, "", ""), predictor,
+                com.monpai.sailboatmod.route.terrain.PredictionBudget.sixtySeconds(), portSnapshots);
+        return new ReadOnlyNbtPlan(sourceBerth, targetBerth, result, List.copyOf(metas.get()));
+    }
+
+    private static WaterRouteResult<ResolvedNbtPorts> resolveNbtPorts(PortTerrainProbe probe,
+            PortBerthValidator.Zone sourceZone, PortBerthValidator.Zone targetZone, WaterRouteProgressBar bar) {
+        probe.start(true, 10_000, WaterRouteCancellation::cancelled);
+        var start = PortBerthValidator.Result.pending();
+        var end = PortBerthValidator.Result.pending();
+        do {
+            WaterRouteCancellation.check();
+            bar.update(1, "验证泊位 / 等待地形");
+            if (!start.usable()) start = probe.resolve(sourceZone);
+            if (start.verdict() == PortBerthValidator.Verdict.INVALID)
+                return WaterRouteResult.failure(WaterRouteFailureReason.NO_SOURCE_BERTH);
+            if (!end.usable()) end = probe.resolve(targetZone);
+            if (end.verdict() == PortBerthValidator.Verdict.INVALID)
+                return WaterRouteResult.failure(WaterRouteFailureReason.NO_TARGET_BERTH);
+            if (start.usable() && end.usable())
+                return WaterRouteResult.success(new ResolvedNbtPorts(
+                        new BlockPos(start.berth().x(), start.berth().y(), start.berth().z()),
+                        new BlockPos(end.berth().x(), end.berth().y(), end.berth().z())));
+            probe.retryPending();
+            java.util.concurrent.locks.LockSupport.parkNanos(50_000_000L);
+        } while (!probe.expired());
+        return WaterRouteResult.failure(WaterRouteFailureReason.TERRAIN_NOT_READY);
     }
 
     /**
@@ -626,8 +742,11 @@ public final class WaterAutoRouteService {
             @Nullable FarRouteTerrain far, @Nullable com.monpai.sailboatmod.route.terrain.TerrainPredictor predictor,
             BlockPos source, BlockPos target, int seaY) {
         if (far == null || predictor == null) return predictor;
+        // Tellus seaLevel is the inclusive top water block, while this predictor
+        // accepts boat Y. Keep mask-only columns on the same plane as the validated ports.
+        int boatY = source == null ? seaY : source.getY();
         return new com.monpai.sailboatmod.route.terrain.SurfaceSamplerPredictor(far.landMask(), predictor, source, target,
-                com.monpai.sailboatmod.route.terrain.SurfaceSamplerPredictor.DEFAULT_NEAR_BLOCKS, seaY);
+                com.monpai.sailboatmod.route.terrain.SurfaceSamplerPredictor.DEFAULT_NEAR_BLOCKS, boatY);
     }
 
     /** 同步的陆地遮罩世界(全局网格搜索在路线 worker 线程上运行;遮罩瓦片由 Tellus 缓存,取不到当陆)。 */
@@ -684,13 +803,15 @@ public final class WaterAutoRouteService {
                 // Tellus:全局水域网格(陆地遮罩 + 内置海路概览启发)直接给出导向与开阔直航段,取代逐点 LOD 粗寻。
                 bar.update(4, "全局水域走向");
                 long guidanceStart = System.nanoTime();
+                WaterRouteWorld nativeMask = landMaskWorld(far.landMask(), source.getY());
                 GlobalWaterGridPlanner.Guidance guidance = GlobalWaterGridPlanner.plan(
-                        landMaskWorld(far.landMask(), source.getY()), far.seaDistances(), source, target, source.getY());
+                        nativeMask, far.seaDistances(), source, target, source.getY());
                 LOGGER.info("[WaterPath] 远航全局导向 {} cell={} 扩展={} 航段={} 耗时={}ms", guidance.successful() ? "成功" : guidance.failure(),
                         guidance.cellSize(), guidance.expandedNodes(), guidance.legs().size(), (System.nanoTime() - guidanceStart) / 1_000_000L);
                 if (!guidance.successful()) return WaterRouteResult.failure(guidance.failure());
                 planner = HierarchicalWaterRoutePlanner.withGuidance(detailed, source, target,
-                        WaterRoutePolicy.nbtRefine(), raw -> finishDetailedSegment(map, raw, seaY, boatHalfWidth), guidance.legs());
+                        WaterRoutePolicy.nbtRefine(), raw -> finishDetailedSegment(map, raw, seaY, boatHalfWidth), guidance.legs(),
+                        GlobalWaterGridPlanner.directRecertifier(nativeMask, source.getY()));
             } else {
                 planner = new HierarchicalWaterRoutePlanner(coarse, detailed, source, target,
                         WaterRoutePolicy.nbtRefine(), raw -> finishDetailedSegment(map, raw, seaY, boatHalfWidth));

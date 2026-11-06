@@ -1163,6 +1163,12 @@ public class SailboatEntity extends Boat implements GeoEntity, MenuProvider, Tra
     }
 
     private void limitTurnRate() {
+        // Remote poses already contain the driver's steering. Reapplying the manual
+        // limit after network lerp discards yaw while position/lerp steps keep advancing.
+        if (level().isClientSide && !isControlledByLocalInstance()) {
+            lastTickYaw = getYRot();
+            return;
+        }
         Entity controller = getControllingPassenger();
         if (controller == null) {
             lastTickYaw = getYRot();
@@ -1277,6 +1283,39 @@ public class SailboatEntity extends Boat implements GeoEntity, MenuProvider, Tra
         this.sailboatLerpYaw = yRot;
         this.sailboatLerpPitch = xRot;
         this.sailboatLerpSteps = networkLerpSteps(posRotationIncrements, isAutopilotActive());
+    }
+
+    // Vanilla movement packets omit unchanged position or rotation. The packet
+    // listener must retain our pending target, not Boat's unused private lerp state.
+    @Override
+    public double lerpTargetX() {
+        return sailboatLerpSteps > 0 ? sailboatLerpX : getX();
+    }
+
+    @Override
+    public double lerpTargetY() {
+        return sailboatLerpSteps > 0 ? sailboatLerpY : getY();
+    }
+
+    @Override
+    public double lerpTargetZ() {
+        return sailboatLerpSteps > 0 ? sailboatLerpZ : getZ();
+    }
+
+    @Override
+    public float lerpTargetXRot() {
+        return sailboatLerpSteps > 0 ? (float) sailboatLerpPitch : getXRot();
+    }
+
+    @Override
+    public float lerpTargetYRot() {
+        return sailboatLerpSteps > 0 ? (float) sailboatLerpYaw : getYRot();
+    }
+
+    @Override
+    public float getViewYRot(float partialTick) {
+        // Network setRot wraps at 360; rendering must interpolate along the short arc.
+        return partialTick == 1.0F ? getYRot() : Mth.rotLerp(partialTick, yRotO, getYRot());
     }
 
     private void tickNetworkLerp() {
@@ -2343,7 +2382,7 @@ public class SailboatEntity extends Boat implements GeoEntity, MenuProvider, Tra
             finishAutopilotAndUnloadAtDestination();
             return AutopilotCommand.inactive();
         }
-        if (rerouteRequests.isInFlight()) {
+        if (rerouteRequests.blocksMotion()) {
             setNavigationPhase(com.monpai.sailboatmod.route.NavigationPhase.RECOVERING);
             autopilotSafeSpeedCap = 0;
             autopilotNoProgressTicks = 0;
@@ -2369,6 +2408,7 @@ public class SailboatEntity extends Boat implements GeoEntity, MenuProvider, Tra
         autopilotTargetIndex = Mth.clamp(autopilotTargetIndex, 0, autopilotRoute.size() - 1);
         if (lookaheadGuard != null && lookaheadGuard.shouldHold()) {
             setNavigationPhase(com.monpai.sailboatmod.route.NavigationPhase.WAITING_TERRAIN);
+            autopilotSafeSpeedCap = 0;
             autopilotNoProgressTicks = 0; // 主动停船等前方绕行结果,不算卡住(不触发脱困)
             return new AutopilotCommand(true, false, 0.0F, 0.0F, EngineGear.STOP);
         }
@@ -4225,7 +4265,7 @@ public class SailboatEntity extends Boat implements GeoEntity, MenuProvider, Tra
 
         @Override
         public boolean claimRerouteSlot() {
-            AutopilotRerouteRequests.Request claimed = rerouteRequests.claim();
+            AutopilotRerouteRequests.Request claimed = rerouteRequests.claimLookahead();
             if (claimed == null) {
                 return false;
             }

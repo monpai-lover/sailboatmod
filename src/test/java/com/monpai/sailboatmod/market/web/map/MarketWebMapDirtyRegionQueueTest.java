@@ -57,4 +57,40 @@ class MarketWebMapDirtyRegionQueueTest {
         assertEquals(new MarketWebMapDirtyChunkQueue.ChunkCoordinate(MarketWebMapConstants.OVERWORLD, -96 + 17, 128),
                 loaded.expandChunks(1).get(0));
     }
+
+    @Test
+    void recoveryRewindsCurrentRegionWithoutChangingOrdinaryDirtyDeduplication() {
+        MarketWebMapDirtyRegionQueue queue = new MarketWebMapDirtyRegionQueue();
+        queue.markDirty(MarketWebMapConstants.OVERWORLD, -3, 4);
+        queue.expandChunks(32);
+
+        assertEquals(false, queue.markDirty(MarketWebMapConstants.OVERWORLD, -3, 4));
+        assertEquals(32, queue.inProgressLocalChunk());
+        assertTrue(queue.markDirtyFromStart(MarketWebMapConstants.OVERWORLD, -3, 4));
+        assertEquals(0, queue.inProgressLocalChunk());
+        assertEquals(false, queue.markDirtyFromStart(MarketWebMapConstants.OVERWORLD, -3, 4));
+        assertEquals(1, queue.size());
+
+        Path file = tempDir.resolve("recovered_dirty_regions.json");
+        assertTrue(queue.save(file));
+        MarketWebMapDirtyRegionQueue loaded = new MarketWebMapDirtyRegionQueue();
+        assertEquals(1, loaded.load(file));
+        assertEquals(new MarketWebMapDirtyChunkQueue.ChunkCoordinate(MarketWebMapConstants.OVERWORLD, -96, 128),
+                loaded.expandChunks(1).getFirst(), "restart must replay the previously in-flight prefix");
+    }
+
+    @Test
+    void recoveryAdmitsDistinctAcceptedRegionsWithoutTrimmingExistingRecoveryWork() {
+        MarketWebMapDirtyRegionQueue queue = new MarketWebMapDirtyRegionQueue();
+        queue.markDirty(MarketWebMapConstants.OVERWORLD, 0, 0);
+        queue.expandChunks(8);
+        for (int regionX = 1; regionX <= 64; regionX++) {
+            assertTrue(queue.markDirtyFromStart(MarketWebMapConstants.OVERWORLD, regionX, 0));
+        }
+        assertEquals(65, queue.size());
+        assertEquals(false, queue.markDirtyFromStart(MarketWebMapConstants.OVERWORLD, 64, 0));
+        assertEquals(false, queue.markDirtyFromStart("minecraft:the_nether", 0, 0));
+        assertEquals(65, queue.size());
+        assertEquals(8, queue.inProgressLocalChunk());
+    }
 }

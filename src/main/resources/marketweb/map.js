@@ -10,6 +10,7 @@
   /** Finished shipments change rarely; the history list is refetched this often while it is shown. */
   const HISTORY_REFRESH_MS = 30000;
   const MAP_REFRESH_MS = 30000;
+  const TERRAIN_REFRESH_MS = 2000;
   const DESKTOP_TILE_CACHE_LIMIT = 320;
   const MOBILE_TILE_CACHE_LIMIT = 96;
   const TILE_OVERDRAW_PIXELS = 1;
@@ -260,6 +261,16 @@
     animationFrame: 0,
     tileCache: new Map(),
     missingTiles: new Map(),
+    terrainRevisions: new Map(),
+    terrainSession: "",
+    terrainRevision: 0,
+    terrainDimension: "minecraft:overworld",
+    terrainGeneration: 0,
+    terrainFailedTiles: new Map(),
+    terrainPollToken: null,
+    terrainPollTimer: 0,
+    terrainPollOwner: null,
+    terrainVisibilityListener: null,
     lastPointerHitTestAt: 0,
     panels: {
       leftCollapsed: true,
@@ -386,11 +397,13 @@
         scheduleRender();
       }
     }
-    return { mountedToken: state.mountedToken, sessionToken };
+    return { mountedToken: state.mountedToken, sessionToken, apiBase: state.apiBase, dimension: state.terrainDimension };
   }
 
   function requestContextCurrent(context) {
     return context.mountedToken === state.mountedToken
+      && context.apiBase === state.apiBase
+      && context.dimension === state.terrainDimension
       && context.sessionToken === state.sessionToken
       && context.sessionToken === currentSessionToken();
   }
@@ -718,18 +731,34 @@
     if (!layer) {
       return layer;
     }
+    const view = { mountedToken: state.mountedToken, apiBase: state.apiBase, dimension: state.terrainDimension };
+    const viewCurrent = () => view.mountedToken === state.mountedToken && view.apiBase === state.apiBase
+      && view.dimension === state.terrainDimension;
     layer.getTileUrl = (coords) => {
       const tileZoom = tileZoomFromLeafletZoom(coords.z);
-      return `${state.apiBase}/api/map/square/tile/overworld/${tileZoom}/${coords.x}_${coords.y}.png?v=${encodeURIComponent(tileRefreshKey())}`;
+      return terrainTileUrl(tileZoom, coords.x, coords.y);
     };
-    layer.on("tileerror", () => {
-      if (state.leafletRetryTimer) {
-        return;
+    layer.on("tileerror", (event) => {
+      if (!viewCurrent() || !event.tile || !event.coords) return;
+      state.terrainFailedTiles.set(event.tile, { layer, coords: event.coords });
+      trimTerrainMap(state.terrainFailedTiles);
+      scheduleMissingTerrainRetry();
+    });
+    const noteVersion = (event) => {
+      if (!viewCurrent()) return;
+      state.terrainFailedTiles.delete(event.tile);
+      const version = String(event.tile?.src || "").match(/[?&]v=([^&]+)/);
+      if (event.tile && version) {
+        event.tile.__terrainVersion = decodeURIComponent(version[1]);
       }
-      state.leafletRetryTimer = window.setTimeout(() => {
-        state.leafletRetryTimer = 0;
-        redrawSquaremapTerrain();
-      }, MISSING_TILE_RETRY_MS);
+    };
+    layer.on("tileloadstart", (event) => {
+      if (viewCurrent() && event.tile) event.tile.__terrainGeneration = state.terrainGeneration;
+      noteVersion(event);
+    });
+    layer.on("tileload", noteVersion);
+    layer.on("tileunload", (event) => {
+      state.terrainFailedTiles.delete(event.tile);
     });
     return layer;
   }
@@ -836,6 +865,7 @@
     state.lastTerrainSync = { x: cx, z: cz, zoom: leafletZoom };
     state.leafletMap.invalidateSize(false);
     state.leafletMap.setView(window.L.latLng(-cz, cx), leafletZoom, { animate: false });
+    refreshTerrainTiles();
     renderBasemapAttribution();
   }
 
@@ -849,6 +879,7 @@
       state.tellusRetryTimer = 0;
     }
     state.basemapLayer = null;
+    state.terrainFailedTiles.clear();
     state.tellusLayer = null;
     state.basemapImages = new Map();
     state.basemapTiles = new Map();
@@ -954,33 +985,168 @@
     return `${tileZoom},${tileX},${tileZ}`;
   }
 
-  function tileRefreshKey() {
+  function tileRefreshKey(tileZoom, tileX, tileZ) {
     const snapshot = state.snapshot || {};
-    return [
-      snapshot.renderVersion || snapshot.tileCacheVersion || 0,
-      snapshot.tileEpoch || 0,
-      snapshot.territoryRevision || 0,
-      snapshot.marketRevision || 0,
-      state.airportRevision || 0,
-      state.selected?.type === "airport" ? state.selected.data?.airportId : "",
-      state.localTileRevision || 0
-    ].join("-");
+    return `${snapshot.renderVersion || snapshot.tileCacheVersion || 0}-${state.terrainRevisions.get(tileKey(tileZoom, tileX, tileZ)) || 0}`;
+  }
+
+  function terrainTileUrl(tileZoom, tileX, tileZ) {
+    return `${state.apiBase}/api/map/square/tile/overworld/${tileZoom}/${tileX}_${tileZ}.png?v=${encodeURIComponent(tileRefreshKey(tileZoom, tileX, tileZ))}`;
+  }
+
+  function trimTerrainMap(map) {
+    while (map.size > tileCacheLimit()) map.delete(map.keys().next().value);
   }
 
   function clearLocalTileImages() {
     state.tileCache = new Map();
     state.missingTiles = new Map();
     state.localTileRevision = (state.localTileRevision || 0) + 1;
-    redrawSquaremapTerrain();
+    state.terrainGeneration++;
+    refreshTerrainTiles();
   }
 
-  // 软刷新:后台渲染更新瓦片时调,不 new Map() 清空整个缓存(那会让全图重下、每次轮询都闪),
-  // 只 bump localTileRevision → tileRefreshKey 变 → 新 ?v。可见瓦片按新 URL 取真正变了的内容;
-  // 未变的瓦片旧 URL 仍在浏览器磁盘缓存,长缓存命中零网络。reset 按钮仍用 clearLocalTileImages 强清。
-  function softRefreshTiles() {
-    state.missingTiles = new Map(); // 给之前 404 的瓦片一次重试机会(渲染后可能已出图)
-    state.localTileRevision = (state.localTileRevision || 0) + 1;
-    redrawSquaremapTerrain();
+  function applyTerrainChanges(data) {
+    if (!data || data.dimension !== state.terrainDimension || typeof data.session !== "string"
+      || !Number.isSafeInteger(data.revision) || data.revision < 0) return;
+    if (data.session === state.terrainSession && data.revision < state.terrainRevision) return;
+    if (data.reset || (state.terrainSession && state.terrainSession !== data.session)) {
+      state.terrainRevisions.clear();
+      state.terrainGeneration++;
+    }
+    state.terrainSession = data.session;
+    state.terrainRevision = data.revision;
+    let overflow = false;
+    for (const tile of (Array.isArray(data.tiles) ? data.tiles : []).slice(0, 4096)) {
+      if (tile.kind !== "square" || !Number.isInteger(tile.zoom) || tile.zoom < 0 || tile.zoom > MAX_TILE_ZOOM
+        || !Number.isInteger(tile.x) || !Number.isInteger(tile.z) || !Number.isSafeInteger(tile.revision)) continue;
+      const key = tileKey(tile.zoom, tile.x, tile.z);
+      state.terrainRevisions.set(key, tile.revision);
+      state.missingTiles.delete(key);
+      if (state.terrainRevisions.size > tileCacheLimit()) { trimTerrainMap(state.terrainRevisions); overflow = true; }
+    }
+    if (overflow) state.terrainGeneration++;
+  }
+
+  // Revalidate at most 64 existing images per turn; never redraw a whole Leaflet grid on a background write.
+  // On history overflow the generation marks visible images for bounded conditional revalidation.
+  function refreshTerrainTiles() {
+    if (!terrainPollingVisible()) return;
+    let remaining = 64;
+    let pending = false;
+    const refresh = (image, zoom, x, z) => {
+      if (!image) return;
+      if (state.canvas) {
+        const range = visibleTileRange(zoom);
+        if (x < range.minX || x > range.maxX || z < range.minZ || z > range.maxZ) return;
+      }
+      const key = tileKey(zoom, x, z);
+      const fallback = (image.__terrainGeneration || 0) !== state.terrainGeneration;
+      const revision = state.terrainRevisions.get(key);
+      if (!fallback && (revision == null || image.__terrainVersion === tileRefreshKey(zoom, x, z))) return;
+      if (remaining <= 0) { pending = true; return; }
+      remaining--;
+      if (fallback) {
+        state.terrainRevisions.set(key, `check-${state.terrainSession}-${state.terrainRevision}-${state.terrainGeneration}`);
+        trimTerrainMap(state.terrainRevisions);
+      }
+      image.__terrainGeneration = state.terrainGeneration;
+      image.__terrainVersion = tileRefreshKey(zoom, x, z);
+      image.src = terrainTileUrl(zoom, x, z);
+    };
+    for (const layer of state.leafletLayers || []) {
+      for (const entry of Object.values(layer?._tiles || {})) {
+        if (entry.current === false || !entry.coords || entry.el?.isConnected === false) continue;
+        refresh(entry.el, tileZoomFromLeafletZoom(entry.coords.z), entry.coords.x, entry.coords.y);
+      }
+    }
+    for (const [key, image] of state.tileCache) {
+      const [zoom, x, z] = key.split(",").map(Number);
+      refresh(image, zoom, x, z);
+    }
+    if (pending && !state.terrainRefreshTimer) {
+      const context = captureRequestContext();
+      state.terrainRefreshTimer = window.setTimeout(() => {
+        state.terrainRefreshTimer = 0;
+        if (requestContextCurrent(context)) refreshTerrainTiles();
+      }, 100);
+    }
+    scheduleRender();
+  }
+
+  function scheduleMissingTerrainRetry() {
+    if (state.leafletRetryTimer) return;
+    const context = captureRequestContext();
+    state.leafletRetryTimer = window.setTimeout(() => {
+      state.leafletRetryTimer = 0;
+      if (!requestContextCurrent(context) || !terrainPollingVisible()) return;
+      let remaining = 64;
+      for (const [image, failed] of state.terrainFailedTiles) {
+        state.terrainFailedTiles.delete(image);
+        if (!image.isConnected) continue;
+        image.src = `${failed.layer.getTileUrl(failed.coords)}&retry=${Date.now()}`;
+        if (--remaining <= 0) break;
+      }
+      for (const [key, missedAt] of state.missingTiles) {
+        if (Date.now() - missedAt >= MISSING_TILE_RETRY_MS) state.missingTiles.delete(key);
+      }
+      if (state.terrainFailedTiles.size || state.missingTiles.size) scheduleMissingTerrainRetry();
+      scheduleRender();
+    }, MISSING_TILE_RETRY_MS);
+  }
+
+  function terrainPollingVisible() {
+    return !!state.root && (typeof document === "undefined"
+      || (!document.hidden && document.visibilityState !== "hidden"));
+  }
+
+  function stopTerrainPolling() {
+    state.terrainPollOwner = null;
+    if (state.terrainPollTimer) {
+      window.clearInterval(state.terrainPollTimer);
+      state.terrainPollTimer = 0;
+    }
+    if (state.terrainVisibilityListener && typeof document !== "undefined") {
+      document.removeEventListener?.("visibilitychange", state.terrainVisibilityListener);
+    }
+    state.terrainVisibilityListener = null;
+  }
+
+  function startTerrainPolling() {
+    stopTerrainPolling();
+    if (!state.root) return;
+    const owner = { mountedToken: state.mountedToken, root: state.root };
+    state.terrainPollOwner = owner;
+    const poll = () => {
+      if (state.terrainPollOwner !== owner || state.mountedToken !== owner.mountedToken
+        || state.root !== owner.root || !terrainPollingVisible()) return;
+      pollTerrainChanges();
+    };
+    state.terrainPollTimer = window.setInterval(poll, TERRAIN_REFRESH_MS);
+    if (typeof document !== "undefined" && document.addEventListener) {
+      state.terrainVisibilityListener = poll;
+      document.addEventListener("visibilitychange", poll);
+    }
+    poll();
+  }
+
+  async function pollTerrainChanges() {
+    if (!terrainPollingVisible() || state.terrainPollToken) return;
+    const context = captureRequestContext();
+    // Login changes discard old callbacks, but public terrain misses still need a fresh retry owner.
+    if (state.terrainFailedTiles.size || state.missingTiles.size) scheduleMissingTerrainRetry();
+    const token = {};
+    state.terrainPollToken = token;
+    const session = encodeURIComponent(state.terrainSession);
+    const dimension = encodeURIComponent(state.terrainDimension);
+    try {
+      const data = await fetchOptionalJson(`/api/map/changes?dimension=${dimension}&since=${state.terrainRevision}&session=${session}`, null);
+      if (!requestContextCurrent(context) || !terrainPollingVisible()) return;
+      applyTerrainChanges(data);
+      refreshTerrainTiles();
+    } finally {
+      if (state.terrainPollToken === token) state.terrainPollToken = null;
+    }
   }
 
   function trimTileCache() {
@@ -1004,25 +1170,40 @@
       state.missingTiles.delete(key);
     }
     if (state.tileCache.has(key)) {
-      return state.tileCache.get(key) || null;
+      const image = state.tileCache.get(key);
+      const fallback = image && (image.__terrainGeneration || 0) !== state.terrainGeneration;
+      if (image && (fallback || (state.terrainRevisions.has(key)
+        && image.__terrainVersion !== tileRefreshKey(tileZoom, tileX, tileZ)))) {
+        if (fallback) {
+          state.terrainRevisions.set(key, `check-${state.terrainSession}-${state.terrainRevision}-${state.terrainGeneration}`);
+          trimTerrainMap(state.terrainRevisions);
+        }
+        image.__terrainGeneration = state.terrainGeneration;
+        image.__terrainVersion = tileRefreshKey(tileZoom, tileX, tileZ);
+        image.src = terrainTileUrl(tileZoom, tileX, tileZ);
+      }
+      return image || null;
     }
     const image = new Image();
+    const context = captureRequestContext();
+    image.__terrainGeneration = state.terrainGeneration;
+    image.__terrainVersion = tileRefreshKey(tileZoom, tileX, tileZ);
     image.decoding = "async";
     image.onload = () => {
-      scheduleRender();
+      if (requestContextCurrent(context)) {
+        if (!state.leafletMap) state.staticKey = "";
+        scheduleRender();
+      }
     };
     image.onerror = () => {
+      if (!requestContextCurrent(context) || state.tileCache.get(key) !== image) return;
       state.tileCache.delete(key);
       state.missingTiles.set(key, Date.now());
-      window.setTimeout(() => {
-        if (state.missingTiles.has(key)) {
-          state.missingTiles.delete(key);
-          scheduleRender();
-        }
-      }, MISSING_TILE_RETRY_MS);
+      trimTerrainMap(state.missingTiles);
+      scheduleMissingTerrainRetry();
       scheduleRender();
     };
-    image.src = `${state.apiBase}/api/map/square/tile/overworld/${tileZoom}/${tileX}_${tileZ}.png?v=${encodeURIComponent(tileRefreshKey())}`;
+    image.src = terrainTileUrl(tileZoom, tileX, tileZ);
     state.tileCache.set(key, image);
     trimTileCache();
     return image;
@@ -2447,7 +2628,6 @@
     state.shipments = applyShipmentInterpolation(shipments.shipments || []);
     applySnapshotFocus();
     applyPendingShipmentFocus();
-    redrawSquaremapTerrain();
     renderLayerToggles();
     renderMarketList();
     renderShipments();
@@ -2497,8 +2677,7 @@
     scheduleRender();
   }
 
-  // 轻量轮询 snapshot:服务端每渲染一张瓦片 tileEpoch +1。检测到变化就清本地瓦片缓存重绘,
-  // 这样 render 指令渲染完(radius/full/area)网页能自动拉到新瓦片,无需手动刷新页面。
+  // Metadata revisions and the bounded terrain change stream have independent refresh paths.
   async function pollMapRefresh() {
     const context = captureRequestContext();
     const focused = encodeURIComponent(state.focusedMarketId || "");
@@ -2512,17 +2691,15 @@
     scheduleRender();
     const prev = state.snapshot || {};
     const predictionChanged = (next.tellusRenderVersion || 0) !== (prev.tellusRenderVersion || 0);
-    const changed = (next.tileEpoch || 0) !== (prev.tileEpoch || 0)
-      || (next.renderVersion || 0) !== (prev.renderVersion || 0)
-      || predictionChanged;
-    if (!changed) {
-      return;
-    }
+    const rendererChanged = (next.renderVersion || 0) !== (prev.renderVersion || 0);
     state.snapshot = next;
     if (predictionChanged) {
       state.tellusLayer?.redraw();
     }
-    softRefreshTiles(); // 软刷新:只 bump 版本号让可见瓦片按新 ?v 增量取新图,不清空整个缓存
+    if (rendererChanged) {
+      state.terrainGeneration++;
+      refreshTerrainTiles();
+    }
   }
 
   function mount(root, options = {}) {
@@ -2536,6 +2713,7 @@
       renderShipments();
       renderSelection();
       scheduleRender();
+      pollTerrainChanges();
       return;
     }
     unmount();
@@ -2556,6 +2734,11 @@
     state.shipmentList = root.querySelector("[data-map-shipment-list]");
     state.tileCache = new Map();
     state.missingTiles = new Map();
+    state.terrainRevisions = new Map();
+    state.terrainSession = "";
+    state.terrainRevision = 0;
+    state.terrainGeneration = 0;
+    state.terrainPollToken = null;
     state.hover = null;
     state.selected = null;
     state.mountedToken += 1;
@@ -2584,11 +2767,18 @@
     });
     state.shipmentTimer = window.setInterval(loadShipments, SHIPMENT_REFRESH_MS);
     state.mapRefreshTimer = window.setInterval(pollMapRefresh, MAP_REFRESH_MS);
+    startTerrainPolling();
   }
 
   function unmount() {
+    stopTerrainPolling();
     clearPrivateShipmentData();
     state.sessionToken = null;
+    state.terrainPollToken = null;
+    if (state.terrainRefreshTimer) {
+      window.clearTimeout(state.terrainRefreshTimer);
+      state.terrainRefreshTimer = 0;
+    }
     destroySquaremapTerrain();
     if (state.shipmentTimer) {
       window.clearInterval(state.shipmentTimer);

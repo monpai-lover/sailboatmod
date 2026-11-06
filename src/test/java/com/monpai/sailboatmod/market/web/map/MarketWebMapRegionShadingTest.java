@@ -199,6 +199,35 @@ class MarketWebMapRegionShadingTest {
     }
 
     @Test
+    void sameTickMissingSeamWaitsForAllowedFlushWhileMemoryIsAlreadyInvalidated() throws Exception {
+        MarketWebMapRenderManager manager = new MarketWebMapRenderManager();
+        MarketWebMapTileCache cache = new MarketWebMapTileCache(tempDir);
+        try {
+            render(manager, cache, flat(0, 31, 64));
+            acceptMissingInCurrentTick(manager, cache, 0, 31);
+            assertEquals(64, cache.readBottomRows(0, 0)[0][0], "same-tick second batch must respect write throttling");
+            Method row = MarketWebMapRenderManager.class.getDeclaredMethod("getChunkBottomRow", int.class, int.class);
+            row.setAccessible(true);
+            assertEquals(Integer.MIN_VALUE, ((int[]) row.invoke(manager, 0, 31))[0], "memory invalidates immediately before deferred persistence");
+            Method collect = MarketWebMapRenderManager.class.getDeclaredMethod("collectTimedPartialRegions");
+            collect.setAccessible(true);
+            advanceBatch(manager);
+            Field budget = MarketWebMapRenderManager.class.getDeclaredField("tickBudget"); budget.setAccessible(true);
+            ((MarketWebMapTickBudget) budget.get(manager)).beginTick(-1000L, TimeUnit.SECONDS.toNanos(30), 8, 4);
+            for (Object state : (List<?>) collect.invoke(manager)) {
+                Method schedule = MarketWebMapRenderManager.class.getDeclaredMethod("scheduleRegionRender",
+                        MarketWebMapTileCache.class, state.getClass(), long.class);
+                schedule.setAccessible(true);
+                schedule.invoke(manager, cache, state, 1L);
+            }
+            awaitWrites(manager);
+            assertEquals(Integer.MIN_VALUE, cache.readBottomRows(0, 0)[0][0]);
+            render(manager, cache, flat(0, 32, 65));
+            assertEquals(FLAT_GRASS, cache.readSquareTilePixels(DIMENSION, 0, 0, 1)[0]);
+        } finally { manager.shutdown(); }
+    }
+
+    @Test
     void delayedSeamWriteUsesLatestMergedEdgeColumns() throws Exception {
         MarketWebMapRenderManager manager = new MarketWebMapRenderManager();
         MarketWebMapTileCache cache = new MarketWebMapTileCache(tempDir);
@@ -268,6 +297,7 @@ class MarketWebMapRegionShadingTest {
     private static void render(MarketWebMapRenderManager manager,
                                MarketWebMapTileCache cache,
                                MarketWebMapChunkSnapshot... snapshots) throws Exception {
+        advanceBatch(manager);
         Method expected = MarketWebMapRenderManager.class.getDeclaredMethod("prepareExpectedRegionChunks", List.class);
         expected.setAccessible(true);
         expected.invoke(manager, Arrays.stream(snapshots)
@@ -286,6 +316,12 @@ class MarketWebMapRegionShadingTest {
                                       MarketWebMapTileCache cache,
                                       int chunkX,
                                       int chunkZ) throws Exception {
+        advanceBatch(manager);
+        acceptMissingInCurrentTick(manager, cache, chunkX, chunkZ);
+    }
+
+    private static void acceptMissingInCurrentTick(MarketWebMapRenderManager manager,
+                                                   MarketWebMapTileCache cache, int chunkX, int chunkZ) throws Exception {
         Method expected = MarketWebMapRenderManager.class.getDeclaredMethod("prepareExpectedRegionChunks", List.class);
         expected.setAccessible(true);
         expected.invoke(manager, List.of(new MarketWebMapDirtyChunkQueue.ChunkCoordinate(DIMENSION, chunkX, chunkZ)));
@@ -294,6 +330,14 @@ class MarketWebMapRegionShadingTest {
         missing.setAccessible(true);
         missing.invoke(manager, cache, DIMENSION, chunkX, chunkZ, MarketWebMapTileQuality.SERVER_REGION_SCAN, 1L);
         awaitWrites(manager);
+    }
+
+    private static void advanceBatch(MarketWebMapRenderManager manager) throws Exception {
+        Field tick = MarketWebMapRenderManager.class.getDeclaredField("snapshotTick");
+        tick.setAccessible(true);
+        long current = tick.getLong(manager);
+        // Each distinct actual server tick advances the shared budget once; simulate five of them.
+        for (long next = current + 1; next <= current + 5; next++) { manager.beginSnapshotTick(next); }
     }
 
     private static Object newRegionState(MarketWebMapRenderManager manager, int regionX, int regionZ) throws Exception {

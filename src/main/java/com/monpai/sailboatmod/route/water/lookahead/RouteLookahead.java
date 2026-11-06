@@ -1,6 +1,7 @@
 package com.monpai.sailboatmod.route.water.lookahead;
 
 import com.monpai.sailboatmod.route.water.RealBlockWaterMap;
+import com.monpai.sailboatmod.route.water.WaterGridTraversal;
 import net.minecraft.core.BlockPos;
 import net.minecraft.util.Mth;
 import net.minecraft.world.level.ChunkPos;
@@ -82,21 +83,23 @@ public final class RouteLookahead {
         int lastClearSegment = -1;
         BlockPos runBefore = null;
         int runFromSegment = -1;
-        BlockPos previous = null;
         for (int i = start; i + 1 < route.size(); i++) {
             BlockPos a = i == current && boat != null ? projection(boat, route.get(i), route.get(i + 1)) : flat(route.get(i));
             BlockPos b = flat(route.get(i + 1));
+            double dx = (double) b.getX() - a.getX();
+            double dz = (double) b.getZ() - a.getZ();
+            double length = Math.hypot(dx, dz);
             for (Step step : walk(a, b)) {
                 if (!stepLoaded(step, chunkLoaded)) {
                     return new Scan(checked, Optional.empty());
                 }
-                if (previous != null) {
-                    travelled += Math.sqrt(previous.distSqr(step.cell()));
-                    if (travelled > lookaheadBlocks) {
-                        return new Scan(checked, Optional.empty());
-                    }
+                // Exact cell traversal has separate X/Z boundary events. Measure progress along
+                // the actual leg rather than adding the zigzag distances between cell centres.
+                double along = length == 0 ? 0 : Mth.clamp(((step.cell().getX() - a.getX()) * dx
+                        + (step.cell().getZ() - a.getZ()) * dz) / length, 0, length);
+                if (travelled + along > lookaheadBlocks) {
+                    return new Scan(checked, Optional.empty());
                 }
-                previous = step.cell();
                 boolean cellClear = map.hullClear(step.cell().getX(), step.cell().getZ(), halfWidth);
                 if (runBefore == null) {
                     if (cellClear && sidesClear(step, map, halfWidth)) {
@@ -116,6 +119,7 @@ public final class RouteLookahead {
             if (runBefore == null) {
                 checked = i + 1;
             }
+            travelled += length;
         }
         return new Scan(checked, Optional.empty());
     }
@@ -126,53 +130,23 @@ public final class RouteLookahead {
 
     /** 惰性 a→b supercover;前瞻停止时不再为长航段后方未访问的格分配对象。 */
     private static Iterable<Step> walk(BlockPos a, BlockPos b) {
-        int x0 = a.getX();
-        int z0 = a.getZ();
-        int x1 = b.getX();
-        int z1 = b.getZ();
-        int dx = Math.abs(x1 - x0);
-        int dz = Math.abs(z1 - z0);
-        int sx = Integer.signum(x1 - x0);
-        int sz = Integer.signum(z1 - z0);
         return () -> new Iterator<>() {
-            private int x = x0;
-            private int z = z0;
-            private int err = dx - dz;
-            private int remaining = (dx + dz) * 2 + 4;
-            private boolean first = true;
+            private final WaterGridTraversal.Cursor cursor =
+                    WaterGridTraversal.cursor(a.getX(), a.getZ(), b.getX(), b.getZ());
 
             @Override
             public boolean hasNext() {
-                return first || ((x != x1 || z != z1) && remaining > 0);
+                return cursor.hasNext();
             }
 
             @Override
             public Step next() {
-                if (!hasNext()) {
+                if (!cursor.advance()) {
                     throw new NoSuchElementException();
                 }
-                if (first) {
-                    first = false;
-                    return new Step(new BlockPos(x, 0, z), null, null);
-                }
-                remaining--;
-                int e2 = err * 2;
-                BlockPos sideA = null;
-                BlockPos sideB = null;
-                if (e2 > -dz && e2 < dx) {
-                    sideA = new BlockPos(x + sx, 0, z);
-                    sideB = new BlockPos(x, 0, z + sz);
-                    x += sx;
-                    z += sz;
-                    err += dx - dz;
-                } else if (e2 > -dz) {
-                    err -= dz;
-                    x += sx;
-                } else {
-                    err += dx;
-                    z += sz;
-                }
-                return new Step(new BlockPos(x, 0, z), sideA, sideB);
+                return new Step(new BlockPos(cursor.x(), 0, cursor.z()),
+                        cursor.corner() ? new BlockPos(cursor.x(), 0, cursor.previousZ()) : null,
+                        cursor.corner() ? new BlockPos(cursor.previousX(), 0, cursor.z()) : null);
             }
         };
     }
@@ -191,6 +165,19 @@ public final class RouteLookahead {
         return step.sideA() == null
                 || (map.hullClear(step.sideA().getX(), step.sideA().getZ(), halfWidth)
                 && map.hullClear(step.sideB().getX(), step.sideB().getZ(), halfWidth));
+    }
+
+    /** Recheck a previously found local obstruction using loaded snapshots only. */
+    static boolean clearLoadedSegment(BlockPos a, BlockPos b, RealBlockWaterMap map,
+                                      LongPredicate chunkLoaded, int halfWidth) {
+        if (Math.hypot((double) b.getX() - a.getX(), (double) b.getZ() - a.getZ())
+                > RouteLookaheadGuard.LOOKAHEAD_BLOCKS) return false;
+        for (Step step : walk(a, b)) {
+            if (!stepLoaded(step, chunkLoaded)
+                    || !map.hullClear(step.cell().getX(), step.cell().getZ(), halfWidth)
+                    || !sidesClear(step, map, halfWidth)) return false;
+        }
+        return true;
     }
 
     /** 船在 a→b 上的投影格(夹在端点之间)。 */
@@ -214,35 +201,12 @@ public final class RouteLookahead {
     /** a→b supercover 经过的格(含 2×2 船宽的 +1 格)所在区块。 */
     static Set<Long> segmentChunks(BlockPos a, BlockPos b) {
         Set<Long> out = new LinkedHashSet<>();
-        int x0 = a.getX();
-        int z0 = a.getZ();
-        int x1 = b.getX();
-        int z1 = b.getZ();
-        int dx = Math.abs(x1 - x0);
-        int dz = Math.abs(z1 - z0);
-        int sx = Integer.signum(x1 - x0);
-        int sz = Integer.signum(z1 - z0);
-        int x = x0;
-        int z = z0;
-        addHull(out, x, z);
-        int err = dx - dz;
-        int guard = (dx + dz) * 2 + 4;
-        while ((x != x1 || z != z1) && guard-- > 0) {
-            int e2 = err * 2;
-            if (e2 > -dz && e2 < dx) {
-                addHull(out, x + sx, z);
-                addHull(out, x, z + sz);
-                x += sx;
-                z += sz;
-                err += dx - dz;
-            } else if (e2 > -dz) {
-                err -= dz;
-                x += sx;
-            } else {
-                err += dx;
-                z += sz;
+        for (Step step : walk(a, b)) {
+            addHull(out, step.cell().getX(), step.cell().getZ());
+            if (step.sideA() != null) {
+                addHull(out, step.sideA().getX(), step.sideA().getZ());
+                addHull(out, step.sideB().getX(), step.sideB().getZ());
             }
-            addHull(out, x, z);
         }
         return out;
     }

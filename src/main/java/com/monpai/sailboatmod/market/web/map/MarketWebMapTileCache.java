@@ -12,8 +12,6 @@ import net.minecraft.server.MinecraftServer;
 import net.minecraft.world.level.storage.LevelResource;
 import org.slf4j.Logger;
 
-import javax.imageio.ImageIO;
-import java.awt.image.BufferedImage;
 import java.io.ByteArrayInputStream;
 import java.io.ByteArrayOutputStream;
 import java.io.DataInputStream;
@@ -30,6 +28,8 @@ import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Comparator;
 import java.util.List;
+import java.util.LinkedHashMap;
+import java.util.Map;
 import java.util.Optional;
 import java.util.stream.Stream;
 
@@ -38,18 +38,31 @@ public final class MarketWebMapTileCache {
     private static final Gson GSON = new Gson();
     public static final int RENDER_VERSION = 6;
     private static final int METADATA_VERSION = 2;
-    /**
-     * 运行时瓦片写入计数:每成功写一张瓦片 +1。给前端 snapshot 的 renderVersion 用,让 ?v= 缓存破坏参数
-     * 随实际渲染变化,渲染完网页能拉到新瓦片(RENDER_VERSION 是编译期常量,不随渲染变,单用它网页永远显示旧图)。
-     */
+    /** Backward-compatible snapshot counter. New clients consume the per-coordinate change journal. */
     private static final java.util.concurrent.atomic.AtomicLong TILE_WRITE_EPOCH =
             new java.util.concurrent.atomic.AtomicLong(0L);
+    // Cache handles are short-lived (one per HTTP read). Retain only a few active worlds, each with bounded history.
+    private static final Map<Path, MarketWebMapTileChangeJournal> JOURNALS = new LinkedHashMap<>(4, 0.75F, true);
+    private static final MarketWebMapDecodedTileCache DECODED_TILES = new MarketWebMapDecodedTileCache(32L * 1024 * 1024);
 
     public static long tileWriteEpoch() {
         return TILE_WRITE_EPOCH.get();
     }
 
     private final Path root;
+
+    public MarketWebMapTileChangeJournal changeJournal() {
+        synchronized (JOURNALS) {
+            var journal = JOURNALS.computeIfAbsent(root, ignored -> new MarketWebMapTileChangeJournal(4096));
+            while (JOURNALS.size() > 4) JOURNALS.remove(JOURNALS.keySet().iterator().next());
+            return journal;
+        }
+    }
+
+    private void tileChanged(String kind, String dimensionId, int zoom, int tileX, int tileZ) {
+        TILE_WRITE_EPOCH.incrementAndGet();
+        changeJournal().record(kind, dimensionId, zoom, tileX, tileZ);
+    }
 
     public MarketWebMapTileCache(Path root) {
         this.root = root == null ? Path.of(".").toAbsolutePath().normalize() : root.toAbsolutePath().normalize();
@@ -126,7 +139,8 @@ public final class MarketWebMapTileCache {
             if (isSamePng(path, pngBytes)) {
                 return true;
             }
-            Files.write(path, pngBytes);
+            writeBytesAtomically(path, pngBytes);
+            tileChanged("legacy", dimensionId, 0, tileX, tileZ);
             return true;
         } catch (IOException exception) {
             LOGGER.warn("Failed to write market web map tile {}", path, exception);
@@ -503,9 +517,7 @@ public final class MarketWebMapTileCache {
                 || argbPixels.length != MarketWebMapConstants.TILE_SIZE * MarketWebMapConstants.TILE_SIZE) {
             return new byte[0];
         }
-        BufferedImage image = new BufferedImage(pixelWidth, pixelHeight, BufferedImage.TYPE_INT_ARGB);
-        image.setRGB(0, 0, pixelWidth, pixelHeight, argbPixels, 0, pixelWidth);
-        return writePngBytes(image);
+        return MarketWebMapPngCodec.encode(pixelWidth, pixelHeight, argbPixels);
     }
 
     /**
@@ -524,9 +536,7 @@ public final class MarketWebMapTileCache {
         for (int i = 0; i < nativePixels.length; i++) {
             argbPixels[i] = nativeImageRgbaToArgb(nativePixels[i]);
         }
-        BufferedImage image = new BufferedImage(pixelWidth, pixelHeight, BufferedImage.TYPE_INT_ARGB);
-        image.setRGB(0, 0, pixelWidth, pixelHeight, argbPixels, 0, pixelWidth);
-        return writePngBytes(image);
+        return MarketWebMapPngCodec.encode(pixelWidth, pixelHeight, argbPixels);
     }
 
     private boolean mergeFullTile(String dimensionId,
@@ -594,9 +604,21 @@ public final class MarketWebMapTileCache {
     }
 
     int[] readSquareTilePixels(String dimensionId, int zoom, int tileX, int tileZ) {
-        return readSquareTile(dimensionId, zoom, tileX, tileZ)
-                .flatMap(MarketWebMapTileCache::decodeSquareArgb)
-                .orElseGet(() -> new int[MarketWebMapTileCoordinate.BASE_TILE_SIZE * MarketWebMapTileCoordinate.BASE_TILE_SIZE]);
+        Path path = squareTilePath(dimensionId, zoom, tileX, tileZ);
+        Optional<byte[]> png = readSquareTile(dimensionId, zoom, tileX, tileZ);
+        if (png.isPresent()) {
+            byte[] bytes = png.get();
+            Optional<int[]> cached = DECODED_TILES.find(path, bytes);
+            if (cached.isPresent()) return cached.get();
+            Optional<int[]> decoded = decodeSquareArgb(bytes);
+            if (decoded.isPresent()) {
+                int[] pixels = decoded.get();
+                DECODED_TILES.remember(path, bytes, pixels);
+                return pixels;
+            }
+        }
+        DECODED_TILES.remove(path);
+        return new int[MarketWebMapTileCoordinate.BASE_TILE_SIZE * MarketWebMapTileCoordinate.BASE_TILE_SIZE];
     }
 
     /** 方形瓦片所在目录:root/overworld/square/&lt;zoom&gt;。zoom 越界返回 null。供黑块修复枚举磁盘瓦片用。 */
@@ -698,21 +720,23 @@ public final class MarketWebMapTileCache {
                 || argbPixels.length != MarketWebMapTileCoordinate.BASE_TILE_SIZE * MarketWebMapTileCoordinate.BASE_TILE_SIZE) {
             return false;
         }
-        byte[] pngBytes = encodeSquarePng(argbPixels);
-        if (!isValidPngBytes(pngBytes)) {
-            return false;
-        }
         try {
+            // Validate against actual bytes, including external rewrites with unchanged timestamps.
+            byte[] existing = Files.isRegularFile(pngPath) ? Files.readAllBytes(pngPath) : null;
+            if (DECODED_TILES.matches(pngPath, existing, argbPixels)) return true;
+            byte[] pngBytes = encodeSquarePng(argbPixels);
+            if (!isValidPngBytes(pngBytes)) return false;
             Files.createDirectories(pngPath.getParent());
-            if (isSamePng(pngPath, pngBytes)) {
+            if (Arrays.equals(existing, pngBytes)) {
+                DECODED_TILES.remember(pngPath, pngBytes, argbPixels);
                 return true;
             }
             writeBytesAtomically(pngPath, pngBytes);
-            TILE_WRITE_EPOCH.incrementAndGet();
+            DECODED_TILES.remember(pngPath, pngBytes, argbPixels);
+            tileChanged("square", dimensionId, zoom, tileX, tileZ);
             return true;
         } catch (IOException exception) {
-            LOGGER.warn("Failed to write market web square map tile {}", pngPath, exception);
-            return false;
+            throw new java.io.UncheckedIOException("Failed to write market web square map tile " + pngPath, exception);
         }
     }
 
@@ -732,12 +756,12 @@ public final class MarketWebMapTileCache {
         }
         try {
             Files.createDirectories(pngPath.getParent());
-            writeBytesAtomically(pngPath, pngBytes);
-            boolean ok = writeMetadata(metadataPath, metadata);
-            if (ok) {
-                TILE_WRITE_EPOCH.incrementAndGet(); // 写成功 → bump epoch,前端据此刷新缓存破坏参数
+            boolean changed = !isSamePng(pngPath, pngBytes);
+            if (changed) {
+                writeBytesAtomically(pngPath, pngBytes);
+                tileChanged("legacy", dimensionId, 0, tileX, tileZ);
             }
-            return ok;
+            return writeMetadata(metadataPath, metadata);
         } catch (IOException exception) {
             LOGGER.warn("Failed to merge market web map tile {}", pngPath, exception);
             return false;
@@ -751,7 +775,7 @@ public final class MarketWebMapTileCache {
             return false;
         }
         try {
-            Files.deleteIfExists(pngPath);
+            if (Files.deleteIfExists(pngPath)) tileChanged("legacy", dimensionId, 0, tileX, tileZ);
             Files.deleteIfExists(metadataPath);
             return true;
         } catch (IOException exception) {
@@ -881,16 +905,6 @@ public final class MarketWebMapTileCache {
                 | ((rgba & 0x00FF0000) >>> 16);
     }
 
-    private static byte[] writePngBytes(BufferedImage image) {
-        try (ByteArrayOutputStream output = new ByteArrayOutputStream()) {
-            ImageIO.write(image, "png", output);
-            byte[] bytes = output.toByteArray();
-            return isValidPngBytes(bytes) ? bytes : new byte[0];
-        } catch (IOException exception) {
-            return new byte[0];
-        }
-    }
-
     private Path tilePath(String dimensionId, int tileX, int tileZ) {
         if (!MarketWebMapConstants.OVERWORLD.equals(dimensionId)) {
             return null;
@@ -946,6 +960,16 @@ public final class MarketWebMapTileCache {
                     boolean tile = Files.isRegularFile(path) && path.getFileName().toString().endsWith(".png");
                     if (Files.deleteIfExists(path) && tile) {
                         cleared++;
+                        Path squareRoot = root.resolve("overworld").resolve("square");
+                        TileName coordinate = parseTileName(path);
+                        if (path.startsWith(squareRoot) && coordinate != null) {
+                            try {
+                                int zoom = Integer.parseInt(path.getParent().getFileName().toString());
+                                tileChanged("square", MarketWebMapConstants.OVERWORLD, zoom, coordinate.tileX(), coordinate.tileZ());
+                            } catch (NumberFormatException ignored) {
+                                // Foreign cache files have no supported terrain URL to invalidate.
+                            }
+                        }
                     }
                 } catch (java.nio.file.DirectoryNotEmptyException ignored) {
                     // A concurrent write can leave files behind. Keep the old marker so startup retries the cleanup.
@@ -989,61 +1013,23 @@ public final class MarketWebMapTileCache {
     }
 
     private static Optional<int[]> decodeArgb(byte[] pngBytes) {
-        if (!isValidPngBytes(pngBytes)) {
-            return Optional.empty();
-        }
-        try {
-            BufferedImage image = ImageIO.read(new ByteArrayInputStream(pngBytes));
-            if (image == null || image.getWidth() != MarketWebMapConstants.TILE_SIZE || image.getHeight() != MarketWebMapConstants.TILE_SIZE) {
-                return Optional.empty();
-            }
-            int[] pixels = new int[MarketWebMapConstants.TILE_SIZE * MarketWebMapConstants.TILE_SIZE];
-            image.getRGB(0, 0, MarketWebMapConstants.TILE_SIZE, MarketWebMapConstants.TILE_SIZE, pixels, 0, MarketWebMapConstants.TILE_SIZE);
-            return Optional.of(pixels);
-        } catch (IOException exception) {
-            return Optional.empty();
-        }
+        return isValidPngBytes(pngBytes)
+                ? MarketWebMapPngCodec.decode(pngBytes, MarketWebMapConstants.TILE_SIZE, MarketWebMapConstants.TILE_SIZE)
+                : Optional.empty();
     }
 
     private static Optional<int[]> decodeSquareArgb(byte[] pngBytes) {
-        if (!isValidPngBytes(pngBytes)) {
-            return Optional.empty();
-        }
-        try {
-            BufferedImage image = ImageIO.read(new ByteArrayInputStream(pngBytes));
-            if (image == null
-                    || image.getWidth() != MarketWebMapTileCoordinate.BASE_TILE_SIZE
-                    || image.getHeight() != MarketWebMapTileCoordinate.BASE_TILE_SIZE) {
-                return Optional.empty();
-            }
-            int[] pixels = new int[MarketWebMapTileCoordinate.BASE_TILE_SIZE * MarketWebMapTileCoordinate.BASE_TILE_SIZE];
-            image.getRGB(0, 0,
-                    MarketWebMapTileCoordinate.BASE_TILE_SIZE,
-                    MarketWebMapTileCoordinate.BASE_TILE_SIZE,
-                    pixels,
-                    0,
-                    MarketWebMapTileCoordinate.BASE_TILE_SIZE);
-            return Optional.of(pixels);
-        } catch (IOException exception) {
-            return Optional.empty();
-        }
+        return isValidPngBytes(pngBytes)
+                ? MarketWebMapPngCodec.decode(pngBytes, MarketWebMapTileCoordinate.BASE_TILE_SIZE, MarketWebMapTileCoordinate.BASE_TILE_SIZE)
+                : Optional.empty();
     }
 
     private static byte[] encodeSquarePng(int[] argbPixels) {
         if (argbPixels == null || argbPixels.length != MarketWebMapTileCoordinate.BASE_TILE_SIZE * MarketWebMapTileCoordinate.BASE_TILE_SIZE) {
             return new byte[0];
         }
-        BufferedImage image = new BufferedImage(
-                MarketWebMapTileCoordinate.BASE_TILE_SIZE,
-                MarketWebMapTileCoordinate.BASE_TILE_SIZE,
-                BufferedImage.TYPE_INT_ARGB);
-        image.setRGB(0, 0,
-                MarketWebMapTileCoordinate.BASE_TILE_SIZE,
-                MarketWebMapTileCoordinate.BASE_TILE_SIZE,
-                argbPixels,
-                0,
-                MarketWebMapTileCoordinate.BASE_TILE_SIZE);
-        return writePngBytes(image);
+        return MarketWebMapPngCodec.encode(MarketWebMapTileCoordinate.BASE_TILE_SIZE,
+                MarketWebMapTileCoordinate.BASE_TILE_SIZE, argbPixels);
     }
 
     private static boolean isSamePng(Path path, byte[] pngBytes) throws IOException {

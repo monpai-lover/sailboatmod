@@ -7,8 +7,10 @@ package com.monpai.sailboatmod.entity;
 final class AutopilotRerouteRequests {
     static final class Request {
         private volatile boolean cancelled;
+        private final boolean blocksMotion;
         boolean cancelled() { return cancelled; }
-        private Request() {
+        private Request(boolean blocksMotion) {
+            this.blocksMotion = blocksMotion;
         }
     }
 
@@ -18,11 +20,24 @@ final class AutopilotRerouteRequests {
         return active != null;
     }
 
+    boolean blocksMotion() {
+        return active != null && active.blocksMotion;
+    }
+
     Request claim() {
+        return claim(true);
+    }
+
+    /** Forward repair shares cancellation/exclusion but only its near-obstacle guard brakes. */
+    Request claimLookahead() {
+        return claim(false);
+    }
+
+    private Request claim(boolean blocksMotion) {
         if (active != null) {
             return null;
         }
-        active = new Request();
+        active = new Request(blocksMotion);
         return active;
     }
 

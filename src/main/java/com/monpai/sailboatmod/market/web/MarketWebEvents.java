@@ -16,8 +16,9 @@ public final class MarketWebEvents {
     public static void onServerStarted(ServerStartedEvent event) {
         // After a renderer upgrade, chunks drawn by the old renderer are cleared once (before the web server serves
         // tiles, and before rendering starts writing them) and repainted in the background.
-        int cleared = com.monpai.sailboatmod.market.web.map.MarketWebMapTileCache.forServer(event.getServer())
-                .clearStaleServerChunksAfterRendererUpgrade();
+        int cleared = com.monpai.sailboatmod.market.web.map.MarketWebMapSettings.updatesEnabled()
+                ? com.monpai.sailboatmod.market.web.map.MarketWebMapTileCache.forServer(event.getServer())
+                .clearStaleServerChunksAfterRendererUpgrade() : 0;
         if (cleared > 0) {
             MarketWebMapRenderService.global().enqueueRegionRepairScan(event.getServer().overworld(), 64);
         }
