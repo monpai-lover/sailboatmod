@@ -43,6 +43,25 @@ class TransportLoadingWindowTest {
         window.close(); window.close(); assertTrue(backend.retained.isEmpty()); assertFalse(backend.structureRetained);
     }
 
+    @Test void optionalWindowProbeHasNoLeaseOrRequestSideEffectsEvenWhenRejected() {
+        var backend = new FakeBackend();
+        try (var window = new TransportLoadingWindow(backend)) {
+            assertFalse(window.isWindowLoaded(null, HULL, new Vec3(100, 64, 0)));
+            backend.allLoaded = true;
+            assertTrue(window.isWindowLoaded(null, HULL, new Vec3(100, 64, 0)));
+            assertFalse(window.isWindowLoaded(null, HULL.inflate(1000), new Vec3(100, 64, 0)));
+            assertTrue(backend.pending.isEmpty());
+            assertTrue(backend.retained.isEmpty());
+            assertTrue(backend.temporary.isEmpty());
+            assertFalse(backend.structureRetained);
+            window.update(null, REG, SHIP, HULL, new Vec3(100, 64, 0));
+            var retained = Set.copyOf(backend.retained);
+            assertFalse(window.isWindowLoaded(null, HULL.inflate(1000), new Vec3(100, 64, 0)));
+            assertEquals(retained, backend.retained, "Rejecting a shortcut must not close the real route's window");
+            assertTrue(backend.structureRetained);
+        }
+    }
+
     @Test void leavingWindowDoesNotCancelSharedChunkFutures() {
         var backend = new FakeBackend(); var window = new TransportLoadingWindow(backend);
         window.update(null, REG, SHIP, HULL, new Vec3(100, 64, 0));

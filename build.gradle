@@ -147,6 +147,8 @@ tasks.withType(JavaCompile).configureEach {
 }
 tasks.named('test', Test) {
     useJUnitPlatform()
+    // NeoForge bootstrap and the 50k-block road-planning fixture exceed Gradle's default test heap.
+    maxHeapSize = '2g'
 }
 // ModDevGradle sets an isolated default working directory after evaluation;
 // these existing source/resource contract tests resolve paths from the project.

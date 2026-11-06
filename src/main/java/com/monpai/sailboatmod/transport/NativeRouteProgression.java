@@ -1,13 +1,68 @@
 package com.monpai.sailboatmod.transport;
 
+import com.monpai.sailboatmod.transport.control.SweptTerrainProbe;
 import java.util.List;
 import java.util.function.Predicate;
+import net.minecraft.core.BlockPos;
+import net.minecraft.world.phys.AABB;
 import net.minecraft.world.phys.Vec3;
 
 /** Selects an onward waypoint without changing the physical vehicle or its route. */
 public final class NativeRouteProgression {
     public record Selection(int index, Vec3 target, boolean terrainReady) { }
+
+    public static final class TerrainPaths {
+        private final SweptTerrainProbe onward = new SweptTerrainProbe();
+        private final SweptTerrainProbe terminal = new SweptTerrainProbe();
+
+        public SweptTerrainProbe.Result scan(boolean terminalCandidate, AABB area, int budget,
+                                             Predicate<BlockPos> loaded, Predicate<BlockPos> collision) {
+            // Alternative swept bounds must not reset one another's incremental scan cursor.
+            return (terminalCandidate ? terminal : onward).scan(area, budget, loaded, collision);
+        }
+    }
+
     private NativeRouteProgression() { }
+
+    public static Selection selectLoaded(List<Vec3> route, int index, Vec3 position, Vec3 velocity,
+                                         double radius, Predicate<Vec3> clearPath,
+                                         Predicate<Vec3> insideTerminal, Predicate<Vec3> loadPath) {
+        if (loadPath == null) return null;
+        Selection selected = select(route, index, position, velocity, radius, clearPath, insideTerminal);
+        if (selected == null) return null;
+        // Alternative terrain probes are read-only. Only the selected path may replace chunk leases.
+        boolean loaded = loadPath.test(selected.target());
+        boolean ready = selected.terrainReady() && loaded;
+        return new Selection(ready ? selected.index() : index, selected.target(), ready);
+    }
+
+    public static boolean canFinishInsideTerminal(List<Vec3> route, int index, Vec3 position,
+                                                  double maxTailLength, Predicate<Vec3> insideTerminal) {
+        if (route == null || index < 0 || index >= route.size() || !finite(position)
+                || !Double.isFinite(maxTailLength) || maxTailLength <= 0 || insideTerminal == null
+                || route.stream().anyMatch(point -> !finite(point)) || !insideTerminal.test(position)) return false;
+        double length = 0;
+        Vec3 previous = position;
+        for (int point = index; point < route.size(); point++) {
+            Vec3 next = route.get(point);
+            if (!insideTerminal.test(next)) return false;
+            length += previous.distanceTo(next);
+            if (length > maxTailLength) return false;
+            previous = next;
+        }
+        return true;
+    }
+
+    public static Selection select(List<Vec3> route, int index, Vec3 position, Vec3 velocity,
+                                   double radius, Predicate<Vec3> clearPath, Predicate<Vec3> insideTerminal) {
+        if (canFinishInsideTerminal(route, index, position, radius * 2, insideTerminal)
+                && index < route.size() - 1) {
+            Selection terminal = select(route, route.size() - 1, position, velocity, radius, clearPath);
+            if (terminal == null || terminal.terrainReady()) return terminal;
+            // A short in-zone tail permits parking, but never requires driving through a blocked shortcut.
+        }
+        return select(route, index, position, velocity, radius, clearPath);
+    }
 
     public static Selection select(List<Vec3> route, int index, Vec3 position, Vec3 velocity,
                                    double radius, Predicate<Vec3> clearPath) {
@@ -31,7 +86,44 @@ public final class NativeRouteProgression {
         // Hull-sized arrival circles must not erase a sharp corner or jump to a nearby return leg.
         double passingRadius = corner ? Math.min(radius, 0.75) : radius;
         if (horizontalDistance(position, point) <= passingRadius) return true;
+        if (corner && onOutgoingRun(route, index, position, radius, outgoing)) return true;
         return crossedPoint(route, index, position, radius);
+    }
+
+    private static boolean onOutgoingRun(List<Vec3> route, int index, Vec3 position,
+                                         double radius, Vec3 outgoing) {
+        Vec3 along = outgoing.normalize();
+        Vec3 origin = route.get(index), offset = position.subtract(origin);
+        double progress = offset.x * along.x + offset.z * along.z;
+        double corridor = Math.min(radius, 0.75);
+        if (progress <= 0 || Math.abs(offset.x * along.z - offset.z * along.x) > corridor) return false;
+        // Only the immediately adjacent straight run proves this corner has already been traversed.
+        int end = index;
+        double length = 0;
+        while (end + 1 < route.size()) {
+            Vec3 next = route.get(end + 1).subtract(origin);
+            double nextProgress = next.x * along.x + next.z * along.z;
+            if (nextProgress < length - 1.0e-6
+                    || Math.abs(next.x * along.z - next.z * along.x) > 1.0e-6) break;
+            length = nextProgress;
+            end++;
+        }
+        if (progress > length) return false;
+        // At a crossing/nearby return leg, position alone cannot identify which segment was travelled.
+        for (int point = 1; point < route.size(); point++) {
+            if (point > index && point <= end) continue;
+            if (distanceToSegment(position, route.get(point - 1), route.get(point)) <= corridor) return false;
+        }
+        return true;
+    }
+
+    private static double distanceToSegment(Vec3 position, Vec3 start, Vec3 end) {
+        Vec3 segment = end.subtract(start).multiply(1, 0, 1);
+        double lengthSquared = segment.lengthSqr();
+        if (lengthSquared <= 1.0e-8) return horizontalDistance(position, start);
+        Vec3 offset = position.subtract(start);
+        double fraction = Math.max(0, Math.min(1, (offset.x * segment.x + offset.z * segment.z) / lengthSquared));
+        return horizontalDistance(position, start.add(segment.scale(fraction)));
     }
 
     private static boolean crossedPoint(List<Vec3> route, int index, Vec3 position, double radius) {

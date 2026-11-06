@@ -95,6 +95,7 @@ public final class RegisteredVehicleControllerBlockEntity extends BlockEntity
             List<AirportFacility> sourceFacilities, AirportGroundLayout sourceGround, AirportBlockEntity target, long targetRevision,
             List<AirportFacility> targetFacilities, AirportGroundLayout targetGround) { }
     private final SweptTerrainProbe terrainProbe = new SweptTerrainProbe();
+    private final NativeRouteProgression.TerrainPaths navigationTerrain = new NativeRouteProgression.TerrainPaths();
     private final GroundTerrainWindow groundTerrainWindow = new GroundTerrainWindow();
     private SweptTerrainProbe.Result terrainResult = SweptTerrainProbe.Result.WAITING;
     private boolean cargoFaultReported;
@@ -461,13 +462,18 @@ public final class RegisteredVehicleControllerBlockEntity extends BlockEntity
                         Math.max(view.worldBounds().getXsize(), view.worldBounds().getZsize())
                                         * 0.5D
                                 + 1.0D);
+        DockBlockEntity destination = resolveDestination(server);
+        boolean atDock = destination != null && destination.isCarrierInsideDockZone(this);
+        boolean terminalShortcutReady = atDock
+                && loading.isWindowLoaded(server, view.worldBounds(), activeRoute.getLast());
         boolean[] chunksReady = { false };
-        NativeRouteProgression.Selection selection = NativeRouteProgression.select(
+        NativeRouteProgression.Selection selection = NativeRouteProgression.selectLoaded(
                 activeRoute, targetIndex, view.worldPosition(), view.linearVelocity(), radius,
+                target -> clearSweptTerrain(server, target), terminalShortcutReady ? destination::isInsideDockZone : null,
                 target -> {
                     chunksReady[0] = loading.update(
                             server, getTransportUuid(), view.physicalId(), view.worldBounds(), target);
-                    return chunksReady[0] && clearSweptTerrain(server, target);
+                    return chunksReady[0];
                 });
         if (selection == null) {
             fault("missing_route", false);
@@ -475,12 +481,11 @@ public final class RegisteredVehicleControllerBlockEntity extends BlockEntity
         }
         Vec3 target = selection.target();
         boolean terrainReady = selection.terrainReady();
-        if (targetIndex != selection.index()) {
+        if (terrainReady && targetIndex != selection.index()) {
             targetIndex = selection.index();
             arrivalTicks = 0;
             setChanged();
         }
-        DockBlockEntity destination = resolveDestination(server);
         boolean finalLeg = targetIndex == activeRoute.size() - 1;
         if (finalLeg && destination != null) {
             radius = NativeNavigationDriver.terminalArrivalRadius(radius,
@@ -492,7 +497,6 @@ public final class RegisteredVehicleControllerBlockEntity extends BlockEntity
                 return;
             }
         }
-        boolean atDock = destination != null && destination.isCarrierInsideDockZone(this);
         NativeNavigationDriver.Command command =
                 NativeNavigationDriver.drive(
                         new NativeNavigationDriver.Input(
@@ -1999,7 +2003,8 @@ public final class RegisteredVehicleControllerBlockEntity extends BlockEntity
                         .scale(Math.min(12, Math.max(2, view.linearVelocity().length() * 2)));
         AABB area = view.worldBounds().expandTowards(direction).deflate(0.1D);
         terrainResult =
-                terrainProbe.scan(
+                navigationTerrain.scan(
+                        waypoint.equals(activeRoute.getLast()),
                         area,
                         8192,
                         server::hasChunkAt,

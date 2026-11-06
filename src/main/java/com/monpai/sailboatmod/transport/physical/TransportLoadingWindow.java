@@ -63,6 +63,17 @@ public final class TransportLoadingWindow implements AutoCloseable {
     public TransportLoadingWindow() { this(null); }
     public TransportLoadingWindow(Backend backend) { this.suppliedBackend = backend; this.backend = backend; }
 
+    /** Read-only admission for an optional shortcut; never changes leases, pending requests or retry state. */
+    public boolean isWindowLoaded(ServerLevel mainLevel, AABB bounds, Vec3 nextWaypoint) {
+        Backend probe = suppliedBackend != null ? suppliedBackend : mainLevel == null ? null : new WorldBackend(mainLevel);
+        if (probe == null || airportPinsInvalid) return false;
+        Set<ChunkPos> moving = new LinkedHashSet<>(desiredChunks(bounds, nextWaypoint));
+        if (!moving.isEmpty()) moving.addAll(pinnedEndpoints);
+        if (moving.isEmpty() || moving.size() > MAX_CHUNKS) return false;
+        moving.addAll(airportPins);
+        return moving.stream().allMatch(probe::isLoaded);
+    }
+
     /** Bind before configuring pins, so a replacement body cannot inherit an old owner's lease. */
     public boolean bind(ServerLevel mainLevel, UUID registrationId, UUID physicalId) {
         if (owner != null && (!owner.equals(registrationId) || !Objects.equals(physical, physicalId) || level != mainLevel)) close();
