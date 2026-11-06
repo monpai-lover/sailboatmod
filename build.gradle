@@ -117,7 +117,7 @@ tasks.register('processMarketWebResources', ProcessResources) {
 tasks.named('jar', Jar) {
     archiveFileName = "${mod_id}-${releaseVersion}-neoforge-${minecraft_version}.jar"
     duplicatesStrategy = DuplicatesStrategy.EXCLUDE
-    exclude 'com/monpai/sailboatmod/market/web/**', 'marketweb/**'
+    exclude 'com/monpai/sailboatmod/market/web/**', 'marketweb/**', 'assets/minecraft/**'
     filesMatching('META-INF/neoforge.mods.toml') {
         def developmentSuffix = false
         filter { line ->

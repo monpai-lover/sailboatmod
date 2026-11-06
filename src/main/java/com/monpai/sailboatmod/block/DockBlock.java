@@ -85,6 +85,8 @@ public class DockBlock extends BaseEntityBlock {
     @Override
     public void onRemove(BlockState state, Level level, BlockPos pos, BlockState newState, boolean movedByPiston) {
         if (!state.is(newState.getBlock()) && !level.isClientSide) {
+            if (level instanceof net.minecraft.server.level.ServerLevel server)
+                com.monpai.sailboatmod.transport.board.TownVoyagePublisher.markEndpointRemoved(server, pos);
             BlueMapIntegration.removeDock(level, pos);
             com.monpai.sailboatmod.market.terminal.TerminalNetworkSavedData.get(level)
                     .removeEntry(level.dimension().location().toString(), pos.asLong());

@@ -8,6 +8,7 @@ import java.util.List;
 import java.util.UUID;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class RailTraceTrackerTest {
@@ -97,13 +98,20 @@ class RailTraceTrackerTest {
         String logistics = java.nio.file.Files.readString(java.nio.file.Path.of("src/main/java/com/monpai/sailboatmod/compat/create/CreateRailLogistics.java"));
         assertTrue(events.contains("CreateRailLogistics.tick(server)") && events.contains("CreateRailLogistics.clear()"));
         assertTrue(logistics.indexOf("!available()") < logistics.indexOf("CreateTrainBridge.overworldTrains()"),
-                "the bridge (the only class using Create types) runs only after the installed check");
+                "the map bridge runs only after the installed check");
         assertTrue(logistics.contains("catch (LinkageError"), "an incompatible Create version turns the feature off instead of crashing");
         try (var files = java.nio.file.Files.walk(java.nio.file.Path.of("src/main/java"))) {
             List<String> users = files.filter(p -> p.toString().endsWith(".java"))
-                    .filter(p -> { try { return java.nio.file.Files.readString(p).contains("com.simibubi.create"); } catch (java.io.IOException e) { return false; } })
+                    .filter(p -> { try { return java.util.regex.Pattern.compile("(?m)^import\\s+(?:static\\s+)?com\\.simibubi\\.create\\.")
+                            .matcher(java.nio.file.Files.readString(p)).find(); } catch (java.io.IOException e) { return false; } })
                     .map(p -> p.getFileName().toString()).toList();
-            assertEquals(List.of("CreateTrainBridge.java"), users);
+            assertEquals(java.util.Set.of("CreateTrainBridge.java", "RailFreightNativeBridge.java"), java.util.Set.copyOf(users));
         }
+    }
+
+    @Test
+    void freightFacadeLoadsWithoutTheOptionalCreateClasses() {
+        // Create is compile-only in this test runtime. Loading the public facade must not link its native bridge.
+        assertFalse(com.monpai.sailboatmod.transport.rail.RailFreightService.available());
     }
 }

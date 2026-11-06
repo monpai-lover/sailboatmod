@@ -110,7 +110,7 @@ import net.neoforged.bus.api.IEventBus;
 import java.util.Optional;
 
 public final class ModNetwork {
-    private static final String PROTOCOL_VERSION = "22"; // 22: known-network menu leases plus explicit server navigation phases.
+    private static final String PROTOCOL_VERSION = "25"; // 25: explicit rail freight terminal actions and snapshots.
     public static final PayloadChannel CHANNEL = new PayloadChannel(PROTOCOL_VERSION);
 
     private static int packetId = 0;
@@ -1033,6 +1033,29 @@ public final class ModNetwork {
                 com.monpai.sailboatmod.network.packet.KnownDestinationsPacket::encode,
                 com.monpai.sailboatmod.network.packet.KnownDestinationsPacket::decode,
                 com.monpai.sailboatmod.network.packet.KnownDestinationsPacket::handle, Optional.of(NetworkDirection.PLAY_TO_CLIENT));
+
+        CHANNEL.registerMessage(packetId++,
+                com.monpai.sailboatmod.network.packet.airport.AirportActionPacket.class,
+                com.monpai.sailboatmod.network.packet.airport.AirportActionPacket::encode,
+                com.monpai.sailboatmod.network.packet.airport.AirportActionPacket::decode,
+                com.monpai.sailboatmod.network.packet.airport.AirportActionPacket::handle,
+                Optional.of(NetworkDirection.PLAY_TO_SERVER));
+        CHANNEL.registerMessage(packetId++,
+                com.monpai.sailboatmod.network.packet.airport.AirportSnapshotPacket.class,
+                com.monpai.sailboatmod.network.packet.airport.AirportSnapshotPacket::encode,
+                com.monpai.sailboatmod.network.packet.airport.AirportSnapshotPacket::decode,
+                com.monpai.sailboatmod.network.packet.airport.AirportSnapshotPacket::handle,
+                Optional.of(NetworkDirection.PLAY_TO_CLIENT));
+        CHANNEL.registerMessage(packetId++, com.monpai.sailboatmod.network.packet.rail.RailTerminalActionPacket.class,
+                com.monpai.sailboatmod.network.packet.rail.RailTerminalActionPacket::encode,
+                com.monpai.sailboatmod.network.packet.rail.RailTerminalActionPacket::decode,
+                com.monpai.sailboatmod.network.packet.rail.RailTerminalActionPacket::handle,
+                Optional.of(NetworkDirection.PLAY_TO_SERVER));
+        CHANNEL.registerMessage(packetId++, com.monpai.sailboatmod.network.packet.rail.RailTerminalSnapshotPacket.class,
+                com.monpai.sailboatmod.network.packet.rail.RailTerminalSnapshotPacket::encode,
+                com.monpai.sailboatmod.network.packet.rail.RailTerminalSnapshotPacket::decode,
+                com.monpai.sailboatmod.network.packet.rail.RailTerminalSnapshotPacket::handle,
+                Optional.of(NetworkDirection.PLAY_TO_CLIENT));
 
     }
 

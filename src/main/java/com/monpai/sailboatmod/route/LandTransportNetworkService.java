@@ -2,10 +2,12 @@ package com.monpai.sailboatmod.route;
 
 import com.monpai.sailboatmod.block.entity.PostStationBlockEntity;
 import com.monpai.sailboatmod.dock.PostStationRegistry;
+import com.monpai.sailboatmod.nation.RoadTravelHelper;
 import com.monpai.sailboatmod.nation.data.NationSavedData;
 import com.monpai.sailboatmod.nation.model.TownRecord;
 import com.monpai.sailboatmod.nation.service.DockTownResolver;
 import net.minecraft.core.BlockPos;
+import net.minecraft.core.Direction;
 import net.minecraft.server.level.ServerLevel;
 import net.minecraft.world.level.Level;
 import net.minecraft.world.phys.Vec3;
@@ -177,7 +179,7 @@ public final class LandTransportNetworkService {
         LandTransportNetworkService service = new LandTransportNetworkService();
         List<StationRef> refs = new ArrayList<>();
         for (BlockPos pos : PostStationRegistry.get(level)) {
-            if (level.getBlockEntity(pos) instanceof PostStationBlockEntity station) {
+            if (level.hasChunkAt(pos) && level.getBlockEntity(pos) instanceof PostStationBlockEntity station) {
                 StationRef ref = service.stationRef(level, station);
                 if (ref != null && !ref.townId().isBlank()) {
                     refs.add(ref);
@@ -191,15 +193,23 @@ public final class LandTransportNetworkService {
         if (!(source.level() instanceof ServerLevel level)) {
             return RouteAvailability.unavailable(RouteFailureReason.MISSING_LEVEL);
         }
-        if (!(level.getBlockEntity(source.pos()) instanceof PostStationBlockEntity sourceStation)
+        if (!level.hasChunkAt(source.pos()) || !level.hasChunkAt(target.pos())
+                || !(level.getBlockEntity(source.pos()) instanceof PostStationBlockEntity sourceStation)
                 || !(level.getBlockEntity(target.pos()) instanceof PostStationBlockEntity targetStation)) {
             return RouteAvailability.unavailable(RouteFailureReason.MISSING_STATION);
         }
         if (!RoadAutoRouteService.canCreateAutoRoute(level, sourceStation, targetStation)) {
             return RouteAvailability.unavailable(RouteFailureReason.NO_PERMISSION);
         }
+        Vec3 departure = sourceStation.selectCarriageArrivalParkingPoint(target.pos());
+        Vec3 arrival = targetStation.selectCarriageArrivalParkingPoint(source.pos());
+        BlockPos start = parkingGround(level, sourceStation, departure);
+        BlockPos end = parkingGround(level, targetStation, arrival);
+        if (start == null || end == null) {
+            return RouteAvailability.unavailable(RouteFailureReason.NO_ROAD_ROUTE);
+        }
         RoadAutoRouteService.RouteResolution resolution =
-                RoadAutoRouteService.resolveAutoRoutePreview(level, source.pos(), target.pos());
+                RoadAutoRouteService.resolveAutoRoutePreview(level, start, end);
         if (!resolution.found()) {
             return RouteAvailability.unavailable(RouteFailureReason.NO_ROAD_ROUTE);
         }
@@ -210,7 +220,7 @@ public final class LandTransportNetworkService {
                 .filter(Objects::nonNull)
                 .map(pos -> new Vec3(pos.getX() + 0.5D, pos.getY() + 1.05D, pos.getZ() + 0.5D))
                 .toList();
-        waypoints = withFinalArrivalWaypoint(waypoints, targetStation.selectCarriageArrivalParkingPoint(source.pos()));
+        waypoints = withFinalArrivalWaypoint(waypoints, arrival);
         RouteSource sourceKind = resolution.source() == RoadAutoRouteService.PathSource.ROAD_NETWORK
                 ? RouteSource.ROAD_GRAPH
                 : RouteSource.TERRAIN_FALLBACK;
@@ -222,6 +232,26 @@ public final class LandTransportNetworkService {
                 "System",
                 sourceKind
         ));
+    }
+
+    @Nullable
+    private static BlockPos parkingGround(ServerLevel level, PostStationBlockEntity station, @Nullable Vec3 point) {
+        if (point == null || !station.isInsideDockZone(point)) {
+            return null;
+        }
+        // Parking coordinates are the center of the ground block plus 1.05 vertically.
+        BlockPos above = BlockPos.containing(point);
+        BlockPos ground = above.below();
+        BlockPos stationPos = station.getBlockPos();
+        if ((stationPos.getX() == ground.getX() && stationPos.getZ() == ground.getZ())
+                || !level.hasChunkAt(ground)
+                || !level.getFluidState(ground).isEmpty() || !level.getFluidState(above).isEmpty()
+                || !level.getBlockState(above).getCollisionShape(level, above).isEmpty()) {
+            return null;
+        }
+        var support = level.getBlockState(ground);
+        return RoadTravelHelper.isWalkableRoadSurface(support) || support.isFaceSturdy(level, ground, Direction.UP)
+                ? ground : null;
     }
 
     static List<Vec3> withFinalArrivalWaypoint(List<Vec3> waypoints, Vec3 arrivalParkingPoint) {

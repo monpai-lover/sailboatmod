@@ -101,7 +101,7 @@ public class PostStationBlockEntity extends DockBlockEntity {
 
     @Override
     protected boolean supportsLogisticsCarrier(LogisticsCarrier entity) {
-        return entity.transportKind() == LogisticsCarrier.Kind.LAND;
+        return entity.transportKind() == LogisticsCarrier.Kind.LAND && !"create-train".equals(entity.providerId());
     }
 
     @Override

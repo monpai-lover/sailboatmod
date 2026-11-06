@@ -1,7 +1,9 @@
 package com.monpai.sailboatmod.market;
 
 import com.monpai.sailboatmod.market.wallet.MarketWalletService;
+import com.monpai.sailboatmod.transport.rail.RailFreightService;
 import com.mojang.logging.LogUtils;
+import net.minecraft.server.level.ServerLevel;
 import net.minecraft.world.level.Level;
 import org.slf4j.Logger;
 
@@ -108,6 +110,10 @@ public final class MarketRefundService {
                 continue;
             }
             if ("CLAIMED".equals(order.status()) || "ARRIVED".equals(order.status()) || "DELIVERED".equals(order.status())) {
+                return false;
+            }
+            // A persisted rail job can hold cargo while its market order still says WAITING_SHIPMENT.
+            if (level instanceof ServerLevel server && RailFreightService.isOrderClaimed(server, order.orderId())) {
                 return false;
             }
             MarketOrderEscrow escrow = market.getEscrow(order.orderId());

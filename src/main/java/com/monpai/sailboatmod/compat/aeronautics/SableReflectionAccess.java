@@ -1,6 +1,12 @@
 package com.monpai.sailboatmod.compat.aeronautics;
 
 import com.monpai.sailboatmod.transport.physical.NativeControlResult;
+import com.monpai.sailboatmod.transport.physical.NativeGroundObservation;
+import com.monpai.sailboatmod.transport.physical.GroundSurfaceObservation;
+import java.util.List;
+import java.util.ArrayList;
+import net.minecraft.server.level.ServerLevel;
+import net.minecraft.world.level.block.state.properties.BlockStateProperties;
 import com.monpai.sailboatmod.transport.physical.PhysicalVehicleView;
 import net.minecraft.core.BlockPos;
 import net.minecraft.core.Direction;
@@ -28,9 +34,11 @@ final class SableReflectionAccess {
 
     private final Object helper;
     private final Class<?> bodyType;
-    private final Method containing, id, level, removed, pose, bounds, massTracker;
+    private final Method containing, id, level, removed, pose, lastPose, bounds, massTracker;
     private final Method transformPosition, transformNormal, toMojangBounds, getMass;
-    private final Field velocity;
+    private final Field angularVelocity;
+    private final OffroadWheelReflectionAccess wheels;
+    private final GroundSurfaceReflectionAccess groundSurfaces;
     private final NativeActuators actuators;
     private final Map<Object, ThrottleLease> throttleLeases = new WeakHashMap<>();
 
@@ -67,9 +75,14 @@ final class SableReflectionAccess {
         level = bodyType.getMethod("getLevel");
         removed = bodyType.getMethod("isRemoved");
         pose = bodyType.getMethod("logicalPose");
+        lastPose = bodyType.getMethod("lastPose");
         bounds = bodyType.getMethod("boundingBox");
         massTracker = bodyType.getMethod("getMassTracker");
-        velocity = bodyType.getField("latestLinearVelocity");
+        Field angular;
+        try { angular = bodyType.getField("latestAngularVelocity"); } catch (NoSuchFieldException unavailable) { angular = null; }
+        angularVelocity = angular;
+        wheels = OffroadWheelReflectionAccess.bindIfAvailable(lookup);
+        groundSurfaces = GroundSurfaceReflectionAccess.bindIfAvailable(lookup);
         transformPosition = poseType.getMethod("transformPosition", Vec3.class);
         transformNormal = poseType.getMethod("transformNormal", Vec3.class);
         toMojangBounds = boundsType.getMethod("toMojang");
@@ -88,11 +101,16 @@ final class SableReflectionAccess {
 
     PhysicalVehicleView snapshot(Object body, BlockPos controllerPosition, Direction facing, String dimensionId) throws ReflectiveOperationException {
         Object currentPose = pose.invoke(body);
-        Vec3 worldPosition = (Vec3) transformPosition.invoke(currentPose, Vec3.atCenterOf(controllerPosition));
+        Object previousPose = lastPose.invoke(body);
+        if (currentPose == null || previousPose == null) throw new ReflectiveOperationException("native_pose_history_unavailable");
+        Vec3 localAnchor = Vec3.atCenterOf(controllerPosition);
+        Vec3 worldPosition = (Vec3) transformPosition.invoke(currentPose, localAnchor);
+        Vec3 previousWorldPosition = (Vec3) transformPosition.invoke(previousPose, localAnchor);
         Vec3 forward = (Vec3) transformNormal.invoke(currentPose, Vec3.atLowerCornerOf(facing.getNormal()));
         Vec3 worldForward = finite(forward) && forward.lengthSqr() > 1.0E-12 ? forward.normalize() : Vec3.ZERO;
-        Vector3dc currentVelocity = (Vector3dc) velocity.get(body);
-        Vec3 linearVelocity = new Vec3(currentVelocity.x(), currentVelocity.y(), currentVelocity.z());
+        // Sable's cached velocity differences COM positions, which jump when blocks assemble.
+        // Transform the same material anchor through each pose, including its own rotation point.
+        Vec3 linearVelocity = worldPosition.subtract(previousWorldPosition).scale(20);
         AABB worldBounds = (AABB) toMojangBounds.invoke(bounds.invoke(body));
         double mass = mass(body);
         UUID physicalId = (UUID) id.invoke(body);
@@ -101,6 +119,71 @@ final class SableReflectionAccess {
                 && finite(worldBounds);
         return new PhysicalVehicleView(physicalId, dimensionId, worldPosition, worldForward,
                 linearVelocity, worldBounds, mass, available);
+    }
+
+    Vec3 angularVelocity(Object body) throws ReflectiveOperationException {
+        if (angularVelocity==null || !isLive(body)) return null;
+        Object value=angularVelocity.get(body);
+        if (!(value instanceof Vector3dc vector)) return null;
+        Vec3 result=new Vec3(vector.x(),vector.y(),vector.z());
+        return finite(result) ? result : null;
+    }
+
+    NativeGroundObservation groundObservation(Object body, List<BlockEntity> targets) throws ReflectiveOperationException {
+        Vec3 angular=angularVelocity(body);
+        if (wheels==null || angular==null || targets==null || targets.isEmpty() || targets.size()>32)
+            return NativeGroundObservation.unavailable("native_ground_evidence_unavailable");
+        Object currentPose=pose.invoke(body);
+        List<NativeGroundObservation.WheelContact> contacts=new ArrayList<>();
+        java.util.HashSet<BlockPos> seen=new java.util.HashSet<>();
+        for (BlockEntity target : targets) {
+            if (target==null || target.isRemoved() || !(target.getLevel() instanceof ServerLevel server)
+                    || !sameLiveStructure(body,containing(target)) || !seen.add(target.getBlockPos()))
+                return NativeGroundObservation.unavailable("invalid_or_foreign_wheel");
+            if (!target.getBlockState().hasProperty(BlockStateProperties.HORIZONTAL_FACING))
+                return NativeGroundObservation.unavailable("wheel_orientation_unavailable");
+            Direction facing=target.getBlockState().getValue(BlockStateProperties.HORIZONTAL_FACING);
+            Vec3 localCenter=Vec3.atCenterOf(target.getBlockPos().relative(facing));
+            Vector3dc axis=wheels.travelAxis(target,facing);
+            Vec3 localAxis=new Vec3(axis.x(),axis.y(),axis.z());
+            // Native cast samples three local rays, five blocks down, ignoring its own sublevel.
+            // Check the transformed columns first; this observer must never load terrain chunks.
+            for (int offset=-1;offset<=1;offset++) {
+                Vec3 start=localCenter.add(localAxis.scale(offset));
+                Vec3 worldStart=(Vec3)transformPosition.invoke(currentPose,start);
+                Vec3 worldEnd=(Vec3)transformPosition.invoke(currentPose,start.add(0,-5,0));
+                if (!finite(worldStart) || !finite(worldEnd) || !server.hasChunkAt(BlockPos.containing(worldStart))
+                        || !server.hasChunkAt(BlockPos.containing(worldEnd)))
+                    return NativeGroundObservation.unavailable("wheel_terrain_unloaded");
+            }
+            OffroadWheelReflectionAccess.Evidence evidence=wheels.observe(target,currentPose,facing);
+            Vec3 center=(Vec3)transformPosition.invoke(currentPose,localCenter);
+            contacts.add(new NativeGroundObservation.WheelContact(center,evidence.tireRadius(),evidence.suspensionCompression(),evidence.supported()));
+        }
+        return new NativeGroundObservation((UUID)id.invoke(body),angular,contacts,true,"observed");
+    }
+
+    GroundSurfaceObservation groundSurface(Object body, List<BlockEntity> targets) throws ReflectiveOperationException {
+        if(groundSurfaces==null)return GroundSurfaceObservation.unavailable("ground_surface_native_ray_abi_unavailable");
+        if(!isLive(body) || !(level.invoke(body) instanceof ServerLevel server) || targets==null || targets.size()<3 || targets.size()>32)
+            return GroundSurfaceObservation.unavailable("ground_surface_wheel_set_incomplete");
+        long tick=server.getGameTime(),nanos=System.nanoTime();
+        UUID bodyId=(UUID)id.invoke(body);
+        Object currentPose=pose.invoke(body);
+        if(currentPose==null || bodyId==null)return GroundSurfaceObservation.unavailable("ground_surface_native_pose_unavailable");
+        var evidence=new ArrayList<GroundSurfaceObservation.WheelEvidence>();
+        var positions=new java.util.HashSet<BlockPos>();
+        for(BlockEntity target:targets) {
+            if(target==null || target.isRemoved() || target.getLevel()!=server || !positions.add(target.getBlockPos())
+                    || containing(target)!=body)return GroundSurfaceObservation.unavailable("ground_surface_wheel_binding_invalid");
+            var chunk=server.getChunkSource().getChunkNow(target.getBlockPos().getX()>>4,target.getBlockPos().getZ()>>4);
+            if(chunk==null || chunk.getBlockEntities().get(target.getBlockPos())!=target)
+                return GroundSurfaceObservation.unavailable("ground_surface_wheel_not_loaded");
+            evidence.add(groundSurfaces.observe(server,target,body,currentPose,bodyId));
+        }
+        if(!isLive(body) || server.getGameTime()!=tick || !bodyId.equals(id.invoke(body)))
+            return GroundSurfaceObservation.unavailable("ground_surface_frame_changed");
+        return GroundSurfaceObservation.fromEvidence(bodyId,tick,nanos,targets.size(),evidence);
     }
 
     boolean sameLiveStructure(Object controllerBody, Object targetBody) throws ReflectiveOperationException {

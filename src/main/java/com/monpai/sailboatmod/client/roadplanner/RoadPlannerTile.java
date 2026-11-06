@@ -9,6 +9,7 @@ import com.monpai.sailboatmod.roadplanner.map.RoadMapTileSpec;
 
 import java.io.File;
 import java.io.IOException;
+import java.io.InputStream;
 import java.nio.file.Files;
 import java.util.Locale;
 
@@ -46,7 +47,11 @@ public class RoadPlannerTile implements AutoCloseable {
         closeTextureOnly();
         try {
             if (file.exists()) {
-                image = NativeImage.read(Files.readAllBytes(file.toPath()));
+                // The byte[] overload copies the whole PNG into LWJGL's small thread-local stack.
+                // Valid terrain tiles can exceed that stack; stream decoding uses a separate native buffer.
+                try (InputStream input = Files.newInputStream(file.toPath())) {
+                    image = NativeImage.read(input);
+                }
                 loadedFromCache = !looksLikePlaceholder(image);
                 if (!loadedFromCache) {
                     image.close();
@@ -228,6 +233,21 @@ public class RoadPlannerTile implements AutoCloseable {
         if (predictionPixels == null) predictionPixels = new int[pixels.length];
         for (int i = 0; i < pixels.length; i++) {
             if ((pixels[i] >>> 24) != 0) predictionPixels[i] = pixels[i];
+        }
+        dirty = true;
+        return true;
+    }
+
+    /** Merge strips directly into the underlay; never replace actual terrain or clone the full tile per strip. */
+    public synchronized boolean applyPredictionPatch(int offsetX, int offsetZ, int width, int height, int[] pixels) {
+        if (offsetX < 0 || offsetZ < 0 || width < 1 || height < 1
+                || offsetX + (long) width > TILE_PIXEL_SIZE || offsetZ + (long) height > TILE_PIXEL_SIZE
+                || pixels == null || pixels.length > com.monpai.sailboatmod.network.packet.roadplanner.SharedMapTerrainPatchPacket.MAX_PIXELS
+                || pixels.length != (long) width * height) return false;
+        if (predictionPixels == null) predictionPixels = new int[TILE_PIXEL_SIZE * TILE_PIXEL_SIZE];
+        for (int z = 0; z < height; z++) for (int x = 0; x < width; x++) {
+            int color = pixels[z * width + x];
+            if ((color >>> 24) != 0) predictionPixels[(offsetZ + z) * TILE_PIXEL_SIZE + offsetX + x] = color;
         }
         dirty = true;
         return true;

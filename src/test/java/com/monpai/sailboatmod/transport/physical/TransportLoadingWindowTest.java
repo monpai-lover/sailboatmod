@@ -1,6 +1,7 @@
 package com.monpai.sailboatmod.transport.physical;
 
 import net.minecraft.world.level.ChunkPos;
+import net.minecraft.core.BlockPos;
 import net.minecraft.world.phys.AABB;
 import net.minecraft.world.phys.Vec3;
 import org.junit.jupiter.api.Test;
@@ -58,16 +59,56 @@ class TransportLoadingWindowTest {
         assertTrue(backend.retained.isEmpty()); assertFalse(backend.structureRetained);
     }
 
+    @Test void twoAirportMetadataPinsSurviveMovingWindowAndAreReleasedOnClose() {
+        var backend=new FakeBackend();backend.allLoaded=true;var window=new TransportLoadingWindow(backend);
+        BlockPos source=new BlockPos(0,70,0),target=new BlockPos(16000,70,0);
+        window.setPinnedEndpoints(List.of(source,target));
+        assertTrue(window.update(null,REG,SHIP,HULL,new Vec3(100,64,0)));
+        backend.time++;
+        assertTrue(window.update(null,REG,SHIP,HULL.move(1024,0,0),new Vec3(1200,64,0)));
+        assertTrue(backend.retained.contains(new ChunkPos(source)));assertTrue(backend.retained.contains(new ChunkPos(target)));
+        assertTrue(backend.retained.size()<=128);
+        window.close();assertTrue(backend.retained.isEmpty());
+        assertTrue(window.update(null,REG,SHIP,HULL.move(1024,0,0),new Vec3(1200,64,0)));
+        assertFalse(backend.retained.contains(new ChunkPos(source)));assertFalse(backend.retained.contains(new ChunkPos(target)));
+    }
+    @Test void malformedEndpointSetCannotReplaceKnownPinsOrExceedTwoAirports() {
+        var backend=new FakeBackend();backend.allLoaded=true;var window=new TransportLoadingWindow(backend);
+        var endpoint=new BlockPos(16000,70,0);window.setPinnedEndpoints(List.of(endpoint));
+        assertThrows(IllegalArgumentException.class,()->window.setPinnedEndpoints(List.of(endpoint,BlockPos.ZERO,new BlockPos(32,70,0))));
+        assertThrows(IllegalArgumentException.class,()->window.setPinnedEndpoints(Arrays.asList((BlockPos)null)));
+        assertTrue(window.update(null,REG,SHIP,HULL,new Vec3(100,64,0)));
+        assertTrue(backend.retained.contains(new ChunkPos(endpoint)));
+    }
+    @Test void endpointPinsShareTheSameTotalChunkBudgetAndReleaseOnOverflow() {
+        var backend=new FakeBackend();backend.allLoaded=true;var window=new TransportLoadingWindow(backend);
+        window.setPinnedEndpoints(List.of(new BlockPos(16000,70,0),new BlockPos(17000,70,0)));
+        assertTrue(window.update(null,REG,SHIP,HULL,new Vec3(100,64,0)));
+        AABB maximumWindow=new AABB(0,63,0,208,70,80);
+        assertEquals(128,TransportLoadingWindow.desiredChunks(maximumWindow,maximumWindow.getCenter()).size());
+        assertFalse(window.update(null,REG,SHIP,maximumWindow,maximumWindow.getCenter()));
+        assertTrue(backend.retained.isEmpty());assertFalse(backend.structureRetained);
+    }
+    @Test void changedRegistrationCannotInheritAnotherMissionEndpointPins() {
+        var backend=new FakeBackend();backend.allLoaded=true;var window=new TransportLoadingWindow(backend);
+        var endpoint=new BlockPos(16000,70,0);window.setPinnedEndpoints(List.of(endpoint));
+        assertTrue(window.update(null,REG,SHIP,HULL,new Vec3(100,64,0)));
+        assertTrue(window.update(null,UUID.randomUUID(),SHIP,HULL.move(1024,0,0),new Vec3(1200,64,0)));
+        assertFalse(backend.retained.contains(new ChunkPos(endpoint)));
+    }
+
     private static final class FakeBackend implements TransportLoadingWindow.Backend {
         long time; boolean allLoaded; boolean structureRetained;
         final Map<ChunkPos, CompletableFuture<Boolean>> pending = new LinkedHashMap<>();
         final Set<ChunkPos> retained = new HashSet<>();
+        final Set<ChunkPos> temporary = new HashSet<>();
         @Override public long tick() { return time; }
         @Override public boolean isLoaded(ChunkPos chunk) { return allLoaded; }
         @Override public CompletableFuture<Boolean> request(ChunkPos chunk) {
             return pending.computeIfAbsent(chunk, ignored -> new CompletableFuture<>());
         }
         @Override public void ticket(UUID owner, ChunkPos chunk, boolean retain) { if (retain) retained.add(chunk); else retained.remove(chunk); }
+        @Override public void airportTicket(UUID owner, ChunkPos chunk, boolean retain) { if (retain) temporary.add(chunk); else temporary.remove(chunk); }
         @Override public boolean structure(UUID physical, UUID registration, boolean retain) { structureRetained = retain; return true; }
     }
 }

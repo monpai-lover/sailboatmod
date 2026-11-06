@@ -11,6 +11,7 @@ import com.monpai.sailboatmod.nation.model.TownStockpileRecord;
 import com.monpai.sailboatmod.nation.service.TownService;
 import com.monpai.sailboatmod.nation.service.TownStockpileService;
 import com.monpai.sailboatmod.registry.ModBlockEntities;
+import com.monpai.sailboatmod.transport.rail.RailWarehouseReceipts;
 import net.minecraft.core.BlockPos;
 import net.minecraft.core.NonNullList;
 import net.minecraft.nbt.CompoundTag;
@@ -18,6 +19,7 @@ import net.minecraft.nbt.ListTag;
 import net.minecraft.nbt.Tag;
 import net.minecraft.network.chat.Component;
 import net.minecraft.resources.ResourceLocation;
+import net.minecraft.server.level.ServerLevel;
 import net.minecraft.server.level.ServerPlayer;
 import net.minecraft.world.Container;
 import net.minecraft.world.ContainerHelper;
@@ -49,9 +51,11 @@ public class TownWarehouseBlockEntity extends BlockEntity implements MenuProvide
     private static final String TAG_PLAYER_UUID = "PlayerUuid";
     private static final String TAG_ITEMS = "Items";
     private static final String TAG_LEGACY_STORAGE = "Storage";
+    private static final String TAG_RAIL_DELIVERY_RECEIPTS = "RailDeliveryReceipts";
 
     private final Map<UUID, NonNullList<ItemStack>> playerStorage = new LinkedHashMap<>();
     private final NonNullList<ItemStack> legacySharedStorage = NonNullList.withSize(STORAGE_SIZE, ItemStack.EMPTY);
+    private RailWarehouseReceipts railDeliveryReceipts = RailWarehouseReceipts.load(null);
 
     private String townId = "";
     private String townName = "";
@@ -313,6 +317,38 @@ public class TownWarehouseBlockEntity extends BlockEntity implements MenuProvide
         return true;
     }
 
+    public enum RailDeliveryResult { INSERTED, ALREADY_RECEIVED, REJECTED }
+
+    public boolean hasRailDeliveryReceipt(String shippingOrderId, UUID buyerId, int quantity) {
+        return !isRemoved() && railDeliveryReceipts.hasReceipt(shippingOrderId, buyerId, quantity);
+    }
+
+    public RailDeliveryResult insertRailCargoOnce(String shippingOrderId, UUID buyerId, List<ItemStack> unmarkedCargo) {
+        if (!(level instanceof ServerLevel server) || !server.getServer().isSameThread() || isRemoved()) {
+            return RailDeliveryResult.REJECTED;
+        }
+        var result = railDeliveryReceipts.insertOnce(shippingOrderId, buyerId, unmarkedCargo, () -> {
+            NonNullList<ItemStack> existing = playerStorage.get(buyerId);
+            NonNullList<ItemStack> staged = copyStorage(existing);
+            if (!mergeCargoIntoStorage(unmarkedCargo, staged)) return false;
+
+            if (existing == null) {
+                playerStorage.put(buyerId, staged);
+            } else {
+                for (int i = 0; i < existing.size(); i++) existing.set(i, staged.get(i));
+            }
+            return true;
+        });
+        return switch (result) {
+            case INSERTED -> {
+                setChanged();
+                yield RailDeliveryResult.INSERTED;
+            }
+            case ALREADY_RECEIVED -> RailDeliveryResult.ALREADY_RECEIVED;
+            case REJECTED -> RailDeliveryResult.REJECTED;
+        };
+    }
+
     private void migrateLegacyStorageToStockpile() {
         if (legacyStorageMigrated || level == null || level.isClientSide) {
             return;
@@ -539,6 +575,8 @@ public class TownWarehouseBlockEntity extends BlockEntity implements MenuProvide
             players.add(playerTag);
         }
         tag.put(TAG_PLAYER_STORAGE, players);
+        Tag railReceipts = railDeliveryReceipts.save();
+        if (railReceipts != null) tag.put(TAG_RAIL_DELIVERY_RECEIPTS, railReceipts);
     }
 
     @Override
@@ -548,6 +586,7 @@ public class TownWarehouseBlockEntity extends BlockEntity implements MenuProvide
         townName = tag.getString("TownName");
         terminalsImported = tag.getBoolean("TerminalsImported");
         legacyStorageMigrated = !tag.contains(TAG_LEGACY_STORAGE, Tag.TAG_COMPOUND) || tag.getBoolean("LegacyStorageMigrated");
+        railDeliveryReceipts = RailWarehouseReceipts.load(tag.get(TAG_RAIL_DELIVERY_RECEIPTS));
 
         playerStorage.clear();
         ListTag players = tag.getList(TAG_PLAYER_STORAGE, net.minecraft.nbt.Tag.TAG_COMPOUND);

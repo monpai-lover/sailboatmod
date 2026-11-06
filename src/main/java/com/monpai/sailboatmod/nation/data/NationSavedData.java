@@ -46,6 +46,13 @@ public class NationSavedData extends SavedData {
     private final Map<String, NationInviteRecord> invites = new LinkedHashMap<>();
     private final Map<String, NationJoinRequestRecord> joinRequests = new LinkedHashMap<>();
     private final Map<String, NationClaimRecord> claims = new LinkedHashMap<>();
+    /** Volatile observation token for bounded permission scans; never written to NBT. */
+    private long claimRevision;
+    public long claimRevision() { return claimRevision; }
+    private boolean removeClaimKey(String key) {
+        if (claims.remove(key) == null) return false;
+        claimRevision++; return true;
+    }
     private final java.util.Set<String> monsterSpawnDenied = java.util.concurrent.ConcurrentHashMap.newKeySet();
     private final Map<String, NationWarRecord> wars = new LinkedHashMap<>();
     private final Map<String, NationFlagRecord> flags = new LinkedHashMap<>();
@@ -567,7 +574,7 @@ public class NationSavedData extends SavedData {
             }
         }
         for (String key : claimKeys) {
-            claims.remove(key);
+            removeClaimKey(key);
             monsterSpawnDenied.remove(key);
             changed = true;
         }
@@ -672,7 +679,7 @@ public class NationSavedData extends SavedData {
             }
         }
         for (String key : claimKeys) {
-            claims.remove(key);
+            removeClaimKey(key);
             monsterSpawnDenied.remove(key);
             changed = true;
         }
@@ -1190,7 +1197,8 @@ public class NationSavedData extends SavedData {
         if (key.isBlank()) {
             return;
         }
-        claims.put(key, claim);
+        NationClaimRecord previous = claims.put(key, claim);
+        if (previous == null || !previous.nationId().equals(claim.nationId()) || !previous.townId().equals(claim.townId())) claimRevision++;
         if (claim.mobSpawningAllowed()) monsterSpawnDenied.remove(key);
         else monsterSpawnDenied.add(key);
         setDirty();
@@ -1198,7 +1206,7 @@ public class NationSavedData extends SavedData {
 
     public void removeClaim(String dimensionId, int chunkX, int chunkZ) {
         String key = claimKey(dimensionId, chunkX, chunkZ);
-        if (!key.isBlank() && claims.remove(key) != null) {
+        if (!key.isBlank() && removeClaimKey(key)) {
             monsterSpawnDenied.remove(key);
             setDirty();
         }
@@ -1219,7 +1227,7 @@ public class NationSavedData extends SavedData {
             return;
         }
         for (String key : claimKeys) {
-            claims.remove(key);
+            removeClaimKey(key);
             monsterSpawnDenied.remove(key);
         }
         setDirty();
@@ -1240,7 +1248,7 @@ public class NationSavedData extends SavedData {
             return;
         }
         for (String key : claimKeys) {
-            claims.remove(key);
+            removeClaimKey(key);
             monsterSpawnDenied.remove(key);
         }
         setDirty();

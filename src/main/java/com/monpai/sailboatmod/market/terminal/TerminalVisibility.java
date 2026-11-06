@@ -101,7 +101,7 @@ public final class TerminalVisibility {
                 }
             }
             // 陆路边:本驿站 reachableTownIds 每个 townId 直接连边。
-            if (e.kind() == Kind.POST_STATION) {
+            if (e.kind() == Kind.POST_STATION || e.kind() == Kind.RAIL) {
                 for (String toTown : e.reachableTownIds()) {
                     addEdge(adj, fromTown, toTown);
                 }

@@ -151,6 +151,15 @@ class MarketControllerTest {
     }
 
     @Test
+    void railwayOptionSendsRailDispatchSelection() {
+        MarketFixtures f = new MarketFixtures();
+        f.orders.add(MarketFixtures.order("O1", List.of(MarketFixtures.carrier("RAIL", "Freight Train"))));
+        MarketController controller = controller(f);
+        assertEquals(MarketController.Result.SENT, controller.dispatchSelectedOrder());
+        assertSameWire(new DispatchMarketOrderPacket(MARKET, "O1", TransportTerminalKind.valueOf("RAIL")), sent.getFirst());
+    }
+
+    @Test
     void dispatchWithoutCarrierFallsBackToAuto() {
         MarketFixtures f = new MarketFixtures();
         f.orders.add(MarketFixtures.order("O1", List.of()));

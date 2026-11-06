@@ -16,6 +16,7 @@ import net.minecraft.server.level.ServerPlayer;
 import net.neoforged.neoforge.network.event.RegisterPayloadHandlersEvent;
 import net.neoforged.neoforge.network.handling.IPayloadContext;
 import net.neoforged.neoforge.network.registration.PayloadRegistrar;
+import net.neoforged.neoforge.network.registration.HandlerThread;
 
 /** NeoForge payload registrations backed by the mod's existing packet codecs. */
 public final class PayloadChannel {
@@ -50,6 +51,29 @@ public final class PayloadChannel {
         net.neoforged.neoforge.network.PacketDistributor.sendToPlayer(target, wrap(packet, NetworkDirection.PLAY_TO_CLIENT));
     }
 
+    /** Completion releases a bounded map-flight slot on BOTH success and failure, without blocking. */
+    public void send(ServerPlayer target, Object packet, Runnable completion) {
+        var payload = new net.minecraft.network.protocol.common.ClientboundCustomPayloadPacket(
+                wrap(packet, NetworkDirection.PLAY_TO_CLIENT));
+        var connection = target.connection.getConnection();
+        var channel = connection.channel();
+        if (!connection.isConnected() || channel == null) { completion.run(); return; }
+        // Connection can close between admission and send. Release on closure as well; remove the listener
+        // after a normal write so successful sends do not accumulate connection-lifetime callbacks.
+        io.netty.util.concurrent.GenericFutureListener<io.netty.util.concurrent.Future<? super Void>> onClose =
+                ignored -> completion.run();
+        Runnable finished = () -> { channel.closeFuture().removeListener(onClose); completion.run(); };
+        channel.closeFuture().addListener(onClose);
+        try {
+            connection.send(payload, new net.minecraft.network.PacketSendListener() {
+                @Override public void onSuccess() { finished.run(); }
+                @Override public net.minecraft.network.protocol.Packet<?> onFailure() {
+                    finished.run(); return null;
+                }
+            });
+        } catch (RuntimeException failed) { finished.run(); throw failed; }
+    }
+
     private CustomPacketPayload wrap(Object packet, NetworkDirection direction) {
         Registration<?> registration = registrations.get(packet.getClass());
         if (registration == null) throw new IllegalArgumentException("Unregistered payload: " + packet.getClass().getName());
@@ -63,6 +87,11 @@ public final class PayloadChannel {
             BiConsumer<T, FriendlyByteBuf> encoder, Function<FriendlyByteBuf, T> decoder,
             BiConsumer<T, Supplier<NetworkEvent.Context>> handler, NetworkDirection direction) {
         void register(PayloadRegistrar registrar) {
+            // Only map requests have network-safe admission handlers; other payloads retain main-thread dispatch.
+            String path = type.id().getPath();
+            if (path.equals("shared_map_terrain_request_packet") || path.equals("road_planner_map_preload_request_packet")) {
+                registrar = registrar.executesOn(HandlerThread.NETWORK);
+            }
             StreamCodec<RegistryFriendlyByteBuf, Envelope<T>> codec = new StreamCodec<>() {
                 @Override public Envelope<T> decode(RegistryFriendlyByteBuf buffer) {
                     return new Envelope<>(type, decoder.apply(buffer));

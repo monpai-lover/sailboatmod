@@ -90,6 +90,14 @@ public final class ModBlockEntities {
     public static final DeferredHolder<BlockEntityType<?>, BlockEntityType<com.monpai.sailboatmod.block.entity.AirportBlockEntity>> AIRPORT_BLOCK_ENTITY = BLOCK_ENTITIES.register(
             "airport", () -> BlockEntityType.Builder.of(com.monpai.sailboatmod.block.entity.AirportBlockEntity::new, ModBlocks.AIRPORT.get()).build(null));
 
+    public static final DeferredHolder<BlockEntityType<?>, BlockEntityType<com.monpai.sailboatmod.block.entity.TownArrivalsBoardBlockEntity>> TOWN_ARRIVALS_BOARD_BLOCK_ENTITY = BLOCK_ENTITIES.register(
+            "town_arrivals_board", () -> BlockEntityType.Builder.of(com.monpai.sailboatmod.block.entity.TownArrivalsBoardBlockEntity::new,
+                    ModBlocks.TOWN_ARRIVALS_BOARD.get()).build(null));
+
+    public static final DeferredHolder<BlockEntityType<?>, BlockEntityType<com.monpai.sailboatmod.block.entity.RailFreightTerminalBlockEntity>> RAIL_FREIGHT_TERMINAL_BLOCK_ENTITY = BLOCK_ENTITIES.register(
+            "rail_freight_terminal", () -> BlockEntityType.Builder.of(com.monpai.sailboatmod.block.entity.RailFreightTerminalBlockEntity::new,
+                    ModBlocks.RAIL_FREIGHT_TERMINAL.get()).build(null));
+
     private ModBlockEntities() {
     }
 }

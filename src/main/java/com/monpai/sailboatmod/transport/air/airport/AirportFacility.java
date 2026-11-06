@@ -5,10 +5,15 @@ import net.minecraft.core.BlockPos;
 import net.minecraft.nbt.CompoundTag;
 import net.minecraft.world.phys.AABB;
 import net.minecraft.world.phys.Vec3;
-import java.util.Objects;
+import java.util.*;
+import net.minecraft.world.level.ChunkPos;
 
 /** Player-built geometry. Endpoint Y is the free air cell immediately above the landing surface. */
 public record AirportFacility(String id, Type type, BlockPos start, BlockPos end, int width, int clearanceHeight) {
+    public static final int MAX_RUNWAY_LENGTH = 2048, MAX_WIDTH = 64, MAX_CLEARANCE_HEIGHT = 64, MAX_APPROACH_LENGTH = 64;
+    public static final int MAX_RUNWAY_MANAGEMENT_DISTANCE = MAX_RUNWAY_LENGTH + 2 * MAX_APPROACH_LENGTH;
+    public static final int MAX_RUNWAY_CLEARANCE_SPAN = MAX_RUNWAY_LENGTH + 2 * MAX_APPROACH_LENGTH + MAX_WIDTH + 2;
+    public static final int MAX_CLEARANCE_CHUNKS = 2048;
     public enum Type { RUNWAY, HELIPAD, MOORING }
     public AirportFacility {
         Objects.requireNonNull(type);
@@ -17,12 +22,13 @@ public record AirportFacility(String id, Type type, BlockPos start, BlockPos end
         if (id == null || !id.matches("[a-zA-Z0-9_-]{1,48}")) throw new IllegalArgumentException("Invalid facility id");
     }
     public double length() { return Math.hypot((double) end.getX() - start.getX(), (double) end.getZ() - start.getZ()); }
-    public int approachLength() { return type == Type.RUNWAY ? Math.max(16, Math.min(64, (int) Math.ceil(length() / 2))) : 0; }
+    public int approachLength() { return type == Type.RUNWAY ? Math.max(16, Math.min(MAX_APPROACH_LENGTH, (int) Math.ceil(length() / 2))) : 0; }
+    public int managementDistance() { return type == Type.RUNWAY ? MAX_RUNWAY_MANAGEMENT_DISTANCE : 512; }
     public Vec3 landingPosition() { return new Vec3((start.getX() + (double) end.getX()) / 2 + .5, start.getY(), (start.getZ() + (double) end.getZ()) / 2 + .5); }
     public boolean validGeometry() {
         return coordinateInBounds(start) && coordinateInBounds(end)
-                && start.getY() == end.getY() && width >= 5 && width <= 32 && clearanceHeight >= 4 && clearanceHeight <= 64
-                && length() <= 512 && (type != Type.RUNWAY || length() >= 32)
+                && start.getY() == end.getY() && width >= 5 && width <= MAX_WIDTH && clearanceHeight >= 4 && clearanceHeight <= MAX_CLEARANCE_HEIGHT
+                && length() <= MAX_RUNWAY_LENGTH && (type != Type.RUNWAY || length() >= 32)
                 && (type == Type.RUNWAY || length() <= 32);
     }
     private static boolean coordinateInBounds(BlockPos pos) {
@@ -81,6 +87,26 @@ public record AirportFacility(String id, Type type, BlockPos start, BlockPos end
         return range[0] <= range[1] + 1e-7;
     }
     record ColumnRange(int minZ, int maxZ) {}
+    /** Pure, bounded metadata footprint. No world/chunk lookup is performed here. */
+    public Optional<Set<Long>> clearanceChunks() { return clearanceChunks(MAX_CLEARANCE_CHUNKS); }
+    Optional<Set<Long>> clearanceChunks(int maximumChunks) {
+        if (!validGeometry() || maximumChunks < 1 || maximumChunks > MAX_CLEARANCE_CHUNKS) return Optional.empty();
+        AABB area = clearanceBounds();
+        int minX = (int) Math.floor(area.minX), maxX = (int) Math.ceil(area.maxX) - 1;
+        int minZ = (int) Math.floor(area.minZ), maxZ = (int) Math.ceil(area.maxZ) - 1;
+        Set<Long> chunks = new LinkedHashSet<>();
+        for (int x = minX; x <= maxX; x++) {
+            ColumnRange row = clearanceColumns(x);
+            int from = Math.max(minZ, row.minZ()), to = Math.min(maxZ, row.maxZ());
+            if (from > to) continue;
+            for (int z = from >> 4; z <= to >> 4; z++) {
+                long chunk = ChunkPos.asLong(x >> 4, z);
+                if (!chunks.contains(chunk) && chunks.size() == maximumChunks) return Optional.empty();
+                chunks.add(chunk);
+            }
+        }
+        return Optional.of(Collections.unmodifiableSet(chunks));
+    }
     /** Conservative block-column intersection, including both sloped runway approaches. */
     int clearanceBaseY(int x, int z) {
         double padding = Math.sqrt(.5);

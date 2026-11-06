@@ -65,7 +65,7 @@ class MarketWebAppResourceTest {
     void mapTileEndpointIsPublicCacheReadOnly() throws IOException {
         String source = Files.readString(MARKET_WEB_SERVER, StandardCharsets.UTF_8);
         int start = source.indexOf("private void handleMapTile");
-        int end = source.indexOf("private void handleMapFlag", start);
+        int end = source.indexOf("private void handleSquareMapTile", start);
         assertTrue(start >= 0 && end > start, "handleMapTile method should be present");
         String method = source.substring(start, end);
 
@@ -73,8 +73,38 @@ class MarketWebAppResourceTest {
                 "cached map tile PNGs should be readable without market web login");
         assertTrue(method.contains("\"GET\".equalsIgnoreCase"),
                 "map tile endpoint should remain read-only");
-        assertTrue(method.contains("service.mapTile"),
-                "map tile endpoint should only read cached tile bytes");
+        assertTrue(method.contains("writeJson(exchange, 405"),
+                "map tile endpoint should reject writes");
+        assertTrue(method.contains("\"Cache-Control\", \"public, max-age=86400, immutable\""),
+                "map tile PNGs should retain their public immutable cache policy");
+        var request = java.util.regex.Pattern.compile(
+                "callOnServerThread\\(\\(\\) -> \\{(.*?)\\}\\);", java.util.regex.Pattern.DOTALL).matcher(method);
+        assertTrue(request.find(), "tile discovery should be queued on the Minecraft server thread");
+        assertTrue(request.group(1).contains("service.requestMapTile(minecraftServer, lod, tileX, tileZ)"));
+        assertFalse(request.group(1).contains("readMapTile("),
+                "cached PNG disk reads must stay outside the Minecraft server-thread callback");
+        int cachedRead = method.indexOf("service.readMapTile(minecraftServer, lod, tileX, tileZ)");
+        assertTrue(cachedRead > request.end(),
+                "the HTTP worker should read cached PNG bytes after the server-thread request returns");
+        assertFalse(method.substring(request.end()).contains("callOnServerThread("),
+                "the cache read must not be wrapped in a second server-thread callback");
+        assertTrue(method.contains("writeBytes(exchange, 200, \"image/png\", bytes)"));
+
+        String service = Files.readString(MARKET_WEB_SERVICE, StandardCharsets.UTF_8);
+        int requestStart = service.indexOf("public void requestMapTile(");
+        int readStart = service.indexOf("public byte[] readMapTile(", requestStart);
+        int readEnd = service.indexOf("public void requestSquareMapTile(", readStart);
+        assertTrue(requestStart >= 0 && readStart > requestStart && readEnd > readStart);
+        String requestBody = service.substring(requestStart, readStart);
+        String cachedReader = service.substring(readStart, readEnd);
+        assertTrue(requestBody.contains(".enqueueTileRequest("));
+        assertFalse(requestBody.contains(".readPng("),
+                "server-thread tile requests must not perform cached PNG disk IO");
+        assertTrue(cachedReader.contains("MarketWebMapTileCache.forServer(server)"));
+        assertTrue(cachedReader.contains(".readPng(MarketWebMapConstants.OVERWORLD, tileX, tileZ)"),
+                "HTTP workers should read only already-rendered tile cache bytes");
+        assertFalse(cachedReader.contains(".enqueueTileRequest("),
+                "cached tile reads must not access the render queue from HTTP workers");
     }
 
     @Test

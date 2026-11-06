@@ -73,6 +73,26 @@ class RoadGraphRoutingServiceTest {
         assertTrue(path.contains(new BlockPos(90, 64, 0)));
     }
 
+    @Test
+    void nodeAttachmentLeavesRoadTowardTargetInBothDirections() {
+        RoadNetworkGraphSavedData data = new RoadNetworkGraphSavedData();
+        RoadGraphNodeRecord a = node(new BlockPos(0, 64, 0));
+        RoadGraphNodeRecord b = node(new BlockPos(10, 64, 0));
+        data.putNode(a);
+        data.putNode(b);
+        data.putEdge(edge(a, b));
+        RoadGraphRoutingService service = new RoadGraphRoutingService(new RoadGraphRepository(data));
+        BlockPos departure = a.pos().west(2);
+        BlockPos arrival = b.pos().east(2);
+        List<BlockPos> expected = new java.util.ArrayList<>();
+        expected.add(departure);
+        expected.addAll(interpolate(a.pos(), b.pos()));
+        expected.add(arrival);
+
+        assertEquals(expected, service.route("minecraft:overworld", departure, arrival, 4));
+        assertEquals(expected.reversed(), service.route("minecraft:overworld", arrival, departure, 4));
+    }
+
     private static RoadGraphNodeRecord node(BlockPos pos) {
         return new RoadGraphNodeRecord(UUID.randomUUID(), "minecraft:overworld", pos,
                 RoadGraphNodeRecord.Kind.NORMAL, "alpha", "", "", 1L, 1L);

@@ -123,7 +123,10 @@ public final class RoadGraphRoutingService {
 
     private static List<EndpointOption> endpointOptions(Attachment attachment, boolean source) {
         if (attachment.nodeId() != null) {
-            return List.of(new EndpointOption(attachment.nodeId(), List.of(attachment.origin(), attachment.roadPos())));
+            List<BlockPos> connector = source
+                    ? List.of(attachment.origin(), attachment.roadPos())
+                    : List.of(attachment.roadPos(), attachment.origin());
+            return List.of(new EndpointOption(attachment.nodeId(), connector));
         }
         RoadGraphEdgeRecord edge = attachment.edge();
         if (edge == null || edge.centerline().isEmpty()) {

@@ -54,6 +54,8 @@ public final class ServerEvents {
         SharedMapServerState.onServerStarted(event.getServer());
         com.monpai.sailboatmod.roadplanner.service.SharedMapTerrainService.start(event.getServer());
         com.monpai.sailboatmod.map.route.MapRouteCatalogService.start(event.getServer());
+        runStartupTaskSafely("town arrival boards", () ->
+                com.monpai.sailboatmod.transport.board.TownVoyageService.start(event.getServer()));
         com.monpai.sailboatmod.transport.control.RegisteredTransportSavedData.restoreKnown(event.getServer());
         RoadPlanningTaskService.onServerStarted(event.getServer());
         RoadPlannerMapPreloadService.onServerStarted(event.getServer());
@@ -98,7 +100,9 @@ public final class ServerEvents {
                 WaterRouteTaskService.global().tick(level);
                 com.monpai.sailboatmod.roadplanner.service.SharedMapTerrainService.global().tick(level);
             });
+            com.monpai.sailboatmod.transport.rail.RailFreightService.tick(server);
             com.monpai.sailboatmod.compat.create.CreateRailLogistics.tick(server);
+            com.monpai.sailboatmod.transport.board.TownVoyageService.tick(server);
             com.monpai.sailboatmod.map.route.MapRouteCatalogService.global().tick();
             com.monpai.sailboatmod.network.packet.RequestClaimMapViewportPacket.onServerTick(server);
             MARKET_ANALYTICS.maybeRecordSnapshots(server);
@@ -166,12 +170,14 @@ public final class ServerEvents {
 
     @SubscribeEvent
     public static void onServerStopping(ServerStoppingEvent event) {
+        com.monpai.sailboatmod.transport.board.TownVoyageService.stopping(event.getServer());
         com.monpai.sailboatmod.client.roadplanner.RoadPlannerAutoCompleteExecutor.cancelAll();
         com.monpai.sailboatmod.transport.control.RegisteredTransportSavedData.markServerStopping(event.getServer());
     }
 
     @SubscribeEvent
     public static void onServerStopped(ServerStoppedEvent event) {
+        com.monpai.sailboatmod.transport.board.TownVoyageService.stopped(event.getServer());
         com.monpai.sailboatmod.nation.service.StructureConstructionManager.clearRuntimeState();
         ClaimPreviewTerrainService.onServerStopping(event.getServer());
         com.monpai.sailboatmod.network.packet.RequestClaimMapViewportPacket.onServerStopping();
@@ -181,12 +187,14 @@ public final class ServerEvents {
         com.monpai.sailboatmod.market.MarketLiveSync.reset();
         com.monpai.sailboatmod.roadplanner.service.SharedMapTerrainService.stop();
         com.monpai.sailboatmod.map.route.MapRouteCatalogService.stop();
+        com.monpai.sailboatmod.transport.rail.RailFreightService.stop(event.getServer());
         com.monpai.sailboatmod.transport.TransportRegistry.clear(event.getServer());
         com.monpai.sailboatmod.transport.air.airport.AirportRegistry.clear(event.getServer());
         RoadPlannerMapPreloadService.onServerStopped();
         RoadEditTaskService.global().clear();
         com.monpai.sailboatmod.roadplanner.service.RoadPlannerPreviewJobService.global().clear();
         com.monpai.sailboatmod.roadplanner.service.RoadPlannerChunkTickets.clearAll();
+        com.monpai.sailboatmod.transport.rail.ui.RailTerminalRegistry.clear(event.getServer());
         com.monpai.sailboatmod.compat.create.CreateRailLogistics.clear();
         RoadPlannerBuildControlService.global().stopServer();
         WaterRouteTaskService.global().clear();

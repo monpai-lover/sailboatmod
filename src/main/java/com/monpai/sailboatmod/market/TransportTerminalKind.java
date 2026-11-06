@@ -6,7 +6,8 @@ public enum TransportTerminalKind {
     AUTO,
     PORT,
     POST_STATION,
-    AIRPORT;
+    AIRPORT,
+    RAIL;
 
     public static TransportTerminalKind fromName(String value) {
         if (value == null || value.isBlank()) {

@@ -12,6 +12,7 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import java.util.Optional;
+import java.util.List;
 import java.util.concurrent.atomic.AtomicBoolean;
 
 /** Optional, server-only access to native physical structures and explicitly bound real actuators. */
@@ -46,6 +47,13 @@ public final class PhysicalVehicleBridge {
             return Optional.empty();
         }
     }
+    public static NativeGroundObservation groundObservation(@Nullable BlockEntity controller, List<BlockEntity> wheelMounts) {
+        return AeronauticsVehicleBridge.groundObservation(controller,wheelMounts);
+    }
+    public static GroundSurfaceObservation groundSurface(@Nullable BlockEntity controller, List<BlockEntity> wheelMounts) {
+        return AeronauticsVehicleBridge.groundSurface(controller,wheelMounts);
+    }
+
     public static NativeControlResult nativeThrottle(@Nullable BlockEntity controller, @Nullable BlockEntity target, int signal) {
         return AeronauticsVehicleBridge.nativeThrottle(controller, target, signal);
     }

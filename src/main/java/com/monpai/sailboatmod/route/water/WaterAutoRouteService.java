@@ -581,11 +581,20 @@ public final class WaterAutoRouteService {
         if (verified == null || verified.size() < 2) {
             return WaterRouteResult.failure(WaterRouteFailureReason.NO_WATER_PATH);
         }
-        smoothed = verified;
+        // The short solver smooths and verifies the X/Z geometry. Publish each verified column's
+        // actual water surface instead of the generator sea level used for that 2D geometry.
+        List<BlockPos> surfacePath = new ArrayList<>(verified.size());
+        for (BlockPos point : verified) {
+            WaterRouteCancellation.check();
+            WaterColumn column = map.sampleHullStrict(point.getX(), point.getZ(), 0);
+            if (column == null) return WaterRouteResult.failure(WaterRouteFailureReason.TERRAIN_NOT_READY);
+            if (!column.passable()) return WaterRouteResult.failure(WaterRouteFailureReason.NO_WATER_PATH);
+            surfacePath.add(column.surfacePos());
+        }
         // WaterPathSmoother 已改点数(回推/重采),origins 与最终点必错位 → 传 null(buildMetas 全 RAW 兜底),metas 仅 debug 着色。
-        metasOut.set(buildMetas(smoothed, null, raw, -1, smoothed.size()));
+        metasOut.set(buildMetas(surfacePath, null, raw, -1, surfacePath.size()));
         bar.update(95, "完成");
-        return WaterRouteResult.success(smoothed);
+        return WaterRouteResult.success(surfacePath);
     }
 
     /**
@@ -1082,7 +1091,6 @@ public final class WaterAutoRouteService {
         List<RouteDefinition> routes = upsertAutoRoute(source.getRoutesForMap(), route);
         int selectedIndex = Math.max(0, routes.indexOf(route));
         source.setRoutes(routes, selectedIndex);
-        WaterRouteNetworkSavedData.get(level).register(sourceSnapshot.pos(), targetSnapshot.pos(), route);
 
         // 2026-06:航线也存到目的地码头,且是反向(B→A)——这样从目的地出发能直接用回程线路。
         // 反向 = 航点倒序 + metas 倒序(与航点对齐) + 起终 dock/town 对调。
@@ -1103,6 +1111,7 @@ public final class WaterAutoRouteService {
         List<RouteDefinition> targetRoutes = upsertAutoRoute(target.getRoutesForMap(), reverseRoute);
         int reverseIndex = Math.max(0, targetRoutes.indexOf(reverseRoute));
         target.setRoutes(targetRoutes, reverseIndex);
+        WaterRouteNetworkSavedData.get(level).registerGeneratedPair(sourceSnapshot.pos(), targetSnapshot.pos(), route, reverseRoute);
 
         if (player != null) {
             player.sendSystemMessage(Component.translatable(

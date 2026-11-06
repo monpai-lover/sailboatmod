@@ -38,6 +38,7 @@ import net.neoforged.fml.event.lifecycle.FMLClientSetupEvent;
 public final class ClientEvents {
     @SubscribeEvent
     public static void registerRenderers(EntityRenderersEvent.RegisterRenderers event) {
+        com.monpai.sailboatmod.block.entity.TownArrivalsBoardBlockEntity.installClientClock(TownArrivalsBoardClientClock::now);
         event.registerEntityRenderer(ModEntities.SAILBOAT.get(), SailboatEntityRenderer::new);
         event.registerEntityRenderer(ModEntities.CARRIAGE.get(), CarriageEntityRenderer::new);
         event.registerEntityRenderer(ModEntities.RESIDENT.get(), ResidentEntityRenderer::new);
@@ -54,6 +55,7 @@ public final class ClientEvents {
         event.registerBlockEntityRenderer(ModBlockEntities.TOWN_CORE_BLOCK_ENTITY.get(), TownCoreBlockEntityRenderer::new);
         event.registerBlockEntityRenderer(ModBlockEntities.TOWN_FLAG_BLOCK_ENTITY.get(), TownFlagBlockEntityRenderer::new);
         event.registerBlockEntityRenderer(ModBlockEntities.TOWN_WAREHOUSE_BLOCK_ENTITY.get(), TownWarehouseBlockEntityRenderer::new);
+        event.registerBlockEntityRenderer(ModBlockEntities.TOWN_ARRIVALS_BOARD_BLOCK_ENTITY.get(), com.monpai.sailboatmod.client.renderer.blockentity.TownArrivalsBoardRenderer::new);
     }
 
     @SubscribeEvent

@@ -7,13 +7,14 @@ import java.util.function.Predicate;
 /** Never asks the world to supply a chunk. Unknown cells cannot validate a facility. */
 public final class AirportValidation {
     public enum Result { VALID, WAITING, INVALID_GEOMETRY, TOO_LARGE, UNLOADED, OBSTRUCTED, UNSUPPORTED }
-    private static final int MAX_CELLS = 262144;
-    // Geometry limits: 512 runway + two 64 approaches + width 32 + raster rounding.
-    private static final int MAX_HORIZONTAL_SPAN = 512 + 2 * 64 + 32 + 2;
+    // Includes legal runway/approach raster padding, support and maximum clearance height.
+    private static final int MAX_HORIZONTAL_SPAN = AirportFacility.MAX_RUNWAY_CLEARANCE_SPAN;
+    public static final int MAX_CELLS = MAX_HORIZONTAL_SPAN * (AirportFacility.MAX_WIDTH + 2)
+            * (AirportFacility.MAX_CLEARANCE_HEIGHT + 1);
     /** Conservative bound including both phases, all candidate columns and row setup. */
     public static final int MAX_SCAN_STEPS = 2 * (MAX_CELLS + MAX_HORIZONTAL_SPAN * MAX_HORIZONTAL_SPAN + MAX_HORIZONTAL_SPAN) + 1;
     private AirportValidation() {}
-    /** Explicit editor/command validation; gameplay uses Scan with a bounded per-tick budget. */
+    /** Pure/offline convenience. Every server editor, command and gameplay path must use bounded Scan steps. */
     public static Result validate(AirportFacility facility, Predicate<BlockPos> loaded, Predicate<BlockPos> clear, Predicate<BlockPos> supported) {
         Scan scan = new Scan(facility);
         return scan.advance(scan.maximumSteps, loaded, clear, supported);
@@ -26,6 +27,7 @@ public final class AirportValidation {
         public Scan(AirportFacility facility) {
             this.facility = facility;
             if (facility == null || !facility.validGeometry()) { result = Result.INVALID_GEOMETRY; return; }
+            if (facility.clearanceChunks().isEmpty()) { result = Result.TOO_LARGE; return; }
             AABB area = facility.clearanceBounds();
             minX = (int) Math.floor(area.minX); maxX = (int) Math.ceil(area.maxX) - 1;
             minZ = (int) Math.floor(area.minZ); maxZ = (int) Math.ceil(area.maxZ) - 1;

@@ -93,11 +93,14 @@ public class RoadPlannerTileManager implements AutoCloseable {
     public int applyTerrainPatch(String world, String dimension, int tileX, int tileZ, int offsetX, int offsetZ,
                                  int width, int height, int[] pixels, boolean prediction, int blocksPerPixel) {
         if (!worldId.equals(world) || !dimensionId.equals(dimension) || pixels == null || width < 1 || height < 1
-                || offsetX < 0 || offsetZ < 0 || offsetX + width > 256 || offsetZ + height > 256
-                || pixels.length != width * height || !SharedMapTileGrid.validTile(tileX, tileZ, blocksPerPixel)) return 0;
-        if (prediction && (width != 256 || height != 256 || offsetX != 0 || offsetZ != 0)) return 0;
+                || offsetX < 0 || offsetZ < 0 || offsetX + (long) width > 256 || offsetZ + (long) height > 256
+                || pixels.length != (long) width * height || !SharedMapTileGrid.validTile(tileX, tileZ, blocksPerPixel)) return 0;
         RoadPlannerTile tile = getTerrainTile(tileX, tileZ, blocksPerPixel);
-        if (prediction) return tile.setPredictionPixels(pixels) ? 1 : 0;
+        if (prediction) {
+            // Existing local callers may supply a complete underlay; network decoding only accepts bounded strips.
+            if (offsetX == 0 && offsetZ == 0 && width == 256 && height == 256) return tile.setPredictionPixels(pixels) ? 1 : 0;
+            return tile.applyPredictionPatch(offsetX, offsetZ, width, height, pixels) ? 1 : 0;
+        }
         if (!tile.applyActualPatch(offsetX, offsetZ, width, height, pixels)) return 0;
         saveTile(tile);
         return 1;

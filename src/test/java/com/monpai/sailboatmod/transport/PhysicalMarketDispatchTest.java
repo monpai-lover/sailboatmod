@@ -6,6 +6,9 @@ import com.monpai.sailboatmod.block.entity.DockBlockEntity;
 import com.monpai.sailboatmod.block.entity.MarketBlockEntity;
 import com.monpai.sailboatmod.market.*;
 import com.monpai.sailboatmod.route.RouteDefinition;
+import com.monpai.sailboatmod.transport.rail.RailDispatchReceipt;
+import com.monpai.sailboatmod.transport.rail.RailRoute;
+import com.monpai.sailboatmod.transport.rail.RailStationRef;
 
 import net.minecraft.SharedConstants;
 import net.minecraft.core.BlockPos;
@@ -124,6 +127,39 @@ class PhysicalMarketDispatchTest {
         assertEquals(4, f.market.getListing("listing").reservedCount());
     }
 
+    @Test
+    void rejectedRailStartRollsBackCargoAndLeavesSellerOrderQueued() throws Exception {
+        Fixture f = fixture(false, true);
+        assertFalse(dispatch(f));
+        assertEquals(1, f.carrier.rolledBack);
+        assertEquals(0, f.carrier.committed);
+        assertEquals(0, f.carrier.loaded);
+        assertEquals("WAITING_SHIPMENT", f.market.getPurchaseOrder("order").status());
+        assertEquals(4, f.market.getListing("listing").reservedCount());
+        assertTrue(f.market.getShippingOrders().isEmpty());
+    }
+
+    @Test
+    void successfulNativeRailStartCommitsExactTerminalShipmentOnce() throws Exception {
+        Fixture f = fixture(true, true);
+        assertTrue(dispatch(f));
+        assertEquals("IN_TRANSIT", f.market.getPurchaseOrder("order").status());
+        assertEquals(0, f.market.getListing("listing").reservedCount());
+        ShippingOrder shipment = f.market.getShippingOrders().getFirst();
+        assertEquals("RAIL", shipment.transportMode());
+        assertEquals("IN_TRANSIT", shipment.status());
+        assertEquals(48, shipment.distanceMeters());
+        assertEquals(0, shipment.etaSeconds());
+        assertEquals(new BlockPos(48, 64, 0), shipment.targetDockPos());
+        assertEquals(new BlockPos(100, 64, 0), f.market.getPurchaseOrder("order").targetWarehousePos());
+        assertEquals(shipment.shippingOrderId(), f.carrier.manifest.getFirst().shippingOrderId());
+        assertEquals(1, f.carrier.committed);
+        assertEquals(0, f.carrier.rolledBack);
+        assertFalse(dispatch(f));
+        assertEquals(1, f.market.getShippingOrders().size());
+        assertEquals(1, f.carrier.committed);
+    }
+
     private static boolean dispatch(Fixture f) throws Exception {
         Method method =
                 MarketBlockEntity.class.getDeclaredMethod(
@@ -147,10 +183,15 @@ class PhysicalMarketDispatchTest {
                         f.dock,
                         f.market,
                         f.plan,
-                        f.carrier.kind == LogisticsCarrier.Kind.AIR ? TransportTerminalKind.AIRPORT : TransportTerminalKind.PORT);
+                        f.carrier.rail ? TransportTerminalKind.fromName("RAIL")
+                                : f.carrier.kind == LogisticsCarrier.Kind.AIR ? TransportTerminalKind.AIRPORT : TransportTerminalKind.PORT);
     }
 
     private static Fixture fixture(boolean starts) throws Exception {
+        return fixture(starts, false);
+    }
+
+    private static Fixture fixture(boolean starts, boolean rail) throws Exception {
         MarketSavedData market = new MarketSavedData();
         MarketListing listing =
                 new MarketListing(
@@ -191,15 +232,13 @@ class PhysicalMarketDispatchTest {
         Class<?> planType = nested("ShipmentPlan");
         var planCtor = planType.getDeclaredConstructors()[0];
         planCtor.setAccessible(true);
-        Object plan =
-                planCtor.newInstance(
-                        0,
-                        null,
-                        null,
-                        order.targetDockPos(),
-                        "Target",
-                        List.of(new ItemStack(Items.IRON_INGOT, 4)),
-                        List.of(selection));
+        RailRoute route = rail ? new RailRoute(
+                new RailStationRef("minecraft:overworld", new BlockPos(0, 64, 4), UUID.randomUUID()),
+                new RailStationRef("minecraft:overworld", new BlockPos(48, 64, 4), UUID.randomUUID()),
+                BlockPos.ZERO, new BlockPos(48, 64, 0), order.targetWarehousePos(), 48, "A → B") : null;
+        Object plan = planCtor.newInstance(rail ? -1 : 0, null, null,
+                rail ? route.targetTerminal() : order.targetDockPos(), "Target",
+                List.of(new ItemStack(Items.IRON_INGOT, 4)), List.of(selection), route);
         TestDock dock = allocate(TestDock.class);
         dock.starts = starts;
         Field pos =
@@ -207,7 +246,15 @@ class PhysicalMarketDispatchTest {
                         "worldPosition");
         pos.setAccessible(true);
         pos.set(dock, BlockPos.ZERO);
-        return new Fixture(allocate(MarketBlockEntity.class), dock, market, plan, new Carrier());
+        Carrier carrier = new Carrier();
+        carrier.rail = rail;
+        if (!rail) return new Fixture(allocate(MarketBlockEntity.class), dock, market, plan, carrier);
+        carrier.kind = LogisticsCarrier.Kind.LAND;
+        TestRailMarket block = allocate(TestRailMarket.class);
+        block.starts = starts;
+        block.carrier = carrier;
+        block.market = market;
+        return new Fixture(block, dock, market, plan, carrier);
     }
 
     private static Class<?> nested(String name) {
@@ -229,6 +276,49 @@ class PhysicalMarketDispatchTest {
             MarketSavedData market,
             Object plan,
             Carrier carrier) {}
+
+    private static class TestRailMarket extends MarketBlockEntity {
+        boolean starts;
+        Carrier carrier;
+        MarketSavedData market;
+
+        private TestRailMarket() {
+            super(BlockPos.ZERO, null);
+        }
+
+        @Override
+        protected RailDispatchReceipt prepareRailDispatch(LogisticsCarrier actualCarrier, RailRoute route,
+                                                           List<ShipmentManifestEntry> manifest) {
+            assertSame(carrier.proxy, actualCarrier);
+            assertEquals("order", manifest.getFirst().purchaseOrderId());
+            assertEquals(4, manifest.getFirst().quantity());
+            assertEquals("WAITING_SHIPMENT", market.getPurchaseOrder("order").status());
+            assertEquals(4, market.getListing("listing").reservedCount());
+            assertTrue(market.getShippingOrders().isEmpty());
+            carrier.manifest = new ArrayList<>(manifest);
+            carrier.loaded = 4;
+            return new RailDispatchReceipt() {
+                @Override public boolean start() {
+                    assertEquals("WAITING_SHIPMENT", market.getPurchaseOrder("order").status());
+                    assertTrue(market.getShippingOrders().isEmpty());
+                    return starts;
+                }
+
+                @Override public void commit() {
+                    assertEquals("IN_TRANSIT", market.getPurchaseOrder("order").status());
+                    assertEquals(0, market.getListing("listing").reservedCount());
+                    assertEquals(1, market.getShippingOrders().size());
+                    carrier.committed++;
+                }
+
+                @Override public void rollback() {
+                    carrier.rolledBack++;
+                    carrier.loaded = 0;
+                    carrier.manifest.clear();
+                }
+            };
+        }
+    }
 
     private static class TestDock extends DockBlockEntity {
         boolean starts;
@@ -254,6 +344,7 @@ class PhysicalMarketDispatchTest {
 
         public boolean assignLoadedBoatToRouteIndex(
                 LogisticsCarrier carrier, int routeIndex, boolean autoStart, Player operator) {
+            if ("create-train".equals(carrier.providerId())) throw new AssertionError("Rail must use native dispatch");
             return starts;
         }
     }
@@ -268,6 +359,7 @@ class PhysicalMarketDispatchTest {
                                 this);
         final int personalCargo = 7;
         LogisticsCarrier.Kind kind = LogisticsCarrier.Kind.WATER;
+        boolean rail;
         String mode = "PORT";
         List<ShipmentManifestEntry> manifest = new ArrayList<>();
         int committed, rolledBack, loaded;
@@ -276,6 +368,7 @@ class PhysicalMarketDispatchTest {
         public Object invoke(Object proxy, Method method, Object[] args) throws Throwable {
             return switch (method.getName()) {
                 case "transportKind" -> kind;
+                case "providerId" -> rail ? "create-train" : "entity";
                 case "transportMode" -> mode;
                 case "getTransportUuid" -> uuid;
                 case "getTransportId" -> -70;
@@ -289,6 +382,7 @@ class PhysicalMarketDispatchTest {
                 case "hasCargo" -> loaded != 0;
                 case "canLoadCargo" -> true;
                 case "loadCargoForDispatch" -> {
+                    if (rail) throw new AssertionError("Rail must stage cargo with its native receipt");
                     loaded = 4;
                     yield new CargoLoadReceipt() {
                         boolean done;

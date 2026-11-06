@@ -41,7 +41,8 @@ public class TerminalNetworkSavedData extends SavedData {
     public enum Kind {
         PORT,
         POST_STATION,
-        AIRPORT;
+        AIRPORT,
+        RAIL;
 
         static Kind fromOrdinal(int ordinal) {
             Kind[] values = values();

@@ -3,13 +3,18 @@ package com.monpai.sailboatmod.route.water;
 import com.monpai.sailboatmod.route.RouteDefinition;
 import com.monpai.sailboatmod.route.WaypointMeta;
 import net.minecraft.core.BlockPos;
+import net.minecraft.world.level.ChunkPos;
 import net.minecraft.world.phys.Vec3;
 import org.junit.jupiter.api.Test;
 
+import java.util.Arrays;
+import java.util.HashMap;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
+import java.util.concurrent.atomic.AtomicReference;
+import java.util.function.IntUnaryOperator;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
@@ -97,6 +102,48 @@ class WaterAutoRouteServiceTest {
         assertEquals(WaterRoutePathfinder.Status.SUCCESS, runToCompletion(fullRange));
         assertEquals(source, fullRange.path().get(0));
         assertEquals(target, fullRange.path().get(fullRange.path().size() - 1));
+    }
+
+    @Test
+    void shortNbtRoutePublishesFlatOceanAtTheVerifiedSurface() {
+        assertShortNbtSurface(x -> -1);
+    }
+
+    @Test
+    void shortNbtRouteRetainsDifferentRealSurfaceHeights() {
+        assertShortNbtSurface(x -> x < 32 ? 62 : 67);
+    }
+
+    private static void assertShortNbtSurface(IntUnaryOperator waterBlockY) {
+        Map<Long, NbtChunkWaterReader.ChunkColumns> snapshots = new HashMap<>();
+        for (int cx = -2; cx <= 5; cx++) {
+            for (int cz = -2; cz <= 2; cz++) {
+                boolean[] water = new boolean[256];
+                Arrays.fill(water, true);
+                int[] surface = new int[water.length];
+                for (int i = 0; i < surface.length; i++) {
+                    surface[i] = waterBlockY.applyAsInt(cx * 16 + i % 16);
+                }
+                snapshots.put(ChunkPos.asLong(cx, cz), new NbtChunkWaterReader.ChunkColumns(water, surface));
+            }
+        }
+        BlockPos source = new BlockPos(8, waterBlockY.applyAsInt(8) + 1, 7);
+        BlockPos target = new BlockPos(56, waterBlockY.applyAsInt(56) + 1, 7);
+        AtomicReference<List<WaypointMeta>> metadata = new AtomicReference<>(List.of());
+
+        var result = WaterAutoRouteService.runSingleSegmentNbt(null, source, target, 63, 1,
+                WaterRoutePolicy.defaults(), metadata, new WaterRouteProgressBar(null, null, "", ""),
+                null, null, snapshots);
+
+        assertTrue(result.successful(), () -> "Routing failed: " + result.reason());
+        var path = result.value();
+        assertTrue(path.size() > 2, "The native short pipeline must include smoothed interior waypoints");
+        assertEquals(source, path.getFirst());
+        assertEquals(target, path.getLast());
+        for (BlockPos point : path) {
+            assertEquals(waterBlockY.applyAsInt(point.getX()) + 1, point.getY(), point.toString());
+        }
+        assertEquals(path.size(), metadata.get().size());
     }
 
     @Test

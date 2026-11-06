@@ -47,8 +47,8 @@ public record RegisteredVehicleControllerActionPacket(
                     if (player.serverLevel().getBlockEntity(packet.controllerPos)
                                     instanceof RegisteredVehicleControllerBlockEntity core
                             && core.getTransportUuid().equals(packet.registrationId)) {
-                        core.handleAction(player, packet.action, packet.value, packet.index);
-                        if (core.canManage(player))
+                        boolean accepted=core.handleAction(player, packet.action, packet.value, packet.index);
+                        if (core.canManage(player)||accepted&&packet.action==ControllerAction.BIND_AIR_SURFACE)
                             ModNetwork.CHANNEL.send(
                                     player,
                                     new OpenRegisteredVehicleControllerPacket(

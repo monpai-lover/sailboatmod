@@ -2,6 +2,7 @@ package com.monpai.sailboatmod.compat.flightcontrol;
 
 import net.minecraft.core.BlockPos;
 import net.minecraft.server.level.ServerLevel;
+import net.minecraft.world.level.block.entity.BlockEntity;
 
 import java.util.List;
 import java.util.Objects;
@@ -12,6 +13,37 @@ import java.util.UUID;
 public final class FlightControlBridge {
     private FlightControlBridge() { }
     public enum Action { START, PAUSE, RESUME, CANCEL }
+    public enum SuccessorDecision { REJECTED, PENDING, ACCEPTED }
+    public static void claimOwnedTask(ServerLevel level, BlockPos terminalPos, UUID controllerId,
+                                      UUID bodyId, TerminalSnapshot accepted) {
+        if (level == null || terminalPos == null || !level.getServer().isSameThread()
+                || !FlightControlRecoverySupport.isApplied()
+                || accepted == null || accepted.taskId() == null) return;
+        try {
+            var access = FlightControlReflection.open(level, terminalPos);
+            var state = access.ownershipState();
+            if (!accepted.taskId().equals(state.taskId()) || accepted.expected().configRevision() != state.configRevision()
+                    || accepted.expected().slotGeneration() != state.slotGeneration()
+                    || !accepted.expected().profileFingerprint().equals(state.fingerprint())) return;
+            FlightTaskRecoveryHooks.REGISTRY.claim(level.getServer(), FlightTaskRecoveryHooks.key(level, terminalPos), controllerId, bodyId, state);
+        } catch (ReflectiveOperationException | RuntimeException | LinkageError unavailable) { /* Keep strict UUID checks. */ }
+    }
+    public static SuccessorDecision consumeOwnedSuccessor(ServerLevel level, BlockPos terminalPos,
+            UUID controllerId, UUID bodyId, UUID recordedTask, TerminalSnapshot current) {
+        if (level == null || terminalPos == null || !level.getServer().isSameThread()
+                || !FlightControlRecoverySupport.isApplied()
+                || current == null) return SuccessorDecision.REJECTED;
+        try {
+            var state = FlightControlReflection.open(level, terminalPos).ownershipState();
+            if (!Objects.equals(current.taskId(), state.taskId())) return SuccessorDecision.REJECTED;
+            return SuccessorDecision.valueOf(FlightTaskRecoveryHooks.REGISTRY.consume(level.getServer(),
+                    FlightTaskRecoveryHooks.key(level, terminalPos), controllerId, bodyId, recordedTask, state, level.getGameTime()).name());
+        } catch (ReflectiveOperationException | RuntimeException | LinkageError unavailable) { return SuccessorDecision.REJECTED; }
+    }
+    public static void clearOwnedTask(ServerLevel level, BlockPos terminalPos, UUID controllerId) {
+        if (level != null && terminalPos != null && level.getServer().isSameThread())
+            FlightTaskRecoveryHooks.REGISTRY.clear(level.getServer(), FlightTaskRecoveryHooks.key(level, terminalPos), controllerId);
+    }
     public enum Airframe { AIRSHIP, ROTORCRAFT, FIXED_WING }
     public enum EndBehavior { RELEASE_CONTROL, HOLD_LAST_TARGET, HOVER, APPROACH_LANDING }
     public record Waypoint(double x, double y, double z) {
@@ -79,6 +111,105 @@ public final class FlightControlBridge {
     public record VehicleSnapshot(boolean available, String reason, UUID structureId, double x, double y, double z,
                                   double worldSpeed, String airframeMode, int computerMode, boolean computerWorking,
                                   long sampledNanos, boolean fresh) { }
+    /** Read-only native control proof. A completed task can still have unexpired broker commands. */
+    /** Own-mod opaque handle only; no native optional type is exposed in a descriptor. */
+    public record GroundNeutralSnapshot(boolean available,String reason,Object handle,boolean acknowledged,
+            long generation,double physicsTimeSeconds,int observations,long observedAtNanos) { }
+    public record GroundNeutralRelease(double physicsTimeSeconds,long sampledNanos,long releasedAtNanos,Object identity) {
+        public GroundNeutralRelease(double physicsTimeSeconds,long sampledNanos,long releasedAtNanos){this(physicsTimeSeconds,sampledNanos,releasedAtNanos,null);}
+    }
+    record GroundNeutralHandle(Object computer,NativeGroundNeutral.Context context,NativeGroundNeutral.Lease lease) { }
+    record GroundNeutralBarrierIdentity(GroundNeutralHandle owner,Object thrustBefore) { }
+    public static GroundNeutralSnapshot requestGroundNeutral(ServerLevel level,BlockEntity requester,UUID owner,
+            Object mission,BlockPos terminal,UUID body,String profile,boolean eligible) {
+        if(!eligible||!NativeGroundNeutralCompatibility.isApplied())return unavailableGroundNeutral("ground_native_neutral_unavailable");
+        try{return FlightControlReflection.open(level,terminal).requestGroundNeutral(requester,owner,mission,body,profile);}
+        catch(ReflectiveOperationException|RuntimeException|LinkageError unavailable){return unavailableGroundNeutral(failureReason(unavailable));}
+    }
+    /** A separate stop-only scope; its acknowledgement can never be used as DRIVE authority. */
+    public static GroundNeutralSnapshot requestGroundHold(ServerLevel level,BlockEntity requester,UUID owner,
+            Object mission,BlockPos terminal,UUID body,String profile,boolean eligible) {
+        if(!eligible||!NativeGroundNeutralCompatibility.isApplied())return unavailableGroundNeutral("ground_native_neutral_unavailable");
+        try{return FlightControlReflection.open(level,terminal).requestGroundHold(requester,owner,mission,body,profile);}
+        catch(ReflectiveOperationException|RuntimeException|LinkageError unavailable){return unavailableGroundNeutral(failureReason(unavailable));}
+    }
+    public static GroundNeutralRelease releaseGroundNeutral(ServerLevel level,BlockPos terminal,Object handle) {
+        GroundNeutralRelease before=new GroundNeutralRelease(-1,-1,0,handle);
+        try{before=FlightControlReflection.open(level,terminal).groundNeutralReleaseSnapshot(handle);}
+        catch(ReflectiveOperationException|RuntimeException|LinkageError unavailable){/* Always release our handle even if its world disappeared. */}
+        finally{if(handle instanceof GroundNeutralHandle own)NativeGroundNeutral.release(own.lease());}
+        return new GroundNeutralRelease(before.physicsTimeSeconds(),before.sampledNanos(),System.nanoTime(),before.identity());
+    }
+    public static boolean normalFrameAfterGroundRelease(ServerLevel level,BlockPos terminal,UUID body,String profile,GroundNeutralRelease barrier) {
+        if(barrier==null||!NativeGroundNeutralCompatibility.isApplied())return false;
+        try{return FlightControlReflection.open(level,terminal).normalFrameAfterGroundRelease(body,profile,barrier);}
+        catch(ReflectiveOperationException|RuntimeException|LinkageError unavailable){return false;}
+    }
+    private static GroundNeutralSnapshot unavailableGroundNeutral(String reason){return new GroundNeutralSnapshot(false,reason,null,false,-1,-1,0,0);}
+    public record ControlOwnership(boolean available, String reason, UUID bodyId, UUID taskId, String fingerprint,
+                                   boolean leaseOwned, boolean anyActiveLease, boolean foreignLease) {
+        public boolean provesFlight(UUID expectedBody, UUID expectedTask, String expectedFingerprint) {
+            return available && expectedBody != null && expectedTask != null
+                    && expectedBody.equals(bodyId) && expectedTask.equals(taskId)
+                    && expectedFingerprint != null && !expectedFingerprint.isBlank()
+                    && expectedFingerprint.equals(fingerprint) && leaseOwned && anyActiveLease && !foreignLease;
+        }
+        public boolean provesReleased(UUID expectedBody) {
+            return available && expectedBody != null && expectedBody.equals(bodyId)
+                    && !leaseOwned && !anyActiveLease && !foreignLease;
+        }
+    }
+    public static ControlOwnership inspectControlOwnership(ServerLevel level, BlockPos terminalPos) {
+        if (level == null || terminalPos == null || !level.getServer().isSameThread())
+            return new ControlOwnership(false, "not_server_thread", null, null, "", false, true, true);
+        try { return FlightControlReflection.open(level, terminalPos).controlOwnership(); }
+        catch (ReflectiveOperationException | RuntimeException | LinkageError failure) {
+            return new ControlOwnership(false, failureReason(failure), null, null, "", false, true, true);
+        }
+    }
+    /** Native available propulsion, not a takeoff-performance or fuel-endurance estimate. */
+    public record PowerSnapshot(boolean available, String reason, int linkedThrusters,
+                                int poweredThrusters, double totalAvailableThrust) {
+        public boolean ready() {
+            return available && linkedThrusters > 0 && linkedThrusters <= 128 && poweredThrusters > 0
+                    && poweredThrusters <= linkedThrusters && Double.isFinite(totalAvailableThrust)
+                    && totalAvailableThrust > 0;
+        }
+    }
+    /** Native speed/reference evidence, independent of the registrar's nominal speed and taxi controls. */
+    public record FixedWingPerformanceSnapshot(boolean available, String reason, UUID structureId,
+            long estimateGameTick, long sampledGameTick, String referenceStatus, double v1, double vr,
+            double landingPitchDegrees, double forwardSpeedLimit, double speedEnvelope) {
+        public String failure(UUID expectedBody, long now) {
+            if (!available) return reason == null || reason.isBlank() ? "fixed_wing_reference_unavailable" : reason;
+            if (expectedBody == null || !expectedBody.equals(structureId)) return "flight_binding_lost";
+            if (!"READY".equals(referenceStatus) || estimateGameTick < 0 || now != sampledGameTick
+                    || now < estimateGameTick || now - estimateGameTick >= 100)
+                return "fixed_wing_reference_unavailable";
+            if (!Double.isFinite(v1) || v1 <= 0 || !Double.isFinite(vr) || vr < v1
+                    || !Double.isFinite(landingPitchDegrees) || !Double.isFinite(forwardSpeedLimit)
+                    || forwardSpeedLimit < 0 || !Double.isFinite(speedEnvelope) || speedEnvelope <= 0)
+                return "fixed_wing_speed_invalid";
+            return forwardSpeedLimit + 1e-6 < vr ? "fixed_wing_forward_limit_below_vr" : "";
+        }
+        public double conservativeSpeed() {
+            double landingMinimum = 1.05 * vr / Math.sqrt(Math.max(.1, Math.cos(Math.toRadians(landingPitchDegrees))));
+            return Math.max(speedEnvelope, Math.max(vr, landingMinimum));
+        }
+    }
+    public static FixedWingPerformanceSnapshot inspectFixedWingPerformance(ServerLevel level, BlockPos terminalPos) {
+        try { return FlightControlReflection.open(level, terminalPos).fixedWingPerformanceSnapshot(); }
+        catch (ReflectiveOperationException | RuntimeException | LinkageError failure) {
+            return new FixedWingPerformanceSnapshot(false, failureReason(failure), null, -1, -1,
+                    "UNAVAILABLE", Double.NaN, Double.NaN, Double.NaN, Double.NaN, Double.NaN);
+        }
+    }
+    public static PowerSnapshot inspectPower(ServerLevel level, BlockPos terminalPos) {
+        try { return FlightControlReflection.open(level, terminalPos).powerSnapshot(); }
+        catch (ReflectiveOperationException | RuntimeException | LinkageError failure) {
+            return new PowerSnapshot(false, failureReason(failure), 0, 0, 0);
+        }
+    }
     public static VehicleSnapshot inspectVehicle(ServerLevel level, BlockPos terminalPos) {
         try { return FlightControlReflection.open(level, terminalPos).vehicleSnapshot(); }
         catch (ReflectiveOperationException | RuntimeException | LinkageError failure) {

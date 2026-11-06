@@ -105,7 +105,7 @@ public class DockBlockEntity extends BlockEntity implements MenuProvider {
             DockTownResolver.resolve(level, worldPosition);
             registerFacility(level, worldPosition);
             // 港口码头坐标进持久清单(惰性覆盖老存档),供创建自动航线时枚举远处候选;驿站不入此清单。
-            if (!(this instanceof PostStationBlockEntity) && !(this instanceof AirportBlockEntity)) {
+            if (!(this instanceof PostStationBlockEntity) && !(this instanceof AirportBlockEntity) && !(this instanceof RailFreightTerminalBlockEntity)) {
                 com.monpai.sailboatmod.dock.DockLocationSavedData.get(level)
                         .register(level.dimension().location().toString(), worldPosition.asLong());
             }
@@ -131,10 +131,12 @@ public class DockBlockEntity extends BlockEntity implements MenuProvider {
     @Override
     public void setRemoved() {
         if (level != null && !level.isClientSide) {
+            if (level instanceof net.minecraft.server.level.ServerLevel server)
+                com.monpai.sailboatmod.transport.board.TownVoyagePublisher.markEndpointUnloaded(server, worldPosition);
             unregisterFacility(level, worldPosition);
             // Chunk unload removes the live object, not a known WATER port/network identity.
-            // Keep non-water terminal behaviour unchanged in this patch.
-            if (!com.monpai.sailboatmod.route.water.PortDockSnapshot.isPort(this))
+            // Rail endpoints also retain their last verified network identity while unloaded.
+            if (!com.monpai.sailboatmod.route.water.PortDockSnapshot.isPort(this) && !(this instanceof RailFreightTerminalBlockEntity))
                 com.monpai.sailboatmod.market.terminal.TerminalNetworkSavedData.get(level)
                     .removeEntry(level.dimension().location().toString(),worldPosition.asLong());
             // Actual water-port destruction removes metadata in DockBlock.onRemove.
@@ -181,6 +183,9 @@ public class DockBlockEntity extends BlockEntity implements MenuProvider {
                 getNationId(),
                 endDockNames,
                 reachable));
+        if (level instanceof net.minecraft.server.level.ServerLevel server)
+            com.monpai.sailboatmod.transport.board.TownVoyagePublisher.observeEndpoint(
+                    server, worldPosition, getTownId(), getDockName());
     }
 
     protected void registerFacility(Level level, BlockPos pos) {
@@ -1754,6 +1759,8 @@ public class DockBlockEntity extends BlockEntity implements MenuProvider {
         List<ItemStack> cargo = new ArrayList<>();
         List<ReturnLoadSelection> selections = new ArrayList<>();
         for (PurchaseOrder order : candidates) {
+            if (level instanceof net.minecraft.server.level.ServerLevel server
+                    && com.monpai.sailboatmod.transport.rail.RailFreightService.isOrderClaimed(server, order.orderId())) continue;
             MarketListing listing = market.getListing(order.listingId());
             if (listing == null) {
                 continue;

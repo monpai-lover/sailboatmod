@@ -10,24 +10,36 @@ import net.neoforged.api.distmarker.Dist;
 import java.util.Arrays;
 import java.util.function.Supplier;
 
-/** Prediction is a separate full native tile; an actual update is one compact chunk, with explicit provenance. */
+/** Bounded source-tagged patches. Prediction tiles travel as sixteen independent row strips. */
 public record SharedMapTerrainPatchPacket(String worldId, String dimensionId, int tileX, int tileZ,
                                           int offsetX, int offsetZ, int width, int height, int[] pixels, boolean prediction, int blocksPerPixel) {
     public SharedMapTerrainPatchPacket(String worldId, String dimensionId, int tileX, int tileZ, int offsetX, int offsetZ,
                                         int width, int height, int[] pixels, boolean prediction) {
         this(worldId, dimensionId, tileX, tileZ, offsetX, offsetZ, width, height, pixels, prediction, 1);
     }
+    public static final int MAX_PIXELS = 4096;
+    public static final int PREDICTION_ROWS = MAX_PIXELS / 256;
+
     public SharedMapTerrainPatchPacket {
-        if (worldId == null || dimensionId == null || offsetX < 0 || offsetZ < 0
-                || width < 1 || height < 1 || offsetX + (long) width > 256 || offsetZ + (long) height > 256
-                || pixels == null || (long) width * height != pixels.length
-                || prediction && (offsetX != 0 || offsetZ != 0 || width != 256 || height != 256)
-                || !SharedMapTileGrid.validBps(blocksPerPixel)
-                || !prediction && blocksPerPixel == 1 && (width != 16 || height != 16 || offsetX % 16 != 0 || offsetZ % 16 != 0)
-                || !prediction && blocksPerPixel > 1 && (width > 16 || height > 16)) {
-            throw new IllegalArgumentException("Invalid shared-map terrain patch");
-        }
+        validate(worldId, dimensionId, tileX, tileZ, offsetX, offsetZ, width, height,
+                pixels == null ? -1 : pixels.length, prediction, blocksPerPixel);
+        // Preserve defensive ownership, but never copy more than 16 KiB per packet.
         pixels = Arrays.copyOf(pixels, pixels.length);
+    }
+
+    private static void validate(String world, String dimension, int tileX, int tileZ, int x, int z,
+                                 int width, int height, int count, boolean prediction, int bps) {
+        if (world == null || world.isBlank() || world.length() > 128
+                || dimension == null || dimension.isBlank() || dimension.length() > 128
+                || x < 0 || z < 0 || width < 1 || height < 1
+                || x + (long) width > 256 || z + (long) height > 256
+                || count < 1 || count > MAX_PIXELS || (long) width * height != count
+                || !SharedMapTileGrid.validTile(tileX, tileZ, bps)
+                || prediction && (x != 0 || width != 256 || height != PREDICTION_ROWS || z % PREDICTION_ROWS != 0)
+                || !prediction && bps == 1 && (width != 16 || height != 16 || x % 16 != 0 || z % 16 != 0)
+                || !prediction && bps > 1 && (width > 16 || height > 16)) {
+            throw new IllegalArgumentException("Invalid or oversized shared-map terrain patch");
+        }
     }
 
     @Override public int[] pixels() { return Arrays.copyOf(pixels, pixels.length); }
@@ -59,8 +71,10 @@ public record SharedMapTerrainPatchPacket(String worldId, String dimensionId, in
         boolean prediction = buffer.readBoolean();
         int blocksPerPixel = buffer.readVarInt();
         int count = buffer.readVarInt();
-        if (count < 0 || count > 256 * 256 || count > buffer.readableBytes() / Integer.BYTES) {
-            throw new IllegalArgumentException("Invalid shared-map pixel count");
+        // Validate geometry and count before allocating or reading the pixel array.
+        validate(world, dimension, tileX, tileZ, x, z, width, height, count, prediction, blocksPerPixel);
+        if (count > buffer.readableBytes() / Integer.BYTES) {
+            throw new IllegalArgumentException("Truncated shared-map pixels");
         }
         int[] pixels = new int[count];
         for (int i = 0; i < count; i++) pixels[i] = buffer.readInt();

@@ -43,11 +43,24 @@ public final class WaterRouteNetworkSavedData extends SavedData {
         invalidate(ids); revision++; setDirty();
     }
     public List<WaterRouteNetwork.Route> snapshot() {return List.copyOf(routes.values());}
+    void registerGeneratedPair(BlockPos source, BlockPos target, RouteDefinition forward, RouteDefinition reverse) {
+        register(source, target, forward);
+        // A loaded destination may have imported a separate reversible alias for the same port pair.
+        var reverseAlias = routes.get(routeId(target, source));
+        if (reverseAlias != null && reverseAlias.reversible()) {
+            register(target, source, reverse);
+        }
+    }
+
+    private static String routeId(BlockPos source, BlockPos target) {
+        return Long.toString(source.asLong()) + ":" + target.asLong();
+    }
+
     public void register(BlockPos source,BlockPos target,RouteDefinition definition) { register(source,target,definition,true); }
     public void register(BlockPos source,BlockPos target,RouteDefinition definition,boolean reversible) {
         if(source==null||target==null||definition==null||definition.waypoints().size()<2
                 ||definition.waypoints().size()>65_536)return;
-        String id=Long.toString(source.asLong())+":"+target.asLong();
+        String id=routeId(source,target);
         WaterRouteNetwork.Route entry=new WaterRouteNetwork.Route(id,source.immutable(),target.immutable(),definition.waypoints(),reversible);
         removedLegacyGeometry.remove(geometryKey(definition.waypoints()));
         if(entry.equals(routes.get(id)))return;

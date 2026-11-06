@@ -26,7 +26,7 @@ public record PortDockSnapshot(BlockPos pos, String name, String owner, String t
         return chunk != null && chunk.getBlockEntity(pos) instanceof DockBlockEntity dock ? dock : null;
     }
     public static boolean isPort(DockBlockEntity d) {
-        return d != null && !(d instanceof PostStationBlockEntity) && !(d instanceof AirportBlockEntity);
+        return d != null && !(d instanceof PostStationBlockEntity) && !(d instanceof AirportBlockEntity) && !(d instanceof com.monpai.sailboatmod.block.entity.RailFreightTerminalBlockEntity);
     }
     /** Worker only. Main-thread callbacks are small memory-only reads; all waits occur on this worker. */
     public static Optional<PortDockSnapshot> read(ServerLevel level, BlockPos pos) {
