@@ -53,8 +53,7 @@ public final class AirportManagementService {
         if (kind.equals("rename")) {
             String name = action.getString("Name").trim();
             if (!FacilityNames.validOverride(name)) return new Result(false,"invalid_geometry",revision);
-            if (!name.isEmpty() && AirportSavedData.get(level).airports(level.dimension().location().toString()).stream()
-                    .anyMatch(other -> !other.pos().equals(airportPos) && other.name().equalsIgnoreCase(name)))
+            if (AirportSavedData.get(level).hasOtherRouteName(level.dimension().location().toString(), airportPos, name))
                 return new Result(false,"duplicate_name",revision);
             boolean renamed = airport.renameFromEditor(expectedRevision, name);
             return new Result(renamed, renamed ? "ok" : "stale_revision", airport.editorRevision());

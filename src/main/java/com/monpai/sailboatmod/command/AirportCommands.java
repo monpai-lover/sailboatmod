@@ -142,7 +142,8 @@ public final class AirportCommands {
         context.getSource().sendSuccess(() -> Component.literal("已登记单向航线：" + route.name() + "。起降前仍会检查当前净空和设施占用。"), false); return 1;
     }
     private static void ensureUniqueName(ServerLevel level, AirportBlockEntity airport, String name) throws CommandSyntaxException {
-        if (AirportSavedData.get(level).airports(level.dimension().location().toString()).stream().anyMatch(value -> !value.pos().equals(airport.getBlockPos()) && value.name().equalsIgnoreCase(name))) throw error("本维度已有同名机场，请使用唯一名称。");
+        if (AirportSavedData.get(level).hasOtherRouteName(level.dimension().location().toString(), airport.getBlockPos(), name))
+            throw error("本维度已有机场使用此名称或保留此旧航线名称，请使用唯一名称。");
     }
     public static boolean withinManagedTown(AirportFacility facility, String townId, Function<BlockPos, String> managedTown) {
         if (facility == null || !facility.validGeometry() || townId == null || townId.isBlank() || managedTown == null) return false;

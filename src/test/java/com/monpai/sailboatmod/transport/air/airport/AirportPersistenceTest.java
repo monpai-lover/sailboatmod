@@ -41,13 +41,16 @@ class AirportPersistenceTest {
         assertEquals(renamed, data.uniqueRouteAirport(dimension, "Town name").orElseThrow());
         assertTrue(data.uniqueRouteAirport("minecraft:the_nether", "Old name").isEmpty());
         BlockPos other = pos.offset(12, 0, 0);
+        assertTrue(data.hasOtherRouteName(dimension, other, "Old name"));
+        assertFalse(data.hasOtherRouteName(dimension, pos, "Old name"), "The same airport may restore its name");
+        assertFalse(data.hasOtherRouteName("minecraft:the_nether", other, "Old name"));
         data.put(new AirportSavedData.AirportSnapshot(dimension, other, "Old name", "town2", "owner2", List.of()));
         assertTrue(data.uniqueRouteAirport(dimension, "Old name").isEmpty(), "Ambiguous label must not redirect a legacy route");
         data.remove(dimension, pos);
         assertEquals(other, data.uniqueRouteAirport(dimension, "Old name").orElseThrow().pos());
         assertTrue(data.uniqueRouteAirport(dimension, "Town name").isEmpty());
     }
-    @Test void noHistoryForNameThatNeverIdentifiedAnAirportUnambiguously() {
+    @Test void renamingOneOfTwoSameTownAirportsDoesNotRedirectOldRoutes() {
         var data = new AirportSavedData();
         String dimension = "minecraft:overworld";
         BlockPos a = new BlockPos(5, 72, 9), b = new BlockPos(15, 72, 9);
@@ -56,7 +59,10 @@ class AirportPersistenceTest {
         data.put(sameTown);
         assertTrue(data.uniqueRouteAirport(dimension, "Town").isEmpty());
         data.put(new AirportSavedData.AirportSnapshot(dimension, a, "West", "town", "owner", List.of()));
-        assertEquals(sameTown, data.uniqueRouteAirport(dimension, "Town").orElseThrow());
+        assertTrue(data.uniqueRouteAirport(dimension, "Town").isEmpty(), "Old same-town routes must stay ambiguous");
+        assertEquals(a, data.uniqueRouteAirport(dimension, "West").orElseThrow().pos());
+        data = AirportSavedData.load(data.save(new CompoundTag(), null));
+        assertTrue(data.uniqueRouteAirport(dimension, "Town").isEmpty());
     }
     @Test void fixedWingCannotUseHelipadAndAirshipNeedsMooring() {
         var pad = new AirportFacility("pad", AirportFacility.Type.HELIPAD, new BlockPos(0,80,0), new BlockPos(0,80,0), 7, 12);

@@ -2307,19 +2307,7 @@ public final class RegisteredVehicleControllerBlockEntity extends BlockEntity
             if (destinationTerminal == null) return null;
         }
         if (destinationTerminal == null && !activeRoute.isEmpty()) {
-            Vec3 end = activeRoute.getLast();
-            Collection<BlockPos> terminals =
-                    transportKind() == Kind.AIR ? AirportRegistry.get(server)
-                            : transportKind() == Kind.LAND ? PostStationRegistry.get(server) : DockRegistry.get(server);
-            destinationTerminal =
-                    terminals.stream()
-                            .filter(server::hasChunkAt)
-                            .filter(pos -> server.getBlockEntity(pos) instanceof DockBlockEntity)
-                            .filter(pos -> Vec3.atCenterOf(pos).distanceToSqr(end) < 64 * 64)
-                            .min(
-                                    Comparator.comparingDouble(
-                                            pos -> Vec3.atCenterOf(pos).distanceToSqr(end)))
-                            .orElse(null);
+            destinationTerminal = nearestLoadedRouteTerminal(server, activeRoute.getLast());
         }
         return destinationTerminal != null
                         && server.hasChunkAt(destinationTerminal)
@@ -2327,6 +2315,17 @@ public final class RegisteredVehicleControllerBlockEntity extends BlockEntity
                                 instanceof DockBlockEntity dock
                 ? dock
                 : null;
+    }
+
+    private BlockPos nearestLoadedRouteTerminal(ServerLevel server, Vec3 end) {
+        Collection<BlockPos> terminals = transportKind() == Kind.LAND
+                ? PostStationRegistry.get(server) : DockRegistry.get(server);
+        return terminals.stream()
+                .filter(server::hasChunkAt)
+                .filter(pos -> server.getBlockEntity(pos) instanceof DockBlockEntity)
+                .filter(pos -> Vec3.atCenterOf(pos).distanceToSqr(end) < 64 * 64)
+                .min(Comparator.comparingDouble(pos -> Vec3.atCenterOf(pos).distanceToSqr(end)))
+                .orElse(null);
     }
 
     private void arrive(ServerLevel server, DockBlockEntity dock) {
@@ -3564,17 +3563,9 @@ public final class RegisteredVehicleControllerBlockEntity extends BlockEntity
                     .filter(airport -> !airport.pos().equals(sourceTerminal))
                     .map(AirportSavedData.AirportSnapshot::name).orElse(name);
         }
-        var end = route.waypoints().getLast();
-        var kind = transportKind() == Kind.LAND
-                ? com.monpai.sailboatmod.market.terminal.TerminalNetworkSavedData.Kind.POST_STATION
-                : com.monpai.sailboatmod.market.terminal.TerminalNetworkSavedData.Kind.PORT;
-        var candidates = com.monpai.sailboatmod.market.terminal.TerminalNetworkSavedData.get(server).all().stream()
-                .filter(t -> t.kind() == kind && t.dimId().equals(dimensionId())
-                        && !BlockPos.of(t.packedPos()).equals(sourceTerminal)
-                        && Math.abs(BlockPos.of(t.packedPos()).getX() - end.x) <= 32
-                        && Math.abs(BlockPos.of(t.packedPos()).getZ() - end.z) <= 32).toList();
-        // Only an unambiguous registered endpoint can supply a current renamed display label.
-        return candidates.size() == 1 ? candidates.getFirst().dockName() : name;
+        BlockPos destination = nearestLoadedRouteTerminal(server, route.waypoints().getLast());
+        return destination != null && server.getBlockEntity(destination) instanceof DockBlockEntity dock
+                ? dock.getDockName() : name;
     }
 
     @Override

@@ -31,8 +31,8 @@ public final class AirportSavedData extends SavedData {
         String key = key(value.dimension(), value.pos());
         AirportSnapshot previous = entries.get(key);
         if (value.equals(previous)) return;
-        if (previous != null && !value.name().equalsIgnoreCase(previous.name())
-                && uniqueRouteAirport(previous.dimension(), previous.name()).orElse(null) == previous) {
+        // Keep ambiguous historical labels too, so a rename cannot redirect an old route to its namesake.
+        if (previous != null && !value.name().equalsIgnoreCase(previous.name())) {
             rememberRouteName(key, previous.name());
         }
         entries.put(key, value);
@@ -53,14 +53,24 @@ public final class AirportSavedData extends SavedData {
         if (routeName == null || routeName.isBlank()) return Optional.empty();
         AirportSnapshot match = null;
         for (var entry : entries.entrySet()) {
-            AirportSnapshot airport = entry.getValue();
-            if (!airport.dimension().equals(dimension)) continue;
-            var history = previousRouteNames.get(entry.getKey());
-            if (!airport.name().equalsIgnoreCase(routeName) && (history == null || history.stream().noneMatch(routeName::equalsIgnoreCase))) continue;
+            if (!matchesRouteName(entry, dimension, routeName)) continue;
             if (match != null) return Optional.empty();
-            match = airport;
+            match = entry.getValue();
         }
         return Optional.ofNullable(match);
+    }
+
+    /** A custom label must not conflict with another airport's current label or old route books. */
+    public boolean hasOtherRouteName(String dimension, BlockPos airportPos, String routeName) {
+        return routeName != null && !routeName.isBlank() && entries.entrySet().stream()
+                .anyMatch(entry -> !entry.getValue().pos().equals(airportPos) && matchesRouteName(entry, dimension, routeName));
+    }
+
+    private boolean matchesRouteName(Map.Entry<String, AirportSnapshot> entry, String dimension, String name) {
+        AirportSnapshot airport = entry.getValue();
+        if (!airport.dimension().equals(dimension)) return false;
+        var history = previousRouteNames.get(entry.getKey());
+        return airport.name().equalsIgnoreCase(name) || (history != null && history.stream().anyMatch(name::equalsIgnoreCase));
     }
 
     private void rememberRouteName(String key, String name) {
