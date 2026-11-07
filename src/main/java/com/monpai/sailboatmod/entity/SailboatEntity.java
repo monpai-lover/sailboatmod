@@ -1160,11 +1160,7 @@ public class SailboatEntity extends Boat implements GeoEntity, MenuProvider, Tra
     }
 
     private void limitTurnRate() {
-        // Auto navigation already enforces its own 3.5 degree/tick bound.
-        if (isAutopilotActive() && !isAutopilotPaused()) {
-            lastTickYaw=getYRot();
-            return;
-        }
+        if (navfix2$skipManualLimiter()) return;
         // Remote poses already contain the driver's steering. Reapplying the manual
         // limit after network lerp discards yaw while position/lerp steps keep advancing.
         if (level().isClientSide && !isControlledByLocalInstance()) {
@@ -1913,7 +1909,11 @@ public class SailboatEntity extends Boat implements GeoEntity, MenuProvider, Tra
         return startAutopilotInternal();
     }
 
-    private boolean startAutopilotInternal() { return startAutopilotInternal(false); }
+    private boolean startAutopilotInternal() {
+        navfix2$steering = null;
+        lastTickYaw = getYRot();
+        return startAutopilotInternal(false);
+    }
 
     /** Server-owned, already validated voyage. Never accepts client-supplied geometry. */
     public boolean startKnownVoyageFromPosition(RouteDefinition route, BlockPos originDock, BlockPos destination,
@@ -1931,9 +1931,6 @@ public class SailboatEntity extends Boat implements GeoEntity, MenuProvider, Tra
     }
 
     private boolean startAutopilotInternal(boolean validatedPositionConnector) {
-        navfix2$steering=null;
-        lastTickYaw=getYRot();
-
         if (level().isClientSide) {
             return false;
         }
@@ -2040,13 +2037,12 @@ public class SailboatEntity extends Boat implements GeoEntity, MenuProvider, Tra
     }
 
     public void stopAutopilot() {
+        navfix2$steering = null;
+        lastTickYaw = getYRot();
         stopAutopilot(true);
     }
 
     private void stopAutopilot(boolean rollbackShipment) {
-        navfix2$steering=null;
-        lastTickYaw=getYRot();
-
         if (level().isClientSide) {
             return;
         }
@@ -2295,6 +2291,15 @@ public class SailboatEntity extends Boat implements GeoEntity, MenuProvider, Tra
         return navfix2$steering;
     }
 
+    /** Auto navigation already enforces its own turn bound. */
+    private boolean navfix2$skipManualLimiter() {
+        if (isAutopilotActive() && !isAutopilotPaused()) {
+            lastTickYaw = getYRot();
+            return true;
+        }
+        return false;
+    }
+
     private String navfix2$describe() {
         return navfix2$steering == null ? "reset" :
                 navfix2$steering.describe(getYRot(), autopilotNoProgressTicks, autopilotSafeSpeedCap);
@@ -2302,20 +2307,23 @@ public class SailboatEntity extends Boat implements GeoEntity, MenuProvider, Tra
 
     /** The final three blocks of a verified berth approach retain physical-hull clearance. */
     private double navfix3$margin(Vec3 from, Vec3 to) {
-        if (!autopilotRoute.isEmpty() && autopilotTargetIndex >= autopilotRoute.size() - 16) {
+        if (autopilotRoute != null && !autopilotRoute.isEmpty()
+                && autopilotTargetIndex >= autopilotRoute.size() - 16) {
             Vec3 end = autopilotRoute.getLast();
-            if (com.monpai.sailboatmod.route.WaterPolylineFollower.horizontal(from,end) <= 3
-                    && com.monpai.sailboatmod.route.WaterPolylineFollower.horizontal(to,end) <= 3) {
+            if (Math.hypot(from.x - end.x, from.z - end.z) <= 3.0
+                    && Math.hypot(to.x - end.x, to.z - end.z) <= 3.0) {
                 boolean terminal = true;
-                for (int i=Math.max(0,autopilotTargetIndex);i<autopilotRoute.size();i++) {
-                    if (com.monpai.sailboatmod.route.WaterPolylineFollower.horizontal(autopilotRoute.get(i),end) > 3) {
-                        terminal=false;break;
+                for (int i = Math.max(0, autopilotTargetIndex); i < autopilotRoute.size(); i++) {
+                    Vec3 point = autopilotRoute.get(i);
+                    if (Math.hypot(point.x - end.x, point.z - end.z) > 3.0) {
+                        terminal = false;
+                        break;
                     }
                 }
-                if (terminal) return 0;
+                if (terminal) return 0.0;
             }
         }
-        return 2.00;
+        return 2.0;
     }
 
     private HeadingSolution solveHeading(Vec3 target, boolean finalTarget) {
@@ -2326,16 +2334,16 @@ public class SailboatEntity extends Boat implements GeoEntity, MenuProvider, Tra
             if(!autopilotRoute.get(index).equals(berth))autopilotRoute.set(index,berth);
         }
         double speed=getDeltaMovement().horizontalDistance();
-        var aim=com.monpai.sailboatmod.route.AutonavPolylineFix.aim(autopilotRoute,index,position(),
-                Math.clamp(4+speed*14,3,12),this::liveAutopilotConnectionClear);
-        aim=com.monpai.sailboatmod.route.AutonavSteeringState.selectAim(aim,autopilotRoute,index,position(),
-                getYRot(),this::liveAutopilotConnectionClear,navfix2$getState());
+        var aim = com.monpai.sailboatmod.route.AutonavSteeringState.selectAim(
+                com.monpai.sailboatmod.route.AutonavPolylineFix.aim(autopilotRoute, index, position(),
+                        Math.clamp(4 + speed * 14, 3, 12), this::liveAutopilotConnectionClear),
+                autopilotRoute, index, position(), getYRot(), this::liveAutopilotConnectionClear, navfix2$getState());
         autopilotAimBlocked=aim.blocked();
         double dx=aim.point().x-getX(),dz=aim.point().z-getZ();
         float desiredYaw=aim.blocked()?getYRot():(float)(Mth.atan2(-dx,dz)*180/Math.PI);
         float error=Mth.wrapDegrees(desiredYaw-getYRot());
         autopilotSafeSpeedCap=com.monpai.sailboatmod.route.AutonavSteeringState.speedCap(
-                com.monpai.sailboatmod.route.WaterPolylineFollower.speedCap(aim,error,DEPLOYED_MAX_FORWARD_BLOCKS_PER_TICK),navfix2$getState());
+                com.monpai.sailboatmod.route.WaterPolylineFollower.speedCap(aim,error,DEPLOYED_MAX_FORWARD_BLOCKS_PER_TICK),navfix2$steering);
         float yawStep=Mth.clamp(error,-AUTOPILOT_MAX_TURN_DEGREES_PER_TICK,AUTOPILOT_MAX_TURN_DEGREES_PER_TICK);
         return new HeadingSolution(desiredYaw,error,yawStep,Mth.clamp(error/40,-1,1),Math.abs(error),Math.abs(error)>1.5);
     }
@@ -2356,7 +2364,8 @@ public class SailboatEntity extends Boat implements GeoEntity, MenuProvider, Tra
         }
         Vec3 start=new Vec3(from.x,to.y,from.z);
         var check=followerCollisionProbe.field().navfix3$segment(start,to,navfix3$margin(from,to));
-        followerTerrainUnknown |= check==com.monpai.sailboatmod.route.water.local.BoatCollisionField.Check.UNKNOWN;
+        followerTerrainUnknown = check == com.monpai.sailboatmod.route.water.local.BoatCollisionField.Check.UNKNOWN
+                | followerTerrainUnknown;
         return check==com.monpai.sailboatmod.route.water.local.BoatCollisionField.Check.CLEAR;
     }
 
@@ -2571,8 +2580,9 @@ public class SailboatEntity extends Boat implements GeoEntity, MenuProvider, Tra
         setNavigationPhase(autopilotAimBlocked ? com.monpai.sailboatmod.route.NavigationPhase.BLOCKED
                 : com.monpai.sailboatmod.route.AutonavSteeringState.threshold(absYawError,navfix2$steering) > AUTOPILOT_TURN_IN_PLACE_DEGREES ? com.monpai.sailboatmod.route.NavigationPhase.TURNING
                 : com.monpai.sailboatmod.route.NavigationPhase.SAILING);
+        var command = new AutopilotCommand(true, wantsTurn, turnInput, yawStep, desiredGear);
         com.monpai.sailboatmod.route.AutonavSteeringState.commandIssued(navfix2$steering);
-        return new AutopilotCommand(true, wantsTurn, turnInput, yawStep, desiredGear);
+        return command;
     }
 
     /** 进入一轮窄河道脱困：记起点、累加轮数、交替摆舵方向。 */
