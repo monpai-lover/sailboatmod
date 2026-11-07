@@ -39,8 +39,12 @@ public record AirportScreenData(ResourceLocation dimension, BlockPos airportPos,
         if (airport.groundReserved()) statuses.add("ground||reserved");
         if (airport.editorSession()!=null) statuses.add("editor||"+airport.editorSession().processedSteps());
         var town = com.monpai.sailboatmod.nation.service.TownService.getTownAt(player.serverLevel(),airport.getBlockPos());
+        long editorRevision = airport.editorRevision();
+        AirportGroundLayout layout = airport.groundLayout();
+        // The wire layout belongs to the UI draft. Keep its existing shared version contract.
+        if (layout.revision() != editorRevision) layout = layout.withRevision(editorRevision);
         return new AirportScreenData(player.serverLevel().dimension().location(),airport.getBlockPos(),airport.getDockName(),town == null ? "" : town.name(),airport.getOwnerName(),
-                AirportManagementService.canManage(player,airport),airport.groundLayoutRevision(),airport.facilities(),airport.groundLayout(),statuses,result,airport.getCustomDockName());
+                AirportManagementService.canManage(player,airport),editorRevision,airport.facilities(),layout,statuses,result,airport.getCustomDockName());
     }
     public CompoundTag save() {
         CompoundTag tag = new CompoundTag(); tag.putString("Dimension",dimension.toString()); tag.putLong("Pos",airportPos.asLong()); tag.putString("Name",name); tag.putString("CustomName",customName);

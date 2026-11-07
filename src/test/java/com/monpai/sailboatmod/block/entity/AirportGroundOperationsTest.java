@@ -1,9 +1,13 @@
 package com.monpai.sailboatmod.block.entity;
 
 import static org.junit.jupiter.api.Assertions.*;
+import com.monpai.sailboatmod.nation.data.NationSavedData;
+import com.monpai.sailboatmod.nation.model.TownRecord;
+import com.monpai.sailboatmod.network.packet.airport.AirportSnapshotPacket;
 import com.monpai.sailboatmod.transport.*;
 import com.monpai.sailboatmod.transport.air.AircraftClass;
 import com.monpai.sailboatmod.transport.air.airport.*;
+import io.netty.buffer.Unpooled;
 import java.lang.reflect.*;
 import java.nio.file.Path;
 import java.util.*;
@@ -11,10 +15,13 @@ import java.util.function.Predicate;
 import net.minecraft.SharedConstants;
 import net.minecraft.core.*;
 import net.minecraft.core.registries.BuiltInRegistries;
+import net.minecraft.nbt.CompoundTag;
+import net.minecraft.network.FriendlyByteBuf;
 import net.minecraft.resources.ResourceKey;
 import net.minecraft.server.*;
 import net.minecraft.server.dedicated.DedicatedServer;
 import net.minecraft.server.level.ServerLevel;
+import net.minecraft.server.level.ServerPlayer;
 import net.minecraft.world.entity.Entity;
 import net.minecraft.world.level.*;
 import net.minecraft.world.level.block.Blocks;
@@ -46,6 +53,72 @@ class AirportGroundOperationsTest {
         set(AirportBlockEntity.class,airport,"groundLayout",new AirportGroundLayout(2,List.of(stand),List.of(out,in)));aircraft=new Aircraft();
     }
     @AfterEach void clear(){TransportRegistry.clear(level.server);}
+    @Test void airportOwnerCanRenameWhileAnAircraftHoldsAnAssignmentOutsideTheTownFootprint() throws Exception {
+        TestPlayer owner=airportOwner();
+        var assignment=prepare();
+        assertTrue(airport.reserveGroundAssignment(attempt,assignment,aircraft.id,100));
+        var layout=airport.groundLayout();
+        var facilities=airport.facilities();
+        var reservations=airport.groundReservations();
+        assertTrue(airport.configurationOccupied(facilities,layout));
+
+        var result=rename(owner,2,"West Field");
+
+        assertTrue(result.success(),result.code());
+        assertEquals(3,result.revision());
+        assertEquals("West Field",airport.getDockName());
+        assertSame(layout,airport.groundLayout(),"Renaming must not replace or revise the geometry");
+        assertEquals(facilities,airport.facilities());
+        assertEquals(reservations,airport.groundReservations());
+        assertTrue(airport.assignedStandArrival(assignment,aircraft.proxy,0,0),"Previously held assignment stays valid");
+
+        var snapshot=AirportScreenData.capture(owner,airport,"ok");
+        var buffer=new FriendlyByteBuf(Unpooled.buffer());
+        try {
+            AirportSnapshotPacket.encode(new AirportSnapshotPacket(snapshot,false),buffer);
+            var readback=AirportSnapshotPacket.decode(buffer).data();
+            assertEquals(3,readback.revision());
+            assertEquals(layout.withRevision(3),readback.groundLayout());
+            assertEquals("West Field",readback.customName());
+            assertSame(layout,airport.groundLayout());
+        } finally {buffer.release();}
+    }
+    @Test void airportRenameUsesTheEditorRevisionAndRetainsOwnerAndTownChecks() throws Exception {
+        TestPlayer owner=airportOwner();
+        assertTrue(rename(owner,2,"West Field").success());
+        assertEquals(3,AirportScreenData.capture(owner,airport,"").revision());
+        level.time+=5;
+        assertEquals("stale_revision",rename(owner,2,"Old Draft").code());
+
+        set(DockBlockEntity.class,airport,"ownerUuid",UUID.randomUUID().toString());
+        assertEquals("forbidden",rename(owner,3,"Foreign Owner").code());
+        set(DockBlockEntity.class,airport,"ownerUuid",owner.getUUID().toString());
+        set(DockBlockEntity.class,airport,"townId","different-town");
+        assertEquals("forbidden",rename(owner,3,"Foreign Town").code());
+        set(DockBlockEntity.class,airport,"townId","airport-town");
+
+        assertTrue(rename(owner,3,"").success());
+        assertEquals("Air Town",airport.getDockName());
+        assertEquals(2,airport.groundLayoutRevision());
+    }
+    private TestPlayer airportOwner() throws Exception {
+        level.airport=airport;
+        TestPlayer owner=allocate(TestPlayer.class);
+        owner.level=level;
+        owner.uuid=UUID.randomUUID();
+        set(Entity.class,owner,"position",BlockPos.ZERO.getCenter());
+        set(DockBlockEntity.class,airport,"ownerUuid",owner.uuid.toString());
+        set(DockBlockEntity.class,airport,"townId","airport-town");
+        NationSavedData.get(level).putTown(new TownRecord("airport-town","","Air Town",owner.uuid,1L,
+                "minecraft:overworld",BlockPos.ZERO.asLong(),"","european"));
+        return owner;
+    }
+    private AirportManagementService.Result rename(TestPlayer owner,long revision,String name){
+        CompoundTag action=new CompoundTag();
+        action.putString("Action","rename");
+        action.putString("Name",name);
+        return AirportManagementService.apply(owner,BlockPos.ZERO,revision,action);
+    }
     private GroundAssignment prepare(){for(int i=0;i<200;i++,level.time+=5){var value=airport.preparedGroundDeparture(attempt,aircraft.proxy,0,0);if(value.isPresent())return value.get();}return fail("bounded ground preparation did not finish");}
     private void oppositeRunways()throws Exception{
         var main=airport.facilities().getFirst();
@@ -165,16 +238,26 @@ class AirportGroundOperationsTest {
             default->method.isDefault()?InvocationHandler.invokeDefault(proxy,method,args):null;};}
     }
     static final class TestLevel extends ServerLevel{
-        DedicatedServer server;DimensionDataStorage storage;Set<ChunkPos> unloaded;Set<BlockPos> blocked;long time;
+        DedicatedServer server;DimensionDataStorage storage;Set<ChunkPos> unloaded;Set<BlockPos> blocked;long time;AirportBlockEntity airport;
         private TestLevel(){super(null,command->{},null,null,null,null,null,false,0L,List.of(),false,null);}
         @Override public MinecraftServer getServer(){return server;}@Override public DimensionDataStorage getDataStorage(){return storage;}
         @Override public RegistryAccess registryAccess(){return RegistryAccess.fromRegistryOfRegistries(BuiltInRegistries.REGISTRY);}
         @Override public void blockEntityChanged(BlockPos pos){}@Override public ResourceKey<Level> dimension(){return Level.OVERWORLD;}
+        @Override public BlockEntity getBlockEntity(BlockPos pos){return BlockPos.ZERO.equals(pos)?airport:null;}
+        @Override public void sendBlockUpdated(BlockPos pos,BlockState oldState,BlockState newState,int flags){}
         @Override public boolean hasChunkAt(BlockPos pos){return !unloaded.contains(new ChunkPos(pos));}@Override public boolean hasChunk(int x,int z){return !unloaded.contains(new ChunkPos(x,z));}
         @Override public int getMinBuildHeight(){return 0;}@Override public int getHeight(){return 256;}@Override public long getGameTime(){return time;}
         @Override public <T extends Entity>List<T> getEntitiesOfClass(Class<T> type,AABB bounds,Predicate<? super T> filter){return List.of();}
         @Override public BlockState getBlockState(BlockPos pos){assertTrue(hasChunkAt(pos));return(pos.getY()==63||blocked.contains(pos)?Blocks.STONE:Blocks.AIR).defaultBlockState();}
         @Override public FluidState getFluidState(BlockPos pos){return Fluids.EMPTY.defaultFluidState();}
+    }
+    private static final class TestPlayer extends ServerPlayer {
+        TestLevel level;
+        UUID uuid;
+        private TestPlayer(){super(null,null,null,null);}
+        @Override public Level level(){return level;}
+        @Override public ServerLevel serverLevel(){return level;}
+        @Override public UUID getUUID(){return uuid;}
     }
     static void set(Class<?> type,Object target,String name,Object value)throws Exception{Field field=type.getDeclaredField(name);field.setAccessible(true);field.set(target,value);}
     @SuppressWarnings("unchecked")static <T>T allocate(Class<T>type)throws Exception{Field field=Unsafe.class.getDeclaredField("theUnsafe");field.setAccessible(true);return(T)((Unsafe)field.get(null)).allocateInstance(type);}

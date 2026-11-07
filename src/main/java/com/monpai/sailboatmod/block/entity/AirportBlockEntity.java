@@ -25,6 +25,7 @@ public final class AirportBlockEntity extends DockBlockEntity {
     private final Map<String, AirportFacility> facilities = new LinkedHashMap<>();
     private AirportReservationBook reservations = new AirportReservationBook();
     private AirportGroundLayout groundLayout = AirportGroundLayout.empty();
+    private long editorRevision;
     private final Map<UUID, GroundReservation> groundReservations = new LinkedHashMap<>();
     private final Map<UUID, GroundPreparation> groundPreflights = new HashMap<>();
     private final Map<String, ValidationState> validation = new HashMap<>();
@@ -106,6 +107,20 @@ public final class AirportBlockEntity extends DockBlockEntity {
     /** Ground data is separate from legacy runway/helipad/mooring geometry. */
     public AirportGroundLayout groundLayout() { return groundLayout == null ? AirportGroundLayout.empty() : groundLayout; }
     public long groundLayoutRevision() { return groundLayout().revision(); }
+    /** Editing names must not invalidate an aircraft's geometry assignment or reservation. */
+    public long editorRevision() { return Math.max(editorRevision, groundLayoutRevision()); }
+    public boolean renameFromEditor(long expectedRevision, String name) {
+        if (!(level instanceof ServerLevel) || expectedRevision != editorRevision() || expectedRevision >= Long.MAX_VALUE - 1) return false;
+        if (!getCustomDockName().equals(name)) {
+            editorRevision = expectedRevision + 1;
+            setDockName(name);
+        }
+        return true;
+    }
+    private void updateGroundLayout(AirportGroundLayout layout) {
+        editorRevision = editorRevision() + 1;
+        groundLayout = layout;
+    }
     public AirportValidation.Result facilityStatus(String id) {
         ValidationState state=validation.get(id);
         if(state==null||level==null||level.getGameTime()<state.checkedAt||level.getGameTime()-state.checkedAt>=20)return AirportValidation.Result.WAITING;
@@ -151,11 +166,11 @@ public final class AirportBlockEntity extends DockBlockEntity {
         for(var r:candidate.taxiRoutes())if(occupiedBounds(r.bounds(),null))return true;return false;
     }
     public boolean replaceGroundConfiguration(long expectedRevision,List<AirportFacility> proposed,AirportGroundLayout candidate){
-        if(candidate==null||expectedRevision!=groundLayoutRevision()||expectedRevision>=Long.MAX_VALUE-1||candidate.revision()!=expectedRevision+1
+        if(candidate==null||expectedRevision!=groundLayoutRevision()||editorRevision()>=Long.MAX_VALUE-1||candidate.revision()!=expectedRevision+1
                 ||proposed==null||proposed.size()>16||AirportGroundValidation.references(candidate,proposed)!=AirportGroundValidation.Result.VALID
                 ||configurationOccupied(proposed,candidate))return false;
         Set<String> ids=new HashSet<>();for(var facility:proposed)if(facility==null||!facility.validGeometry()||!ids.add(facility.id()))return false;
-        facilities.clear();for(var facility:proposed)facilities.put(facility.id(),facility);groundLayout=candidate;
+        facilities.clear();for(var facility:proposed)facilities.put(facility.id(),facility);updateGroundLayout(candidate);
         validation.clear();reservationChecks.clear();arrivalChecks.clear();preflights.clear();groundPreflights.clear();setChanged();return true;
     }
     private GroundAssignment assignment(String runwayId,String standId,AirportTaxiRoute.Direction direction){
@@ -390,19 +405,19 @@ public final class AirportBlockEntity extends DockBlockEntity {
                 || facility.end().distSqr(worldPosition) > (double) facility.managementDistance() * facility.managementDistance()) return AirportValidation.Result.INVALID_GEOMETRY;
         // An occupied resource cannot be moved out from beneath an approaching aircraft.
         List<AirportFacility> proposed=new ArrayList<>(facilities());proposed.removeIf(f->f.id().equals(facility.id()));proposed.add(facility);
-        if (configurationOccupied(proposed,groundLayout())||groundLayoutRevision()>=Long.MAX_VALUE-1||AirportGroundValidation.references(groundLayout(),proposed)!=AirportGroundValidation.Result.VALID) return AirportValidation.Result.OBSTRUCTED;
+        if (configurationOccupied(proposed,groundLayout())||editorRevision()>=Long.MAX_VALUE-1||AirportGroundValidation.references(groundLayout(),proposed)!=AirportGroundValidation.Result.VALID) return AirportValidation.Result.OBSTRUCTED;
         AirportValidation.Result result = cachedValidation(facility);
         if (result == AirportValidation.Result.VALID) {
-            facilities.put(facility.id(), facility); groundLayout=groundLayout().withRevision(groundLayoutRevision()+1); validation.remove(facility.id()); reservationChecks.remove(facility.id());
+            facilities.put(facility.id(), facility); updateGroundLayout(groundLayout().withRevision(groundLayoutRevision()+1)); validation.remove(facility.id()); reservationChecks.remove(facility.id());
             arrivalChecks.values().removeIf(facility.id()::equals);
             preflights.values().removeIf(value -> value.validation.facility.id().equals(facility.id())); setChanged();
         }
         return result;
     }
     public boolean removeFacility(String id) {
-        if (!(level instanceof ServerLevel)||configurationOccupied(facilities(),groundLayout())||groundLayoutRevision()>=Long.MAX_VALUE-1) return false;
+        if (!(level instanceof ServerLevel)||configurationOccupied(facilities(),groundLayout())||editorRevision()>=Long.MAX_VALUE-1) return false;
         if(groundLayout().taxiRoutes().stream().anyMatch(r->r.runwayId().equals(id)))return false;
-        if (facilities.remove(id) == null) return false;groundLayout=groundLayout().withRevision(groundLayoutRevision()+1);
+        if (facilities.remove(id) == null) return false;updateGroundLayout(groundLayout().withRevision(groundLayoutRevision()+1));
         reservations.removeFacility(id); validation.remove(id); reservationChecks.remove(id); arrivalChecks.values().removeIf(id::equals);
         preflights.values().removeIf(value -> value.validation.facility.id().equals(id)); setChanged(); return true;
     }
@@ -598,7 +613,7 @@ public final class AirportBlockEntity extends DockBlockEntity {
     @Override protected void saveAdditional(CompoundTag tag, HolderLookup.Provider provider) {
         super.saveAdditional(tag, provider); ListTag values = new ListTag(); for (AirportFacility facility : facilities.values()) values.add(facility.save());
         tag.put("AirportFacilities", values); tag.put("AirportReservations", reservations.save());
-        tag.put("AirportGroundLayout",groundLayout().save());ListTag groundClaims=new ListTag();
+        tag.put("AirportGroundLayout",groundLayout().save());tag.putLong("AirportEditorRevision",editorRevision());ListTag groundClaims=new ListTag();
         for(var claim:groundReservations()){CompoundTag item=claim.assignment().save();item.putUUID("Aircraft",claim.aircraftId());item.putLong("Expires",claim.expiresAtTick());groundClaims.add(item);}tag.put("AirportGroundReservations",groundClaims);
     }
     @Override public void loadAdditional(CompoundTag tag, HolderLookup.Provider provider) {
@@ -609,6 +624,7 @@ public final class AirportBlockEntity extends DockBlockEntity {
         }
         reservations = AirportReservationBook.load(tag.getCompound("AirportReservations"));
         try { groundLayout=AirportGroundLayout.load(tag.getCompound("AirportGroundLayout")); } catch(IllegalArgumentException invalid){groundLayout=AirportGroundLayout.empty();}
+        editorRevision = Math.min(tag.getLong("AirportEditorRevision"), Long.MAX_VALUE - 1);
         groundReservations.clear();groundPreflights.clear();
         for(Tag raw:tag.getList("AirportGroundReservations",Tag.TAG_COMPOUND)) { if(groundReservations.size()>=16)break;try {CompoundTag item=(CompoundTag)raw;GroundAssignment assignment=GroundAssignment.load(item);if(item.hasUUID("Aircraft")) {UUID aircraft=item.getUUID("Aircraft");groundReservations.put(aircraft,new GroundReservation(assignment,aircraft,item.getLong("Expires")));}}catch(IllegalArgumentException ignored){} }
         validation.clear(); reservationChecks.clear(); arrivalChecks.clear(); preflights.clear();

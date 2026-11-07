@@ -75,6 +75,15 @@ class AirportLoadingDispatchTest {
         assertTrue((boolean)invoke(f.controller,"queueAirportDeparture",new Class[]{ServerLevel.class},f.level));
         assertTrue((boolean)get(f.controller,"departureFlightPending"));
     }
+    @Test void manualRouteRetainsPublishedAirportAfterItsNameChanges()throws Exception {
+        var f=fixture();f.level.loaded.add(new ChunkPos(SOURCE));set(f.controller,"destinationTerminal",null);
+        set(f.controller,"routeCatalog",new ArrayList<>(List.of(new RouteDefinition("C to D",List.of(new Vec3(0,81,0),new Vec3(10000,81,0)),"Owner","owner",1,10000,"C","D"))));
+        var data=AirportSavedData.get(f.level);
+        data.put(new AirportSavedData.AirportSnapshot("minecraft:overworld",TARGET,"D","town","owner",List.of()));
+        data.put(new AirportSavedData.AirportSnapshot("minecraft:overworld",TARGET,"Destination Town","town","owner",List.of()));
+        assertFalse(prepare(f));assertEquals(TARGET,get(f.controller,"destinationTerminal"));
+        assertEquals("waiting_airport_metadata",get(f.controller,"reason"));
+    }
     @Test void ambiguousNamedDestinationDoesNotGuessAnAirportByDistance()throws Exception {
         var f=fixture();f.level.loaded.add(new ChunkPos(SOURCE));set(f.controller,"destinationTerminal",null);
         set(f.controller,"routeCatalog",new ArrayList<>(List.of(new RouteDefinition("C to D",List.of(new Vec3(0,81,0),new Vec3(10000,81,0)),"Owner","owner",1,10000,"C","D"))));

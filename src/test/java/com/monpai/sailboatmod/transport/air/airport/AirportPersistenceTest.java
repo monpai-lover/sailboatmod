@@ -29,6 +29,35 @@ class AirportPersistenceTest {
         assertEquals(1, reloaded.airports().size());
         assertNotNull(reloaded.airport("minecraft:the_nether", pos));
     }
+    @Test void oldRouteNameKeepsItsAirportAfterRenameAndReload() {
+        var data = new AirportSavedData();
+        String dimension = "minecraft:overworld";
+        BlockPos pos = new BlockPos(5, 72, 9);
+        data.put(new AirportSavedData.AirportSnapshot(dimension, pos, "Old name", "town", "owner", List.of(runway())));
+        var renamed = new AirportSavedData.AirportSnapshot(dimension, pos, "Town name", "town", "owner", List.of(runway()));
+        data.put(renamed);
+        data = AirportSavedData.load(data.save(new CompoundTag(), null));
+        assertEquals(renamed, data.uniqueRouteAirport(dimension, "old NAME").orElseThrow());
+        assertEquals(renamed, data.uniqueRouteAirport(dimension, "Town name").orElseThrow());
+        assertTrue(data.uniqueRouteAirport("minecraft:the_nether", "Old name").isEmpty());
+        BlockPos other = pos.offset(12, 0, 0);
+        data.put(new AirportSavedData.AirportSnapshot(dimension, other, "Old name", "town2", "owner2", List.of()));
+        assertTrue(data.uniqueRouteAirport(dimension, "Old name").isEmpty(), "Ambiguous label must not redirect a legacy route");
+        data.remove(dimension, pos);
+        assertEquals(other, data.uniqueRouteAirport(dimension, "Old name").orElseThrow().pos());
+        assertTrue(data.uniqueRouteAirport(dimension, "Town name").isEmpty());
+    }
+    @Test void noHistoryForNameThatNeverIdentifiedAnAirportUnambiguously() {
+        var data = new AirportSavedData();
+        String dimension = "minecraft:overworld";
+        BlockPos a = new BlockPos(5, 72, 9), b = new BlockPos(15, 72, 9);
+        data.put(new AirportSavedData.AirportSnapshot(dimension, a, "Town", "town", "owner", List.of()));
+        var sameTown = new AirportSavedData.AirportSnapshot(dimension, b, "Town", "town", "owner", List.of());
+        data.put(sameTown);
+        assertTrue(data.uniqueRouteAirport(dimension, "Town").isEmpty());
+        data.put(new AirportSavedData.AirportSnapshot(dimension, a, "West", "town", "owner", List.of()));
+        assertEquals(sameTown, data.uniqueRouteAirport(dimension, "Town").orElseThrow());
+    }
     @Test void fixedWingCannotUseHelipadAndAirshipNeedsMooring() {
         var pad = new AirportFacility("pad", AirportFacility.Type.HELIPAD, new BlockPos(0,80,0), new BlockPos(0,80,0), 7, 12);
         var mooring = new AirportFacility("mast", AirportFacility.Type.MOORING, new BlockPos(0,80,0), new BlockPos(0,80,0), 12, 24);

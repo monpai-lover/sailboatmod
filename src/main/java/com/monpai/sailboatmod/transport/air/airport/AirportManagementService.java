@@ -1,6 +1,7 @@
 package com.monpai.sailboatmod.transport.air.airport;
 
 import com.monpai.sailboatmod.block.entity.AirportBlockEntity;
+import com.monpai.sailboatmod.dock.FacilityNames;
 import com.monpai.sailboatmod.nation.service.TownService;
 import com.monpai.sailboatmod.nation.data.NationSavedData;
 import java.util.*;
@@ -41,7 +42,7 @@ public final class AirportManagementService {
         if(player==null||player instanceof FakePlayer)return new Result(false,"missing_sender",-1);
         ServerLevel level=player.serverLevel();
         if(airportPos==null||!level.hasChunkAt(airportPos)||!(level.getBlockEntity(airportPos) instanceof AirportBlockEntity airport))return new Result(false,"unloaded_airport",-1);
-        long revision=airport.groundLayoutRevision();
+        long revision=airport.editorRevision();
         if(player.distanceToSqr(airportPos.getCenter())>64)return new Result(false,"out_of_range",revision);
         if(!canManage(player,airport))return new Result(false,"forbidden",revision);
         String gate=rejection(true,true,true,true,player.distanceToSqr(airportPos.getCenter()),expectedRevision,revision,false);
@@ -49,16 +50,24 @@ public final class AirportManagementService {
         if(action==null)return new Result(false,"invalid_action",revision);
         String kind=action.getString("Action");
         synchronized(REQUESTS){if(!acceptRequest(REQUESTS.computeIfAbsent(level.getServer(),server->new HashMap<>()),player.getUUID(),level.getGameTime()))return new Result(false,"rate_limited",revision);}
+        if (kind.equals("rename")) {
+            String name = action.getString("Name").trim();
+            if (!FacilityNames.validOverride(name)) return new Result(false,"invalid_geometry",revision);
+            if (!name.isEmpty() && AirportSavedData.get(level).airports(level.dimension().location().toString()).stream()
+                    .anyMatch(other -> !other.pos().equals(airportPos) && other.name().equalsIgnoreCase(name)))
+                return new Result(false,"duplicate_name",revision);
+            boolean renamed = airport.renameFromEditor(expectedRevision, name);
+            return new Result(renamed, renamed ? "ok" : "stale_revision", airport.editorRevision());
+        }
         if(kind.equals("validate")){
             var facility=airport.facilities().stream().filter(f->f.id().equals(action.getString("Id"))).findFirst().orElse(null);
             if(facility==null)return new Result(false,"invalid_action",revision);
-            var proposal=new AirportEditorSession.Proposal(airport.facilities(),airport.groundLayout(),facility,null,true);
+            var proposal=new AirportEditorSession.Proposal(airport.facilities(),airport.groundLayout(),facility,true);
             return queue(player,airport,revision,proposal);
         }
         List<AirportFacility> facilities=new ArrayList<>(airport.facilities());
         List<AirportParkingStand> stands=new ArrayList<>(airport.groundLayout().stands());
         List<AirportTaxiRoute> routes=new ArrayList<>(airport.groundLayout().taxiRoutes());
-        String rename=null;
         try{
             switch(kind){
                 case "upsert_facility"->{var value=AirportFacility.load(action.getCompound("Facility"));facilities.removeIf(f->f.id().equals(value.id()));facilities.add(value);}
@@ -67,11 +76,9 @@ public final class AirportManagementService {
                 case "remove_stand"->{if(!stands.removeIf(s->s.id().equals(action.getString("Id"))))return new Result(false,"invalid_action",revision);}
                 case "upsert_taxi_route"->{var value=AirportTaxiRoute.load(action.getCompound("TaxiRoute"));routes.removeIf(r->r.id().equals(value.id()));routes.add(value);}
                 case "remove_taxi_route"->{if(!routes.removeIf(r->r.id().equals(action.getString("Id"))))return new Result(false,"invalid_action",revision);}
-                case "rename"->{rename=action.getString("Name").trim();if(!com.monpai.sailboatmod.dock.FacilityNames.validOverride(rename))return new Result(false,"invalid_geometry",revision);
-                    String target=rename;if(!rename.isBlank()&&AirportSavedData.get(level).airports(level.dimension().location().toString()).stream().anyMatch(a->!a.pos().equals(airportPos)&&a.name().equalsIgnoreCase(target)))return new Result(false,"duplicate_name",revision);}
                 default->{return new Result(false,"invalid_action",revision);}
             }
-            AirportGroundLayout candidate=new AirportGroundLayout(revision+1,stands,routes);
+            AirportGroundLayout candidate=new AirportGroundLayout(airport.groundLayoutRevision()+1,stands,routes);
             if(facilities.size()>16)return new Result(false,"too_large",revision);
             var references=AirportGroundValidation.references(candidate,facilities);
             if(references!=AirportGroundValidation.Result.VALID)return new Result(false,references.name().toLowerCase(Locale.ROOT),revision);
@@ -83,7 +90,7 @@ public final class AirportManagementService {
             for(var stand:stands)if(stand.position().distanceToSqr(airportPos.getCenter())>512D*512)return new Result(false,"invalid_geometry",revision);
             for(var route:routes)if(!AirportGroundValidation.withinManagementDistance(route,facilities,stands,airportPos))return new Result(false,"invalid_geometry",revision);
             AirportFacility changed=kind.equals("upsert_facility")?AirportFacility.load(action.getCompound("Facility")):null;
-            return queue(player,airport,revision,new AirportEditorSession.Proposal(facilities,candidate,changed,rename,false));
+            return queue(player,airport,revision,new AirportEditorSession.Proposal(facilities,candidate,changed,false));
         }catch(IllegalArgumentException|NullPointerException failure){return new Result(false,"invalid_geometry",revision);}
     }
     private static Result queue(ServerPlayer player,AirportBlockEntity airport,long revision,AirportEditorSession.Proposal proposal){
@@ -99,8 +106,8 @@ public final class AirportManagementService {
         ServerPlayer player=level.getServer().getPlayerList().getPlayer(request.owner);
         long now=level.getGameTime();
         boolean authorized=player!=null&&player.serverLevel()==level&&canManage(player,airport);
-        if(!request.isCurrent(airport.editorSession(),request.owner,airport.groundLayoutRevision(),authorized,now)){
-            String code=airport.groundLayoutRevision()!=request.baseRevision?"stale_revision":"forbidden";
+        if(!request.isCurrent(airport.editorSession(),request.owner,airport.editorRevision(),authorized,now)){
+            String code=airport.editorRevision()!=request.baseRevision?"stale_revision":"forbidden";
             airport.clearEditor(request);reply(player,airport,code);return 0;
         }
         if(airport.configurationOccupied(request.proposal.facilities(),request.proposal.ground())){
@@ -112,15 +119,13 @@ public final class AirportManagementService {
         int used=request.stepsUsed();
         if(result.equals("pending")){if(now%20==0)reply(player,airport,"pending");return used;}
         if(result.equals("valid")){
-            boolean current=request.canCommit(airport.editorSession(),player.getUUID(),airport.groundLayoutRevision(),canManage(player,airport),now,authority.claimRevision());
+            boolean current=request.canCommit(airport.editorSession(),player.getUUID(),airport.editorRevision(),canManage(player,airport),now,authority.claimRevision());
             if(!current)result="stale_revision";
             else if(!request.loadedBeforeCommit(p->!level.isOutsideBuildHeight(p)&&level.hasChunkAt(p)))result="unloaded";
-            else if(request.proposal.rename()!=null&&!request.proposal.rename().isBlank()&&AirportSavedData.get(level).airports(level.dimension().location().toString()).stream().anyMatch(a->!a.pos().equals(airport.getBlockPos())&&a.name().equalsIgnoreCase(request.proposal.rename())))result="duplicate_name";
             else if(request.proposal.validationOnly()){
                 airport.editorValidatedFacility(request.proposal.changedRunway());
                 result="valid";
-            }else if(airport.replaceGroundConfiguration(request.baseRevision,request.proposal.facilities(),request.proposal.ground())){
-                if(request.proposal.rename()!=null)airport.setDockName(request.proposal.rename());
+            }else if(airport.replaceGroundConfiguration(request.proposal.ground().revision()-1,request.proposal.facilities(),request.proposal.ground())){
                 result="ok";
             }else result="occupied";
         }

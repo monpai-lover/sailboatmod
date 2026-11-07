@@ -11,7 +11,7 @@ import net.minecraft.world.phys.AABB;
 /** One immutable airport edit, using the existing bounded terrain scanners. Never persists configuration. */
 public final class AirportEditorSession {
     public record Proposal(List<AirportFacility> facilities, AirportGroundLayout ground, AirportFacility changedRunway,
-                           String rename, boolean validationOnly) {
+                           boolean validationOnly) {
         public Proposal { facilities = List.copyOf(facilities); Objects.requireNonNull(ground); }
     }
     public static final int PER_TICK_BUDGET = 2048;

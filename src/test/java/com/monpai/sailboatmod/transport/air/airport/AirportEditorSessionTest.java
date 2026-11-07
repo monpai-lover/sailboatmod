@@ -12,7 +12,7 @@ class AirportEditorSessionTest {
     private AirportEditorSession session() {
         var runway = new AirportFacility("r", AirportFacility.Type.RUNWAY, new BlockPos(0, 80, 0), new BlockPos(96, 80, 0), 9, 4);
         return new AirportEditorSession(owner, 5, 100,
-                new AirportEditorSession.Proposal(List.of(runway), new AirportGroundLayout(6, List.of(), List.of()), runway, null, false), "town");
+                new AirportEditorSession.Proposal(List.of(runway), new AirportGroundLayout(6, List.of(), List.of()), runway, false), "town");
     }
     private void complete(AirportEditorSession session) {
         for (int i = 0; i < 10000 && session.result().equals("pending"); i++)

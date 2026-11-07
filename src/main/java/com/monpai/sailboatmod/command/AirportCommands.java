@@ -113,7 +113,7 @@ public final class AirportCommands {
         context.getSource().sendSuccess(() -> Component.literal("设施登记已移除；玩家建筑保留。"), false); return 1;
     }
     private static boolean applyManagement(CommandContext<CommandSourceStack> context,AirportBlockEntity airport,CompoundTag action) throws CommandSyntaxException {
-        var result=AirportManagementService.apply(context.getSource().getPlayerOrException(),airport.getBlockPos(),airport.groundLayoutRevision(),action);
+        var result=AirportManagementService.apply(context.getSource().getPlayerOrException(),airport.getBlockPos(),airport.editorRevision(),action);
         if (result.code().equals("pending")) {
             context.getSource().sendSuccess(() -> Component.translatable("screen.sailboatmod.airport.result.pending"), false);
             return false;

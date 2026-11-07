@@ -2290,9 +2290,8 @@ public final class RegisteredVehicleControllerBlockEntity extends BlockEntity
         if (transportKind() != Kind.AIR || destinationTerminal != null || routeCatalog.isEmpty()) return;
         String destinationName = returnTrip ? selected().startDockName() : selected().endDockName();
         if (destinationName == null || destinationName.isBlank()) return;
-        var matches = AirportSavedData.get(server).airports(dimensionId()).stream()
-                .filter(airport -> airport.name().equalsIgnoreCase(destinationName)).toList();
-        if (matches.size() == 1) destinationTerminal = matches.getFirst().pos();
+        AirportSavedData.get(server).uniqueRouteAirport(dimensionId(), destinationName)
+                .ifPresent(airport -> destinationTerminal = airport.pos());
     }
 
     private DockBlockEntity resolveDestination(ServerLevel server) {
@@ -3560,12 +3559,15 @@ public final class RegisteredVehicleControllerBlockEntity extends BlockEntity
         String name = route.endDockName();
         if (name == null || name.isBlank()) return route.name();
         if (!(level instanceof ServerLevel server) || route.waypoints().isEmpty()) return name;
+        if (transportKind() == Kind.AIR) {
+            return AirportSavedData.get(server).uniqueRouteAirport(dimensionId(), name)
+                    .filter(airport -> !airport.pos().equals(sourceTerminal))
+                    .map(AirportSavedData.AirportSnapshot::name).orElse(name);
+        }
         var end = route.waypoints().getLast();
-        var kind = switch (transportKind()) {
-            case AIR -> com.monpai.sailboatmod.market.terminal.TerminalNetworkSavedData.Kind.AIRPORT;
-            case LAND -> com.monpai.sailboatmod.market.terminal.TerminalNetworkSavedData.Kind.POST_STATION;
-            default -> com.monpai.sailboatmod.market.terminal.TerminalNetworkSavedData.Kind.PORT;
-        };
+        var kind = transportKind() == Kind.LAND
+                ? com.monpai.sailboatmod.market.terminal.TerminalNetworkSavedData.Kind.POST_STATION
+                : com.monpai.sailboatmod.market.terminal.TerminalNetworkSavedData.Kind.PORT;
         var candidates = com.monpai.sailboatmod.market.terminal.TerminalNetworkSavedData.get(server).all().stream()
                 .filter(t -> t.kind() == kind && t.dimId().equals(dimensionId())
                         && !BlockPos.of(t.packedPos()).equals(sourceTerminal)
