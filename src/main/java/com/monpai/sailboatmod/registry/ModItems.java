@@ -158,6 +158,12 @@ public final class ModItems {
     public static final DeferredHolder<Item, Item> AIRPORT = ITEMS.register("airport",
             () -> new DescribedBlockItem(ModBlocks.AIRPORT.get(), new Item.Properties(), "item.sailboatmod.airport.desc"));
 
+    public static final DeferredHolder<Item, Item> TOWN_ARRIVALS_BOARD = ITEMS.register("town_arrivals_board",
+            () -> new DescribedBlockItem(ModBlocks.TOWN_ARRIVALS_BOARD.get(), new Item.Properties(), "item.sailboatmod.town_arrivals_board.desc"));
+
+    public static final DeferredHolder<Item, Item> RAIL_FREIGHT_TERMINAL = ITEMS.register("rail_freight_terminal",
+            () -> new DescribedBlockItem(ModBlocks.RAIL_FREIGHT_TERMINAL.get(), new Item.Properties(), "item.sailboatmod.rail_freight_terminal.desc"));
+
     private ModItems() {
     }
 }

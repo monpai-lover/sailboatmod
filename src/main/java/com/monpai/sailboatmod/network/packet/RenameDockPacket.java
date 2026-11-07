@@ -1,6 +1,7 @@
 package com.monpai.sailboatmod.network.packet;
 
 import com.monpai.sailboatmod.block.entity.DockBlockEntity;
+import com.monpai.sailboatmod.block.entity.AirportBlockEntity;
 import com.monpai.sailboatmod.network.ModNetwork;
 import net.minecraft.core.BlockPos;
 import net.minecraft.network.FriendlyByteBuf;
@@ -34,7 +35,7 @@ public class RenameDockPacket {
             if (player == null) {
                 return;
             }
-            if (!(player.level().getBlockEntity(packet.dockPos) instanceof DockBlockEntity dock)) {
+            if (!(player.level().getBlockEntity(packet.dockPos) instanceof DockBlockEntity dock) || dock instanceof AirportBlockEntity) {
                 return;
             }
             if (dock.canManageDock(player)) {

@@ -17,6 +17,7 @@ import net.minecraft.commands.Commands;
 import net.minecraft.commands.arguments.coordinates.BlockPosArgument;
 import net.minecraft.core.BlockPos;
 import net.minecraft.network.chat.Component;
+import net.minecraft.nbt.CompoundTag;
 import net.minecraft.server.level.ServerLevel;
 import net.minecraft.server.level.ServerPlayer;
 import net.minecraft.world.phys.Vec3;
@@ -41,7 +42,7 @@ public final class AirportCommands {
     }
     private static LiteralArgumentBuilder<CommandSourceStack> registrationNode() {
         var height = Commands.argument("height", IntegerArgumentType.integer(4, 64)).executes(AirportCommands::registerFacility);
-        var width = Commands.argument("width", IntegerArgumentType.integer(5, 32)).then(height);
+        var width = Commands.argument("width", IntegerArgumentType.integer(5, AirportFacility.MAX_WIDTH)).then(height);
         var end = Commands.argument("end", BlockPosArgument.blockPos()).then(width);
         var start = Commands.argument("start", BlockPosArgument.blockPos()).then(end);
         var type = Commands.argument("type", StringArgumentType.word()).suggests((context, builder) -> {
@@ -53,8 +54,8 @@ public final class AirportCommands {
     private static int help(CommandSourceStack source) {
         source.sendSuccess(() -> Component.literal("机场指令（坐标只读取本维度已加载区块）：\n"
                 + "/airport <x y z> name <名称> | list | validate <id> | remove <id>\n"
-                + "/airport <x y z> register <id> <runway|helipad|mooring> <起点x y z> <终点x y z> <宽5..32> <净空高4..64>\n"
-                + "端点Y是支撑面上方的空气格；跑道需水平且长至少32格。全部设施与进近范围须属机场同一受管辖城镇。\n"
+                + "/airport <x y z> register <id> <runway|helipad|mooring> <起点x y z> <终点x y z> <宽5.." + AirportFacility.MAX_WIDTH + "> <净空高4..64>\n"
+                + "端点Y是支撑面上方的空气格；跑道需水平且长32至2048格。全部设施与进近范围须属机场同一受管辖城镇。\n"
                 + "/airport <x y z> route <目标机场x y z> <巡航Y>：登记单向航线；返程需在另一机场登记。\n"
                 + "机场继续使用市场/城镇仓库交付；menu显示本说明，设施管理使用上述指令。"), false);
         return 1;
@@ -64,8 +65,7 @@ public final class AirportCommands {
         if (!(context.getSource().getLevel().getBlockEntity(pos) instanceof AirportBlockEntity airport)) throw error("该坐标不是机场登记台。");
         if (manage) {
             ServerPlayer player = context.getSource().getPlayerOrException();
-            var town = TownService.getManagedTownAt(player, pos);
-            if (!airport.canManageDock(player) || town == null || !town.townId().equals(airport.getTownId())) throw error("需要机场所有权与所在城镇的管理权限。");
+            if (!AirportManagementService.canManage(player, airport)) throw error("需要在机场8格内，拥有机场所有权与所在城镇的管理权限。");
         }
         return airport;
     }
@@ -73,8 +73,8 @@ public final class AirportCommands {
         AirportBlockEntity airport = airport(context, "pos", true);
         String name = StringArgumentType.getString(context, "name").trim();
         if (name.isEmpty() || name.length() > 64) throw error("机场名称须为1至64个字符。");
-        ensureUniqueName(context.getSource().getLevel(), airport, name);
-        airport.setDockName(name);
+        CompoundTag action=new CompoundTag();action.putString("Action","rename");action.putString("Name",name);
+        if (!applyManagement(context,airport,action)) return 1;
         context.getSource().sendSuccess(() -> Component.literal("机场已命名为「" + name + "」。"), false);
         return 1;
     }
@@ -93,25 +93,33 @@ public final class AirportCommands {
                     BlockPosArgument.getLoadedBlockPos(context, "start"), BlockPosArgument.getLoadedBlockPos(context, "end"),
                     IntegerArgumentType.getInteger(context, "width"), IntegerArgumentType.getInteger(context, "height"));
         } catch (IllegalArgumentException failure) { throw error("设施id仅支持字母、数字、_、-，长度1..48；type使用runway、helipad或mooring。"); }
-        ServerPlayer player = context.getSource().getPlayerOrException();
-        if (!withinManagedTown(facility, airport.getTownId(), pos -> {
-            var town = TownService.getManagedTownAt(player, pos); return town == null ? "" : town.townId();
-        })) throw error("设施及两端进近范围必须全部处于机场同一受管辖城镇内。");
-        AirportValidation.Result result = airport.registerFacility(facility);
-        context.getSource().sendSuccess(() -> Component.literal("设施 " + facility.id() + "：" + describe(result)), false);
-        return result == AirportValidation.Result.VALID ? 1 : 0;
+        CompoundTag action=new CompoundTag();action.putString("Action","upsert_facility");action.put("Facility",facility.save());
+        if (!applyManagement(context,airport,action)) return 1;
+        context.getSource().sendSuccess(() -> Component.literal("设施 " + facility.id() + "：登记已保存，运行前仍会复查。"), false);
+        return 1;
     }
     private static int validate(CommandContext<CommandSourceStack> context) throws CommandSyntaxException {
         AirportBlockEntity airport = airport(context, "pos", true);
         String id = StringArgumentType.getString(context, "id");
-        AirportValidation.Result result = airport.validateFacility(id);
-        context.getSource().sendSuccess(() -> Component.literal(id + "：" + describe(result)), false);
-        return result == AirportValidation.Result.VALID ? 1 : 0;
+        CompoundTag action=new CompoundTag();action.putString("Action","validate");action.putString("Id",id);
+        if (!applyManagement(context,airport,action)) return 1;
+        context.getSource().sendSuccess(() -> Component.literal(id + "：" + describe(airport.facilityStatus(id))), false);
+        return 1;
     }
     private static int remove(CommandContext<CommandSourceStack> context) throws CommandSyntaxException {
         AirportBlockEntity airport = airport(context, "pos", true);
-        if (!airport.removeFacility(StringArgumentType.getString(context, "id"))) throw error("设施不存在或有尚未到期的占用预约。");
+        CompoundTag action=new CompoundTag();action.putString("Action","remove_facility");action.putString("Id",StringArgumentType.getString(context,"id"));
+        if (!applyManagement(context,airport,action)) return 1;
         context.getSource().sendSuccess(() -> Component.literal("设施登记已移除；玩家建筑保留。"), false); return 1;
+    }
+    private static boolean applyManagement(CommandContext<CommandSourceStack> context,AirportBlockEntity airport,CompoundTag action) throws CommandSyntaxException {
+        var result=AirportManagementService.apply(context.getSource().getPlayerOrException(),airport.getBlockPos(),airport.editorRevision(),action);
+        if (result.code().equals("pending")) {
+            context.getSource().sendSuccess(() -> Component.translatable("screen.sailboatmod.airport.result.pending"), false);
+            return false;
+        }
+        if(!result.success())throw error("机场配置未更改："+result.code());
+        return true;
     }
     private static int route(CommandContext<CommandSourceStack> context) throws CommandSyntaxException {
         AirportBlockEntity source = airport(context, "pos", true), target = airport(context, "target", false);
@@ -134,7 +142,8 @@ public final class AirportCommands {
         context.getSource().sendSuccess(() -> Component.literal("已登记单向航线：" + route.name() + "。起降前仍会检查当前净空和设施占用。"), false); return 1;
     }
     private static void ensureUniqueName(ServerLevel level, AirportBlockEntity airport, String name) throws CommandSyntaxException {
-        if (AirportSavedData.get(level).airports(level.dimension().location().toString()).stream().anyMatch(value -> !value.pos().equals(airport.getBlockPos()) && value.name().equalsIgnoreCase(name))) throw error("本维度已有同名机场，请使用唯一名称。");
+        if (AirportSavedData.get(level).hasOtherRouteName(level.dimension().location().toString(), airport.getBlockPos(), name))
+            throw error("本维度已有机场使用此名称或保留此旧航线名称，请使用唯一名称。");
     }
     public static boolean withinManagedTown(AirportFacility facility, String townId, Function<BlockPos, String> managedTown) {
         if (facility == null || !facility.validGeometry() || townId == null || townId.isBlank() || managedTown == null) return false;
@@ -166,7 +175,7 @@ public final class AirportCommands {
             case OBSTRUCTED -> "净空受阻或设施已被预约";
             case UNSUPPORTED -> "跑道/停机坪地面或系留锚点缺少完整支撑";
             case TOO_LARGE -> "检查范围超过安全预算，请缩短设施或降低净空高度";
-            case INVALID_GEOMETRY -> "设施不存在、几何无效、距机场超过512格或超过16设施上限";
+            case INVALID_GEOMETRY -> "设施不存在、几何无效、超过对应管理距离或超过16设施上限";
         };
     }
     private static CommandSyntaxException error(String message) { return new SimpleCommandExceptionType(Component.literal(message)).create(); }

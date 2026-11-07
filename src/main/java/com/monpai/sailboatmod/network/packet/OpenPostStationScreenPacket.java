@@ -41,6 +41,7 @@ public class OpenPostStationScreenPacket {
         writeRouteSummary(buffer, data.selectedRouteSummary());
         writeWaypoints(buffer, data.selectedRouteWaypoints());
         OpenDockScreenPacket.encodeData(data.advancedData(), buffer);
+        PacketStringCodec.writeUtfSafe(buffer, data.customName(), 64);
     }
 
     public static OpenPostStationScreenPacket decode(FriendlyByteBuf buffer) {
@@ -72,7 +73,8 @@ public class OpenPostStationScreenPacket {
                 autoUnloadOnDispatch,
                 routeSummary,
                 selectedRouteWaypoints,
-                advancedData
+                advancedData,
+                buffer.readUtf(64)
         ));
     }
 

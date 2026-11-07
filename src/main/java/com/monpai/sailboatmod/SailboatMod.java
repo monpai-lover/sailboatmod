@@ -32,6 +32,8 @@ public class SailboatMod {
         modEventBus.addListener(this::onEntityAttributeCreation);
         modEventBus.addListener((net.neoforged.fml.event.lifecycle.FMLCommonSetupEvent event) ->
                 event.enqueueWork(com.monpai.sailboatmod.compat.aeronautics.SableLoadingTickets::initialize));
+        modEventBus.addListener((net.neoforged.fml.event.lifecycle.FMLCommonSetupEvent event) ->
+                event.enqueueWork(com.monpai.sailboatmod.compat.flightcontrol.NativeTakeoffAssist::register));
 
         container.registerConfig(Type.COMMON, com.monpai.sailboatmod.ModConfig.COMMON_SPEC);
 

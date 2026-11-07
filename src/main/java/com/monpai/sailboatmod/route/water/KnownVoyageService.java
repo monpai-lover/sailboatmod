@@ -104,7 +104,7 @@ public final class KnownVoyageService {
                     :aboard?"只补算当前位置到已知航路的安全接入段；点击目的地前往。":"只使用已知航路；点击目的地立即出发。",false);
         }));
     }
-    private static boolean reversible(Catalog c,Set<String> used){return c.routes.stream().filter(r->used.contains(r.id())).allMatch(WaterRouteNetwork.Route::reversible);}
+    static boolean reversible(Catalog c,Set<String> used){return c.routes.stream().filter(r->used.contains(r.id())).allMatch(WaterRouteNetwork.Route::reversible);}
     private static boolean validLease(ServerPlayer p,Lease l){return !p.isRemoved()&&p.serverLevel()==l.level&&l.level.getGameTime()-l.created<=2400;}
     public static void select(ServerPlayer player,UUID query,BlockPos target,boolean autoReturn,boolean autoUnload) {
         if(player==null)return;var leases=LEASES.get(player.serverLevel().getServer());Lease l=leases==null?null:leases.get(player.getUUID());

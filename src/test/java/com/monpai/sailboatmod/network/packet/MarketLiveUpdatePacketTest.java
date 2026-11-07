@@ -40,7 +40,7 @@ class MarketLiveUpdatePacketTest {
     }
 
     @Test
-    void remainsClientboundBeforeAppendedNavigationPayloads() throws Exception {
+    void remainsClientboundBeforeAppendedNavigationAndAirportPayloads() throws Exception {
         String network = Files.readString(Path.of("src/main/java/com/monpai/sailboatmod/network/ModNetwork.java")).replace("\r\n", "\n");
         int payload = network.indexOf("MarketLiveUpdatePacket.class");
         assertTrue(payload >= 0, "market live-update payload remains registered");
@@ -48,7 +48,18 @@ class MarketLiveUpdatePacketTest {
         assertTrue(network.indexOf("KnownVoyageMenuPacket.class") > payload, "navigation packets append without reordering market payload");
         String last = network.substring(at, network.indexOf(");", network.indexOf("Optional.of(", at)) + 2);
         assertTrue(last.contains("MarketLiveUpdatePacket.class") && last.contains("PLAY_TO_CLIENT"), last);
-        assertTrue(network.contains("PROTOCOL_VERSION = \"22\""), "the combined market and aircraft protocol must differ from either standalone protocol 16");
+        List<String> registrations = java.util.regex.Pattern.compile(
+                "CHANNEL\\.registerMessage\\(\\s*packetId\\+\\+\\s*,\\s*([\\w.]+)\\.class")
+                .matcher(network).results().map(match -> match.group(1)).toList();
+        assertEquals(125, registrations.size(), "existing payloads keep their ordinals before the appended aboard menu request");
+        assertEquals(List.of(
+                "com.monpai.sailboatmod.network.packet.airport.AirportActionPacket",
+                "com.monpai.sailboatmod.network.packet.airport.AirportSnapshotPacket"), registrations.subList(120, 122));
+        assertEquals(List.of(
+                "com.monpai.sailboatmod.network.packet.rail.RailTerminalActionPacket",
+                "com.monpai.sailboatmod.network.packet.rail.RailTerminalSnapshotPacket"), registrations.subList(122, 124));
+        assertEquals("com.monpai.sailboatmod.network.packet.RequestRegisteredVehicleMenuPacket", registrations.get(124));
+        assertTrue(network.contains("PROTOCOL_VERSION = \"26\""), "custom terminal names and the aboard menu increment the combined protocol");
     }
 
     private static MarketOverviewData overview() {

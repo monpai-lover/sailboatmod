@@ -1,16 +1,22 @@
 package com.monpai.sailboatmod.compat.aeronautics;
 
 import com.monpai.sailboatmod.transport.physical.NativeControlResult;
+import com.monpai.sailboatmod.transport.physical.NativeGroundObservation;
+import com.monpai.sailboatmod.transport.physical.GroundSurfaceObservation;
+import java.util.List;
 import com.monpai.sailboatmod.transport.physical.PhysicalVehicleView;
+import net.minecraft.core.BlockPos;
 import net.minecraft.core.Direction;
 import net.minecraft.server.level.ServerLevel;
 import net.minecraft.world.level.block.entity.BlockEntity;
+import net.minecraft.world.entity.Entity;
 import net.neoforged.fml.ModList;
 import org.jetbrains.annotations.Nullable;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import java.util.Optional;
+import java.util.UUID;
 import java.util.concurrent.atomic.AtomicBoolean;
 
 /** All optional names and reflection are loaded on first server use, never during normal mod startup. */
@@ -22,6 +28,21 @@ public final class AeronauticsVehicleBridge {
 
     private AeronauticsVehicleBridge() { }
 
+    public record SetupEquipment(List<BlockPos> throttles, List<BlockPos> steering, List<BlockPos> flightTerminals) { }
+
+    /** Find only exact native equipment on one completely observed assembled body. */
+    public static Optional<SetupEquipment> setupEquipment(@Nullable BlockEntity controller, UUID expectedBody) {
+        if (!serverThread(controller) || expectedBody == null) return Optional.empty();
+        SableReflectionAccess api = api();
+        if (api == null) return Optional.empty();
+        try {
+            return api.setupEquipment(bodyFor(api, controller), controller, expectedBody);
+        } catch (ReflectiveOperationException | RuntimeException | LinkageError failure) {
+            warn(failure);
+            return Optional.empty();
+        }
+    }
+
     public static Optional<PhysicalVehicleView> resolve(@Nullable BlockEntity controller, @Nullable Direction facing) {
         if (!serverThread(controller) || facing == null) return Optional.empty();
         SableReflectionAccess api = api();
@@ -31,6 +52,20 @@ public final class AeronauticsVehicleBridge {
             if (body == null) return Optional.empty();
             ServerLevel level = (ServerLevel) controller.getLevel();
             return Optional.of(api.snapshot(body, controller.getBlockPos(), facing, level.dimension().location().toString()));
+        } catch (ReflectiveOperationException | RuntimeException | LinkageError failure) {
+            warn(failure);
+            return Optional.empty();
+        }
+    }
+
+    /** Native standing/seated membership, rather than proximity to a nearby vehicle. */
+    public static Optional<UUID> passengerPhysicalId(@Nullable Entity passenger) {
+        if (passenger == null || passenger.isRemoved() || !(passenger.level() instanceof ServerLevel level)
+                || level.getServer() == null || !level.getServer().isSameThread()) return Optional.empty();
+        SableReflectionAccess api = api();
+        if (api == null) return Optional.empty();
+        try {
+            return Optional.ofNullable(api.passengerPhysicalId(passenger));
         } catch (ReflectiveOperationException | RuntimeException | LinkageError failure) {
             warn(failure);
             return Optional.empty();
@@ -58,6 +93,38 @@ public final class AeronauticsVehicleBridge {
         } catch (ReflectiveOperationException | RuntimeException | LinkageError failure) {
             warn(failure);
             return false;
+        }
+    }
+
+    public static NativeGroundObservation groundObservation(@Nullable BlockEntity controller, List<BlockEntity> wheelMounts) {
+        if (!serverThread(controller)) return NativeGroundObservation.unavailable("not_server_or_removed");
+        SableReflectionAccess api=api();
+        if (api==null) return NativeGroundObservation.unavailable("optional_mod_unavailable");
+        try {
+            Object body=bodyFor(api,controller);
+            return body==null ? NativeGroundObservation.unavailable("missing_physical_body") : api.groundObservation(body,wheelMounts);
+        } catch (ReflectiveOperationException | RuntimeException | LinkageError failure) {
+            warn(failure);
+            return NativeGroundObservation.unavailable("native_ground_observation_failed");
+        }
+    }
+
+    public static GroundSurfaceObservation groundSurface(@Nullable BlockEntity controller, List<BlockEntity> wheelMounts) {
+        if(!serverThread(controller))return GroundSurfaceObservation.unavailable("not_server_or_removed");
+        ServerLevel server=(ServerLevel)controller.getLevel();
+        var chunk=server.getChunkSource().getChunkNow(controller.getBlockPos().getX()>>4,controller.getBlockPos().getZ()>>4);
+        if(chunk==null || chunk.getBlockEntities().get(controller.getBlockPos())!=controller)
+            return GroundSurfaceObservation.unavailable("ground_surface_controller_not_loaded");
+        SableReflectionAccess api=api();
+        if(api==null)return GroundSurfaceObservation.unavailable("optional_mod_unavailable");
+        try {
+            Object body=bodyFor(api,controller);
+            return body==null?GroundSurfaceObservation.unavailable("missing_physical_body"):api.groundSurface(body,wheelMounts);
+        } catch(ReflectiveOperationException | RuntimeException | LinkageError failure) {
+            warn(failure);
+            String reason=failure instanceof IllegalStateException && failure.getMessage()!=null
+                    && failure.getMessage().startsWith("ground_surface_")?failure.getMessage():"ground_surface_observation_failed";
+            return GroundSurfaceObservation.unavailable(reason);
         }
     }
 

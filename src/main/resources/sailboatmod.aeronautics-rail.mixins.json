@@ -1,0 +1,9 @@
+{
+  "required": false,
+  "minVersion": "0.8",
+  "package": "com.monpai.sailboatmod.compat.aeronautics.mixin",
+  "plugin": "com.monpai.sailboatmod.compat.aeronautics.mixin.RailMotionMixinPlugin",
+  "compatibilityLevel": "JAVA_21",
+  "mixins": ["SableRailMotionMixin", "RapierRailConstraintMixin", "RapierRailConstraintHandleMixin"],
+  "injectors": {"defaultRequire": 1}
+}

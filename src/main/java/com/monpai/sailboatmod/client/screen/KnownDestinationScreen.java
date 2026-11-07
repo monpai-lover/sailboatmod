@@ -5,6 +5,7 @@ import com.lowdragmc.lowdraglib2.gui.ui.elements.Label;
 import com.lowdragmc.lowdraglib2.gui.ui.elements.ScrollerView;
 import com.monpai.sailboatmod.client.ui.kit.ThemedScreen;
 import com.monpai.sailboatmod.client.ui.kit.Ui;
+import com.monpai.sailboatmod.client.ui.vehicle.DestinationPicker;
 import com.monpai.sailboatmod.entity.SailboatEntity;
 import com.monpai.sailboatmod.network.ModNetwork;
 import com.monpai.sailboatmod.network.packet.*;
@@ -22,7 +23,7 @@ public final class KnownDestinationScreen extends ThemedScreen {
     private ScrollerView list;private Label status;
     private List<KnownDestinationsPacket.Port> ports=List.of();
     public KnownDestinationScreen(Screen parent,BlockPos source,UUID vessel,boolean aboard,int cargo){
-        super(Component.literal(aboard?"接入已知航路并前往":"选择目的地并出发"));
+        super(DestinationPicker.title());
         this.parent=parent;this.source=source;this.vessel=vessel;this.aboard=aboard;this.cargo=cargo;
     }
     public static void openShip(SailboatEntity ship){
@@ -71,13 +72,11 @@ public final class KnownDestinationScreen extends ThemedScreen {
         unloadButton.setText(Component.literal("自动卸货："+(autoUnload?"开":"关")));
         list.clearAllScrollViewChildren();
         for(var port:ports){
-            String description=port.name()+"  ·  "+Math.round(port.distance())+" 格";
-            if(autoReturn&&!port.returnAllowed())description+="（当前航程不支持原路返航）";
-            var button=Ui.button(Component.literal(description),Ui.Tone.PRIMARY,()->{
+            boolean canReturn = !autoReturn || port.returnAllowed();
+            Component note = canReturn ? Component.empty() : Component.literal("（当前航程不支持原路返航）");
+            DestinationPicker.add(list, port.name(), port.distance(), note, !submitted && canReturn, ()->{
                 if(submitted)return;submitted=true;status.setValue(Component.literal(aboard?"验证短接入段…":"正在出发…"));renderPorts();send(1,port.position());
             });
-            button.setActive(!submitted&&(!autoReturn||port.returnAllowed()));
-            list.addScrollViewChild(button);
         }
         if(ports.isEmpty())list.addScrollViewChild(Ui.emptyState(Component.literal("没有可选择的已知目的地")));
     }

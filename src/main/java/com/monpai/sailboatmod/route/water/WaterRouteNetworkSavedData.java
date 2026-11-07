@@ -61,11 +61,21 @@ public final class WaterRouteNetworkSavedData extends SavedData {
      * Loading a chunk must not manufacture a port ID from its berth coordinate.
      */
     public void importDock(com.monpai.sailboatmod.block.entity.DockBlockEntity dock) {
+        if(!PortDockSnapshot.isPort(dock))return;
+        importRoutes(dock,dock.getRoutesForMap(),false);
+    }
+    /** An explicit book import may restore only its newly added routes, after normal endpoint validation. */
+    public void publishImportedBookRoutes(com.monpai.sailboatmod.block.entity.DockBlockEntity dock,
+                                         List<RouteDefinition> importedRoutes) {
+        importRoutes(dock,importedRoutes,true);
+    }
+    private void importRoutes(com.monpai.sailboatmod.block.entity.DockBlockEntity dock,
+                              List<RouteDefinition> importedRoutes,boolean explicitImport) {
         if(!PortDockSnapshot.isPort(dock)||!(dock.getLevel() instanceof ServerLevel level))return;
         var terminals=com.monpai.sailboatmod.market.terminal.TerminalNetworkSavedData.get(level).all();
         String dimension=level.dimension().location().toString();
-        for(RouteDefinition route:dock.getRoutesForMap()) {
-            if(route.waypoints().size()<2||removedLegacyGeometry.contains(geometryKey(route.waypoints())))continue;
+        for(RouteDefinition route:importedRoutes) {
+            if(route.waypoints().size()<2||(!explicitImport&&removedLegacyGeometry.contains(geometryKey(route.waypoints()))))continue;
             if(routes.values().stream().anyMatch(r->r.sourceDock().equals(dock.getBlockPos())&&r.points().equals(route.waypoints())))continue;
             var end=route.waypoints().getLast();BlockPos target=null;boolean ambiguous=false;
             for(var port:terminals) {

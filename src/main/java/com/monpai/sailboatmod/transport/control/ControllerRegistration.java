@@ -73,10 +73,16 @@ public final class ControllerRegistration {
     }
 
     public boolean canManage(UUID actor, boolean admin, double worldDistanceSquared) {
+        return canManage(actor, admin, worldDistanceSquared, null);
+    }
+
+    /** Actual native membership permits a cockpit farther from its registration block. */
+    public boolean canManage(UUID actor, boolean admin, double worldDistanceSquared, UUID passengerPhysicalId) {
         return actor != null
                 && Double.isFinite(worldDistanceSquared)
                 && worldDistanceSquared >= 0
-                && worldDistanceSquared <= 64
+                && (worldDistanceSquared <= 64
+                    || registered && physicalId != null && physicalId.equals(passengerPhysicalId))
                 && (admin || actor.toString().equals(ownerUuid));
     }
 

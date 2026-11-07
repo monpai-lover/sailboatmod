@@ -1,5 +1,8 @@
 package com.monpai.sailboatmod.entity;
 
+import com.monpai.sailboatmod.transport.board.*;
+import static com.monpai.sailboatmod.transport.board.TownVoyageSnapshot.*;
+
 import com.monpai.sailboatmod.SailboatMod;
 import com.monpai.sailboatmod.block.entity.DockBlockEntity;
 import com.monpai.sailboatmod.block.entity.PostStationBlockEntity;
@@ -251,6 +254,8 @@ public class CarriageEntity extends Entity implements GeoEntity, MenuProvider, T
     private final Map<UUID, Integer> seatAssignments = new HashMap<>();
     private final List<RouteDefinition> routeCatalog = new ArrayList<>();
     private final List<Vec3> autopilotRoute = new ArrayList<>();
+    private TownCarrierVoyageTracker townVoyage = new TownCarrierVoyageTracker();
+    private boolean townVoyageDirty = true;
     private final List<Vec3> pendingReturnCompletedRoute = new ArrayList<>();
     private final List<ShipmentManifestEntry> pendingShipmentManifest = new ArrayList<>();
     private final CarriageManualInputState manualInputState = new CarriageManualInputState();
@@ -409,6 +414,7 @@ public class CarriageEntity extends Entity implements GeoEntity, MenuProvider, T
 
     @Override
     protected void addAdditionalSaveData(CompoundTag tag) {
+        townVoyage().writeTo(tag);
         net.minecraft.world.ContainerHelper.saveAllItems(tag, inventory, registryAccess());
         tag.putString("WoodType", getWoodType().serializedName());
         tag.putString("OwnerName", ownerName == null ? "" : ownerName);
@@ -444,6 +450,8 @@ public class CarriageEntity extends Entity implements GeoEntity, MenuProvider, T
 
     @Override
     protected void readAdditionalSaveData(CompoundTag tag) {
+        townVoyage().readFrom(tag);
+        townVoyageDirty = true;
         com.monpai.sailboatmod.compat.InventoryNbt.loadAllItems(tag, inventory, registryAccess());
         setWoodType(CarriageWoodType.fromSerialized(tag.getString("WoodType")));
         ownerName = tag.getString("OwnerName");
@@ -516,6 +524,7 @@ public class CarriageEntity extends Entity implements GeoEntity, MenuProvider, T
         }
 
         tickLandDrive();
+        publishTownVoyage();
         updateAutopilotChunkLoading();
         tickArrivalNoticeCountdown();
         if (!level().isClientSide && tickCount % PICKUP_LOAD_SCAN_INTERVAL_TICKS == 0) {
@@ -1419,6 +1428,7 @@ public class CarriageEntity extends Entity implements GeoEntity, MenuProvider, T
 
     @Override
     public void remove(RemovalReason reason) {
+        removeTownVoyage(reason);
         if (!level().isClientSide
                 && (reason == RemovalReason.KILLED || reason == RemovalReason.DISCARDED
                         || reason == RemovalReason.CHANGED_DIMENSION)) {
@@ -1713,6 +1723,7 @@ public class CarriageEntity extends Entity implements GeoEntity, MenuProvider, T
             stopAutopilot();
             return false;
         }
+        invalidateTownGeometry();
         autopilotRoute.clear();
         autopilotRoute.addAll(autopilotRouteWithCurrentStart(route.waypoints(), position(), routeDockPos));
         if (autopilotRoute.size() < 2) {
@@ -1730,6 +1741,7 @@ public class CarriageEntity extends Entity implements GeoEntity, MenuProvider, T
         entityData.set(DATA_AUTOPILOT_ACTIVE, true);
         entityData.set(DATA_AUTOPILOT_PAUSED, false);
         updateRouteSyncData();
+        startTownVoyage();
         // webmap: 手动发车（manifest 无市场订单）建一条 manual 轨迹
         if (!hasTransportOrder(getPendingShipmentManifest())) {
             com.monpai.sailboatmod.market.logistics.ShippingTraceService.createOrUpdateManualTrace(
@@ -1782,6 +1794,7 @@ public class CarriageEntity extends Entity implements GeoEntity, MenuProvider, T
         if (level().isClientSide) {
             return;
         }
+        finishTownVoyage();
         if (level() instanceof ServerLevel serverLevel) {
             // 不立即清票：进入宽限期保留 ENTITY_TICKING 票据，让 ChunkMap 有机会在玩家靠近时重建追踪。
             postArrivalForcedHoldTicks = POST_ARRIVAL_FORCED_HOLD_TICKS;
@@ -1793,6 +1806,7 @@ public class CarriageEntity extends Entity implements GeoEntity, MenuProvider, T
         clearDelayedAutoReturn();
         entityData.set(DATA_AUTOPILOT_ACTIVE, false);
         entityData.set(DATA_AUTOPILOT_PAUSED, false);
+        invalidateTownGeometry();
         autopilotRoute.clear();
         autopilotTargetIndex = 0;
         autopilotRouteName = getSelectedRouteName();
@@ -1902,12 +1916,14 @@ public class CarriageEntity extends Entity implements GeoEntity, MenuProvider, T
     public void pauseAutopilot() {
         if (!level().isClientSide && isAutopilotActive()) {
             entityData.set(DATA_AUTOPILOT_PAUSED, true);
+            townVoyage().clearMotion(); townVoyageDirty = true;
         }
     }
 
     public void resumeAutopilot() {
         if (!level().isClientSide && isAutopilotActive() && !isWaitingForDelayedAutoReturn()) {
             entityData.set(DATA_AUTOPILOT_PAUSED, false);
+            townVoyage().clearMotion(); townVoyageDirty = true;
         }
     }
 
@@ -2683,6 +2699,7 @@ public class CarriageEntity extends Entity implements GeoEntity, MenuProvider, T
     }
 
     private void finishAutopilot() {
+        finishTownVoyage();
         BlockPos destinationPos = findTransportHubZoneContains(position());
         DockBlockEntity destination = destinationPos == null ? null : getTransportHub(destinationPos);
         if (destination != null) {
@@ -3500,4 +3517,66 @@ public class CarriageEntity extends Entity implements GeoEntity, MenuProvider, T
         ATTACH,
         DETACH
     }
+    /** Optional observation state is initialized independently of native carrier state. */
+    private TownCarrierVoyageTracker townVoyage() {
+        if (townVoyage == null) townVoyage = new TownCarrierVoyageTracker();
+        return townVoyage;
+    }
+
+    private CarrierKey townCarrierKey() {
+        return new CarrierKey("carriage", level().dimension().location().toString(), getUUID());
+    }
+
+    private void invalidateTownGeometry() {
+        townVoyage().invalidateGeometry();
+        if (level() instanceof ServerLevel server) TownVoyagePublisher.releaseGroundGeometry(server, townCarrierKey());
+    }
+
+    private void startTownVoyage() {
+        if (!(level() instanceof ServerLevel server)) return;
+        TownVoyagePublisher.retireCurrent(server, townCarrierKey());
+        TownVoyagePublisher.releaseGroundGeometry(server, townCarrierKey());
+        townVoyage().started(true, TownVoyagePublisher.endpoint(server, homeStationPos, "Unknown"),
+                TownVoyagePublisher.endpoint(server, destinationStationPos, "Unknown"));
+        townVoyageDirty = true;
+    }
+
+    private void finishTownVoyage() {
+        if (level() instanceof ServerLevel server) {
+            TownVoyagePublisher.retireCurrent(server, townCarrierKey());
+            TownVoyagePublisher.releaseGroundGeometry(server, townCarrierKey());
+        }
+        townVoyage().finish(); townVoyageDirty = true;
+    }
+
+    private void removeTownVoyage(RemovalReason reason) {
+        if (!(level() instanceof ServerLevel server)) return;
+        TownVoyagePublisher.releaseGroundGeometry(server, townCarrierKey());
+        townVoyage().invalidateGeometry();
+        if (reason == RemovalReason.UNLOADED_TO_CHUNK) TownVoyagePublisher.markUnloaded(server, townCarrierKey());
+        else { TownVoyagePublisher.retireCurrent(server, townCarrierKey()); townVoyage().finish(); }
+    }
+
+    /** Runs independently of trace/control branches, after confirmed server movement. */
+    private void publishTownVoyage() {
+        if (!(level() instanceof ServerLevel server) || !townVoyageDirty && tickCount % 40 != 0) return;
+        townVoyageDirty = false;
+        var source = TownVoyagePublisher.endpoint(server, homeStationPos, "Unknown");
+        var target = TownVoyagePublisher.endpoint(server, destinationStationPos, "Unknown");
+        var leg = townVoyage().observe(isAutopilotActive(), isWaitingForDelayedAutoReturn(), source, target);
+        if (leg.isEmpty()) {
+            TownVoyagePublisher.retireCurrent(server, townCarrierKey());
+            TownVoyagePublisher.releaseGroundGeometry(server, townCarrierKey());
+            return;
+        }
+        State state = isAutopilotPaused() ? State.PAUSED : State.MOVING;
+        long tick = server.getServer().overworld().getGameTime();
+        var eta = townVoyage().ground(autopilotRoute, autopilotTargetIndex, position(), tick, state == State.MOVING,
+                (geometry, points) -> TownVoyagePublisher.reserveGroundGeometry(server, townCarrierKey(), geometry, points));
+        if (townVoyage().geometryId().isEmpty()) TownVoyagePublisher.releaseGroundGeometry(server, townCarrierKey());
+        TownVoyagePublisher.observe(server, new Observation(new Key(townCarrierKey(), leg.orElseThrow().legId()),
+                com.monpai.sailboatmod.transport.LogisticsCarrier.Kind.LAND, getName().getString(), getAutopilotRouteName(), source, target,
+                isAutopilotPaused() ? "PAUSED" : "DRIVING", state, true, tick, 40, eta, eta.isPresent() ? tick : -1, townVoyage().geometryId()));
+    }
+
 }

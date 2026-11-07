@@ -12,12 +12,21 @@ public final class NativeNavigationDriver {
     private NativeNavigationDriver() { }
 
     public static Command drive(Input input) {
+        return drive(input, false);
+    }
+
+    public static Command drive(Input input, boolean atFinalTerminal) {
+        return drive(input, atFinalTerminal, true);
+    }
+
+    /** Passing a route point keeps propulsion; only the final target uses arrival braking. */
+    public static Command drive(Input input, boolean atFinalTerminal, boolean stopAtTarget) {
         if (input != null && input.manualOverride()) {
             return new Command(0, 0, 0, 0, 0, 0, false, false, false, "manual");
         }
         if (input == null || !finite(input.position()) || !finite(input.forward()) || !finite(input.velocity())
                 || !finite(input.target()) || input.kind() == null || !(input.maxSpeed() > 0)
-                || !Double.isFinite(input.maxSpeed()) || !(input.arrivalRadius() > 0)
+                || !Double.isFinite(input.maxSpeed()) || input.arrivalRadius() < 0
                 || !Double.isFinite(input.arrivalRadius()) || input.forward().horizontalDistanceSqr() < 1e-8) {
             return hold("invalid_pose");
         }
@@ -25,10 +34,7 @@ public final class NativeNavigationDriver {
         Vec3 delta = input.target().subtract(input.position());
         double distance = Math.sqrt(delta.horizontalDistanceSqr());
         double speed = Math.sqrt(input.velocity().horizontalDistanceSqr());
-        if (distance <= input.arrivalRadius()) {
-            return new Command(0, 0, 0, 15, 0, 0, speed <= 0.25, false, true,
-                    speed <= 0.25 ? "arrived" : "braking");
-        }
+        if (atFinalTerminal || stopAtTarget && distance <= input.arrivalRadius()) return brakeForArrival(speed);
         double dot = input.forward().x * delta.x + input.forward().z * delta.z;
         double cross = input.forward().x * delta.z - input.forward().z * delta.x;
         double angle = Math.toDegrees(Math.atan2(cross, dot));
@@ -44,7 +50,8 @@ public final class NativeNavigationDriver {
             return new Command(0, left, right, 12, 0, 0, false, false, true, "speed_limit");
         }
         double cornerScale = Math.max(0.12, 1 - Math.abs(angle) / 110);
-        double approachScale = Math.min(1, Math.max(0.2, (distance - input.arrivalRadius()) / 15));
+        double approachScale = stopAtTarget
+                ? Math.min(1, Math.max(0.2, (distance - input.arrivalRadius()) / 15)) : 1;
         int throttle = clamp((int) Math.ceil(15 * cornerScale * approachScale * Math.max(0.1, 1 - speed / input.maxSpeed())));
         int brake = 0;
         if (input.kind() == LogisticsCarrier.Kind.LAND && Math.abs(angle) > 55) {
@@ -54,6 +61,18 @@ public final class NativeNavigationDriver {
         if (reversing) throttle = Math.min(throttle, 4);
         return new Command(throttle, left, right, brake, reversing ? 0 : 15, reversing ? 15 : 0,
                 false, false, true, reversing ? "reversing" : "driving");
+    }
+
+    private static Command brakeForArrival(double speed) {
+        boolean stopped = speed <= 0.25;
+        return new Command(0, 0, 0, 15, 0, 0, stopped, false, true, stopped ? "arrived" : "braking");
+    }
+
+    /** The final parking circle must fit the terminal's inclusive horizontal zone. Negative means outside. */
+    public static double terminalArrivalRadius(double radius, Vec3 offset, int minX, int maxX, int minZ, int maxZ) {
+        double xClearance = Math.min(offset.x - minX, maxX - offset.x);
+        double zClearance = Math.min(offset.z - minZ, maxZ - offset.z);
+        return Math.min(radius, Math.min(xClearance, zClearance));
     }
 
     public static int transmissionSignal(int throttle, boolean inverted) {

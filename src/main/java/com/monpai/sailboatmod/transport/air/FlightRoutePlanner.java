@@ -23,23 +23,25 @@ public final class FlightRoutePlanner {
         if(returning) Collections.reverse(result);
         return List.copyOf(result);
     }
+    /** Fixed wings require a measured grounded FCC reference above the actual support surface.
+     * Hover callers retain their existing hull-clearance offset; this planner never derives tire height from a hull box. */
     public static List<Vec3> plan(AircraftClass type, AirportFacility source, AirportFacility target,
-                                 List<Vec3> cruise, double referenceAboveHull, double aircraftWidth, double speed) {
+                                 List<Vec3> cruise, double referenceAboveSurface, double aircraftWidth, double speed) {
         if (type==null || source==null || target==null || !source.supports(type) || !target.supports(type))
             throw new IllegalArgumentException("incompatible_airport");
-        if (!Double.isFinite(referenceAboveHull) || referenceAboveHull<0 || referenceAboveHull>64
+        if (!Double.isFinite(referenceAboveSurface) || referenceAboveSurface<0 || referenceAboveSurface>64
                 || !Double.isFinite(aircraftWidth) || aircraftWidth<=0 || !Double.isFinite(speed) || speed<=0)
             throw new IllegalArgumentException("invalid_aircraft_dimensions");
         if (aircraftWidth+2>source.width() || aircraftWidth+2>target.width()) throw new IllegalArgumentException("facility_too_narrow");
         if (cruise==null || cruise.size()<2 || cruise.size()>58 || cruise.stream().anyMatch(p->p==null || !Double.isFinite(p.x) || !Double.isFinite(p.y) || !Double.isFinite(p.z)))
             throw new IllegalArgumentException("invalid_flight_route");
         double height=cruise.stream().mapToDouble(p->p.y).max().orElse(0);
-        height=Math.max(height,Math.max(source.start().getY(),target.start().getY())+Math.max(32,referenceAboveHull+16));
+        height=Math.max(height,Math.max(source.start().getY(),target.start().getY())+Math.max(32,referenceAboveSurface+16));
         List<Vec3> points=new ArrayList<>();
         if(type==AircraftClass.FIXED_WING) {
             if(source.length()<Math.max(32,speed*6) || target.length()<Math.max(32,speed*6)) throw new IllegalArgumentException("runway_too_short");
-            Vec3 end=surface(source.end(),referenceAboveHull);
-            Vec3 axis=end.subtract(surface(source.start(),referenceAboveHull)).normalize();
+            Vec3 end=surface(source.end(),referenceAboveSurface);
+            Vec3 axis=end.subtract(surface(source.start(),referenceAboveSurface)).normalize();
             points.add(end.add(axis.scale(Math.max(32,speed*4))).add(0,Math.max(16,height-end.y),0));
         } else points.add(source.landingPosition().add(0,height-source.start().getY(),0));
         // Preserve authored intermediate route points; endpoint procedures belong to the selected facility.
@@ -50,12 +52,12 @@ public final class FlightRoutePlanner {
             points.add(point);
         }
         if(type==AircraftClass.FIXED_WING) {
-            Vec3 touchdown=surface(target.start(),referenceAboveHull), stop=surface(target.end(),referenceAboveHull);
+            Vec3 touchdown=surface(target.start(),referenceAboveSurface), stop=surface(target.end(),referenceAboveSurface);
             Vec3 axis=stop.subtract(touchdown).normalize();
             points.add(touchdown.subtract(axis.scale(Math.max(64,speed*8))).add(0,height-touchdown.y,0));
             points.add(touchdown); points.add(stop);
         } else {
-            Vec3 landing=target.landingPosition().add(0,referenceAboveHull,0);
+            Vec3 landing=target.landingPosition().add(0,referenceAboveSurface,0);
             points.add(new Vec3(landing.x,height,landing.z)); points.add(landing);
         }
         return List.copyOf(points);

@@ -73,6 +73,8 @@ class MarketWebAppResourceTest {
                 "cached map tile PNGs should be readable without market web login");
         assertTrue(method.contains("\"GET\".equalsIgnoreCase"),
                 "map tile endpoint should remain read-only");
+        assertTrue(method.contains("writeJson(exchange, 405"),
+                "map tile endpoint should reject writes");
         assertTrue(method.contains("serveCachedTerrain(exchange, () -> service.readMapTile"),
                 "map tile endpoint must read cache before miss-only discovery");
         assertFalse(method.contains("callOnServerThread"), "cached PNG browsing never waits for the game thread");
@@ -81,6 +83,29 @@ class MarketWebAppResourceTest {
         int discovery = source.indexOf("discover.run()", miss);
         assertTrue(read > end && miss > read && discovery > miss,
                 "discovery belongs inside the cache-miss branch");
+
+        int helperEnd = source.indexOf("private void handleMapChanges", read);
+        assertTrue(helperEnd > read);
+        String cacheResponder = source.substring(read, helperEnd);
+        assertTrue(cacheResponder.contains("\"Cache-Control\", \"public, no-cache\""),
+                "cached terrain must revalidate the actual PNG bytes after changed tiles or restarts");
+        assertTrue(cacheResponder.contains("writeBytes(exchange, 200, \"image/png\", bytes)"));
+
+        String service = Files.readString(MARKET_WEB_SERVICE, StandardCharsets.UTF_8);
+        int requestStart = service.indexOf("public void requestMapTile(");
+        int readStart = service.indexOf("public byte[] readMapTile(", requestStart);
+        int readEnd = service.indexOf("public void requestSquareMapTile(", readStart);
+        assertTrue(requestStart >= 0 && readStart > requestStart && readEnd > readStart);
+        String requestBody = service.substring(requestStart, readStart);
+        String cachedReader = service.substring(readStart, readEnd);
+        assertTrue(requestBody.contains(".enqueueTileRequest("));
+        assertFalse(requestBody.contains(".readPng("),
+                "miss discovery must not perform cached PNG disk IO");
+        assertTrue(cachedReader.contains("MarketWebMapTileCache.forServer(server)"));
+        assertTrue(cachedReader.contains(".readPng(MarketWebMapConstants.OVERWORLD, tileX, tileZ)"),
+                "HTTP workers should read only already-rendered tile cache bytes");
+        assertFalse(cachedReader.contains(".enqueueTileRequest("),
+                "cached tile reads must not access the render queue from HTTP workers");
     }
 
     @Test

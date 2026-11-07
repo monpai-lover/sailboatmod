@@ -68,3 +68,54 @@ observed failing assertions. Temporary Minecraft type stubs were used only to co
 test harness on available Java 17; they are not in the repository and do not prove Minecraft or
 FC runtime compatibility. Full NeoForge Java 21 compile/test and live three-airframe flights remain
 separate required validation. No live FC flight or virtual custody was tested by this adapter work.
+
+## 2026-10-31: verified internal task successors
+
+The isolated fix17 server reproduced a separate integration failure using an explicitly authorized
+public `FCC.releaseNavigationLease(actualIdentity, actualToken)` fault injection: native route renewal
+published `PREEMPTED / LEASE_LOST / route_lease_renew:STALE_TOKEN`, then the next native automatic
+reconcile resumed under a new task UUID. The five-tick Sailboat check saw the new UUID and entered
+MANUAL. This controlled release does not prove the trigger of the earlier natural failure. A previous
+1009ms main-thread pause did not reproduce that trigger; native FC has simulation-pause compensation.
+
+The optional observer is restricted to version 0.8.3, the inspected original terminal/FCC class hashes,
+and the unique internal resume callsite. It never changes task actions, arguments, UUIDs or leases.
+Only the registered controller can explicitly establish its runtime claim after its accepted action.
+An observed internal successor starts pending and cannot establish cargo custody until the new task
+is RUNNING/HOLDING and its actual route domains, active identity, token generation and live broker frame
+agree. Foreign leases, external PAUSE, OFF/ON authority/session changes, changed cards/links/topology
+and unknown UUID transitions remain rejected. These proofs are not persisted across world restarts.
+
+Unlike the original control bridge, this version-pinned evidence path uses exact private field handles
+for NAV runtime identity/token/route/computer and FCC broker/session fields, plus read-only public
+snapshot methods. It never enumerates optional methods or fields and never calls broker expiry/renewal
+to inspect state. Business code does not load classes in the defined mixin package. Missing FC or an
+unknown version/shape disables this observer while retaining the strict task-identity check.
+
+Pure registry/lease tests and parsed metadata/compiled-bytecode checks are separate from real Mixin
+application, dedicated/integrated startup and physical flights; those runtime checks are still required.
+
+## 2026-10-31: ground handoff and available propulsion observations
+
+`inspectControlOwnership` reads the existing version-pinned terminal/FCC identity evidence and
+its broker effective frame without expiring, renewing or acquiring a lease. It separately checks
+unexpired command deadlines with `System.nanoTime()`: a terminal-owned flag alone cannot prove a
+live FC handoff, and a released flag alone cannot prove all broker commands have disappeared.
+The returned body, task, profile fingerprint, configuration revision and slot generation must agree
+across the observation. Ground control waits for this actual release proof before writing outputs.
+Missing/changed optional internals return unavailable, never a fabricated empty broker.
+
+`inspectPower` reads the FCC's public `linkedThrusters` entries (bounded at 128), resolves each loaded
+same-body block and invokes only exact `IFCCThruster` interface handles. Reciprocal FCC links and
+valid native link configurations are required. `getFCCMaxThrust` must return finite positive capacity
+for at least one linked thruster. This proves currently available native propulsion, not adequate
+acceleration, fuel endurance, lift, forward thrust direction or successful flight.
+
+For Aeronautics propellers linked to FC 0.8.3, native FC controls bearing rotation while the upstream
+kinetic shaft still determines maximum available thrust. A disconnected upstream transmission cannot
+be recovered by requesting FC START. The physical test uses a separate real wheel drivetrain and
+measured endpoint-only ground throttle signals; it leaves the flight propulsion shaft powered for
+FC ownership. Linking/unlinking a propeller or writing artificial forces is not part of handoff.
+
+Fresh Java21 focused tests cover ownership/release predicates and finite/bounded propulsion snapshots.
+They do not replace actual native release, wheel traction, takeoff or destination landing observations.

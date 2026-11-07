@@ -40,24 +40,36 @@ import java.util.concurrent.atomic.AtomicInteger;
 import java.util.function.Predicate;
 import java.util.function.BooleanSupplier;
 import java.util.function.ToLongFunction;
+import com.monpai.sailboatmod.roadplanner.stream.OutboundFlightLimit;
 
 /** Main-mod shared terrain streaming. Viewing maps never loads or generates a Minecraft chunk. */
 public final class SharedMapTerrainService {
     private static volatile SharedMapTerrainService global = new SharedMapTerrainService();
     private static final int MAX_TILES = 256;
+    private static final int MAX_TILES_PER_PLAYER = 128;
+    private static final int MAX_PREDICTION_TILES = 64; // 16 MiB, independent of subscriber count.
+    private static final long REQUEST_COOLDOWN_TICKS = 100;
+    private static final long CACHE_TTL_TICKS = 1200;
+    private static final long TICK_SLICE_NANOS = 2_000_000L;
     private static final int CHUNKS_PER_LEVEL_TICK = 8;
     private static final int MAX_READS = 16;
     private static final long READ_TIMEOUT_TICKS = 100;
     private static final long WORK_TTL_TICKS = 600;
     private final LinkedHashMap<TileKey, TileWork> work = new LinkedHashMap<>();
-    private final LinkedHashMap<TileKey, int[]> predictionCache = new LinkedHashMap<>();
+    private final LinkedHashMap<TileKey, PredictionTile> predictionCache = new LinkedHashMap<>();
     private final LinkedHashMap<ChunkKey, int[]> savedColors = new LinkedHashMap<>();
+    private final LinkedHashMap<ChunkKey, Long> savedTouched = new LinkedHashMap<>();
+    private final SharedMapSendQueue outgoing = new SharedMapSendQueue();
+    private long housekeepingTick = Long.MIN_VALUE;
+    private long sampleDeadline;
+    private int advanceRemaining, changedRemaining;
+    private final OutboundFlightLimit inFlight = new OutboundFlightLimit();
     private final LinkedHashMap<ChunkKey, Long> absentUntil = new LinkedHashMap<>();
     private final Map<ServerLevel, Optional<TerrainSurfaceSampler>> samplers = new LinkedHashMap<>();
-    private final ArrayBlockingQueue<Result> completed = new ArrayBlockingQueue<>(128);
+    private final ArrayBlockingQueue<Result> completed = new ArrayBlockingQueue<>(32);
     private final ArrayBlockingQueue<LoadedChunk> changedChunks = new ArrayBlockingQueue<>(256);
     private final ExecutorService predictionWorker = Executors.newSingleThreadExecutor(task -> daemon(task, "SharedMap-Tellus"));
-    private final SharedMapPredictionQueue predictions = new SharedMapPredictionQueue(MAX_TILES, predictionWorker);
+    private final SharedMapPredictionQueue predictions = new SharedMapPredictionQueue(MAX_PREDICTION_TILES, predictionWorker);
     private final ThreadPoolExecutor decodeWorker = new ThreadPoolExecutor(1, 1, 0, TimeUnit.MILLISECONDS,
             new ArrayBlockingQueue<>(16), task -> daemon(task, "SharedMap-NbtDecode"), new ThreadPoolExecutor.AbortPolicy());
     private MinecraftServer server;
@@ -67,7 +79,9 @@ public final class SharedMapTerrainService {
 
     private record TileKey(String dimension, int x, int z, int bps) { }
     private record ChunkKey(String dimension, int x, int z) { }
-    private record Result(TileKey key, TileWork work, int localChunk, int[] pixels, boolean prediction) { }
+    private record Result(TileKey key, TileWork work, int localChunk, int[] pixels, boolean prediction, boolean incomplete) { }
+    private record Subscription(String world, long requested) { }
+    private record PredictionTile(int[] pixels, boolean incomplete, long touched) { }
     private record LoadedChunk(ServerLevel level, int x, int z) { }
     private record ChunkReads(CompletableFuture<Optional<CompoundTag>> current,
                               CompletableFuture<Optional<CompoundTag>> north) {
@@ -77,7 +91,7 @@ public final class SharedMapTerrainService {
     private static final class TileWork {
         final TileKey key;
         final ServerLevel level;
-        final LinkedHashMap<UUID, String> subscribers = new LinkedHashMap<>();
+        final LinkedHashMap<UUID, Subscription> subscribers = new LinkedHashMap<>();
         final AtomicInteger decoding = new AtomicInteger();
         final List<Integer> order;
         final int origin;
@@ -125,49 +139,98 @@ public final class SharedMapTerrainService {
     }
 
     public void request(ServerPlayer player, SharedMapTerrainRequestPacket packet) {
-        if (closed || player == null || packet == null || server == null
-                || !SharedMapTileGrid.validTile(packet.tileX(), packet.tileZ(), packet.blocksPerPixel())) return;
+        if (closed || player == null || packet == null || server == null || !packet.validClientRequest()) return;
         ServerLevel level = player.serverLevel();
         String dimension = level.dimension().location().toString();
-        if (!dimension.equals(packet.dimensionId()) || packet.worldId() == null || packet.worldId().isBlank()) return;
+        if (!dimension.equals(packet.dimensionId())) return;
+        tick = server.getTickCount();
         TileKey key = new TileKey(dimension, packet.tileX(), packet.tileZ(), packet.blocksPerPixel());
-        TileWork active = work.remove(key);
+        TileWork active = work.get(key);
+        UUID id = player.getUUID();
+        Subscription previous = active == null ? null : active.subscribers.get(id);
+        if (previous != null && previous.world.equals(packet.worldId()) && tick - previous.requested < REQUEST_COOLDOWN_TICKS) {
+            active.touched = tick;
+            return; // No cursor reset, raster scan, cached resend, or prediction restart on a duplicate.
+        }
+        if (previous == null) trimPlayerSubscriptions(id);
+        active = work.remove(key);
         if (active == null) active = new TileWork(key, level, player, tick);
-        else if (active.cursor >= active.limit() && active.decoding.get() == 0) active.cursor = 0;
+        else if ((active.cursor >= active.limit() && active.decoding.get() == 0) || previous == null) {
+            // A new viewer must receive actual chunks that were sampled before it subscribed.
+            clearPending(active);
+            active.cursor = 0;
+        }
         active.touched = tick;
-        active.subscribers.put(player.getUUID(), packet.worldId());
+        active.subscribers.put(id, new Subscription(packet.worldId(), tick));
         while (active.subscribers.size() > 64) active.subscribers.remove(active.subscribers.keySet().iterator().next());
         work.put(key, active);
         while (work.size() > MAX_TILES) discard(work.keySet().iterator().next());
-        int[] cached = predictionCache.get(key);
+        PredictionTile cached = predictionCache.remove(key);
+        if (cached != null && tick - cached.touched >= CACHE_TTL_TICKS) cached = null;
         if (cached != null) {
-            send(player, packet.worldId(), key, 0, cached, true);
+            predictionCache.put(key, new PredictionTile(cached.pixels, cached.incomplete, tick));
+            send(player, packet.worldId(), key, 0, cached.pixels, true);
         }
-        if (cached == null || SharedMapTerrainRenderer.hasUnknownPixels(cached)) {
+        if (cached == null || cached.incomplete) {
             TerrainSurfaceSampler sampler = samplers.computeIfAbsent(level, TellusSurfaceSamplers::forLevel).orElse(null);
             TileWork requested = active;
+            PredictionTile old = cached; // Published arrays are immutable, so the worker may read this reference.
             BooleanSupplier cancelled = () -> closed || requested.predictionCancelled || tick - requested.touched > WORK_TTL_TICKS;
             if (sampler != null) predictions.request(key.toString(), () -> {
                 if (cancelled.getAsBoolean()) return;
                 int[] pixels = SharedMapTerrainRenderer.render(sampler, (int) (key.x * SharedMapTileGrid.span(key.bps)),
                         (int) (key.z * SharedMapTileGrid.span(key.bps)), 256, 256, key.bps, cancelled);
-                if (!cancelled.getAsBoolean() && java.util.Arrays.stream(pixels).anyMatch(color -> (color >>> 24) != 0)) {
-                    completed.offer(new Result(key, requested, 0, pixels, true));
+                boolean any = false, incomplete = false;
+                // Merge into the worker-owned result; do not clone whole rasters on the game thread.
+                for (int i = 0; i < pixels.length; i++) {
+                    if ((pixels[i] >>> 24) == 0 && old != null) pixels[i] = old.pixels[i];
+                    if ((pixels[i] >>> 24) == 0) incomplete = true; else any = true;
                 }
+                if (!cancelled.getAsBoolean() && any) completed.offer(new Result(key, requested, 0, pixels, true, incomplete));
             });
+        }
+    }
+
+    private void trimPlayerSubscriptions(UUID id) {
+        int count = 0;
+        TileKey oldest = null;
+        for (TileWork active : work.values()) if (active.subscribers.containsKey(id)) {
+            count++;
+            if (oldest == null) oldest = active.key;
+        }
+        if (count >= MAX_TILES_PER_PLAYER && oldest != null) {
+            TileWork active = work.get(oldest);
+            active.subscribers.remove(id);
+            if (active.subscribers.isEmpty()) discard(oldest);
         }
     }
 
     public void tick(ServerLevel level) {
         if (closed || server == null || level == null) return;
         tick = server.getTickCount();
-        drainCompleted();
-        for (int i = 0; i < 8; i++) {
+        if (housekeepingTick != tick) {
+            housekeepingTick = tick;
+            drainCompleted();
+            if (tick % 20 == 0) expireCachesAndSubscribers();
+            outgoing.drainWithStatus(tick, this::sendStatus, (target, packet) -> {
+                ServerPlayer recipient = server.getPlayerList().getPlayer(target.player());
+                if (recipient == null) return;
+                OutboundFlightLimit.Permit permit = inFlight.acquire(target.player());
+                if (permit == null) throw new IllegalStateException("Map transport admission changed during drain");
+                try { ModNetwork.CHANNEL.send(recipient, packet, permit::close); }
+                catch (RuntimeException failure) { permit.close(); throw failure; }
+            });
+            advanceRemaining = CHUNKS_PER_LEVEL_TICK;
+            changedRemaining = 8;
+            sampleDeadline = System.nanoTime() + TICK_SLICE_NANOS;
+        }
+        for (; changedRemaining > 0 && System.nanoTime() < sampleDeadline; changedRemaining--) {
             LoadedChunk changed = changedChunks.poll();
             if (changed == null) break;
             String dimension = changed.level.dimension().location().toString();
             ChunkKey changedKey = new ChunkKey(dimension, changed.x, changed.z);
             savedColors.remove(changedKey);
+            savedTouched.remove(changedKey);
             absentUntil.remove(changedKey);
             TileKey key = new TileKey(dimension, Math.floorDiv(changed.x, 16), Math.floorDiv(changed.z, 16), 1);
             TileWork active = work.get(key);
@@ -188,7 +251,9 @@ public final class SharedMapTerrainService {
             if (active.level == level && tick - active.touched > WORK_TTL_TICKS) discard(active.key);
         }
         for (TileWork active : fairPending(work.values(),
-                task -> task.level == level && task.cursor < task.limit(), task -> task.lastAdvanced, CHUNKS_PER_LEVEL_TICK)) {
+                task -> task.cursor < task.limit(), task -> task.lastAdvanced, advanceRemaining)) {
+            if (advanceRemaining <= 0 || System.nanoTime() >= sampleDeadline) break;
+            advanceRemaining--;
             active.lastAdvanced = tick;
             advance(active);
         }
@@ -234,7 +299,9 @@ public final class SharedMapTerrainService {
         ChunkKey chunkKey = new ChunkKey(active.key.dimension, chunkX, chunkZ);
         if (active.key.bps > 1 && active.pending == null) {
             int[] saved = savedColors.get(chunkKey);
-            if (saved != null) { deliver(active, local, sampledPixel(active.key, local, saved)); active.cursor++; return; }
+            if (saved != null && tick - savedTouched.getOrDefault(chunkKey, 0L) < CACHE_TTL_TICKS) {
+                deliver(active, local, sampledPixel(active.key, local, saved)); active.cursor++; return;
+            }
             if (absentUntil.getOrDefault(chunkKey, Long.MIN_VALUE) > tick) { active.cursor++; return; }
         }
         if (active.pending == null) {
@@ -267,7 +334,7 @@ public final class SharedMapTerrainService {
                 int[] pixels;
                 try { pixels = SharedMapSavedChunk.read(owned, ownedNorth, chunkX, chunkZ, minY, maxY); }
                 catch (RuntimeException unavailable) { pixels = new int[0]; }
-                if (closed || !completed.offer(new Result(active.key, active, local, pixels, false))) active.decoding.decrementAndGet();
+                if (closed || !completed.offer(new Result(active.key, active, local, pixels, false, false))) active.decoding.decrementAndGet();
             });
         } catch (RejectedExecutionException busy) {
             active.decoding.decrementAndGet(); // bounded overload retries when this viewport is requested again
@@ -293,11 +360,10 @@ public final class SharedMapTerrainService {
             if (result.prediction) {
                 if (work.get(result.key) != result.work || result.work.predictionCancelled
                         || tick - result.work.touched > WORK_TTL_TICKS) continue;
-                int[] merged = SharedMapTerrainRenderer.mergePrediction(predictionCache.get(result.key), result.pixels);
-                predictionCache.put(result.key, merged);
-                while (predictionCache.size() > 128) predictionCache.remove(predictionCache.keySet().iterator().next());
+                predictionCache.put(result.key, new PredictionTile(result.pixels, result.incomplete, tick));
+                while (predictionCache.size() > MAX_PREDICTION_TILES) predictionCache.remove(predictionCache.keySet().iterator().next());
                 TileWork active = work.get(result.key);
-                if (active != null) deliverPrediction(active, merged);
+                if (active != null) deliverPrediction(active, result.pixels);
             } else {
                 TileWork active = result.work;
                 active.decoding.decrementAndGet();
@@ -307,7 +373,12 @@ public final class SharedMapTerrainService {
                     int[] fresh = captureLoadedPixel(active, result.localChunk);
                     if (fresh == null && result.pixels.length == 256) {
                         savedColors.put(new ChunkKey(result.key.dimension, at.x, at.z), result.pixels);
-                        while (savedColors.size() > 1024) savedColors.remove(savedColors.keySet().iterator().next());
+                        savedTouched.put(new ChunkKey(result.key.dimension, at.x, at.z), tick);
+                        while (savedColors.size() > 1024) {
+                            ChunkKey oldest = savedColors.keySet().iterator().next();
+                            savedColors.remove(oldest);
+                            savedTouched.remove(oldest);
+                        }
                     }
                     deliver(active, result.localChunk, fresh == null ? sampledPixel(result.key, result.localChunk, result.pixels) : fresh);
                 } else {
@@ -321,7 +392,7 @@ public final class SharedMapTerrainService {
     private void deliverPrediction(TileWork active, int[] pixels) {
         active.subscribers.forEach((id, world) -> {
             ServerPlayer player = server.getPlayerList().getPlayer(id);
-            if (player != null && player.serverLevel() == active.level) send(player, world, active.key, 0, pixels, true);
+            if (player != null && player.serverLevel() == active.level) send(player, world.world, active.key, 0, pixels, true);
         });
     }
 
@@ -329,16 +400,16 @@ public final class SharedMapTerrainService {
         if (pixels.length != (active.key.bps == 1 ? 256 : 1) || java.util.Arrays.stream(pixels).noneMatch(color -> (color >>> 24) != 0)) return;
         active.subscribers.forEach((id, world) -> {
             ServerPlayer player = server.getPlayerList().getPlayer(id);
-            if (player != null && player.serverLevel() == active.level) send(player, world, active.key, local, pixels, false);
+            if (player != null && player.serverLevel() == active.level) send(player, world.world, active.key, local, pixels, false);
         });
     }
 
-    private static void send(ServerPlayer player, String world, TileKey key, int local, int[] pixels, boolean prediction) {
+    private void send(ServerPlayer player, String world, TileKey key, int local, int[] pixels, boolean prediction) {
         boolean fine = key.bps == 1;
-        ModNetwork.CHANNEL.send(player, new SharedMapTerrainPatchPacket(world, key.dimension, key.x, key.z,
+        outgoing.offer(new SharedMapSendQueue.Target(player.getUUID(), world, key.dimension, key.x, key.z, key.bps),
                 prediction ? 0 : fine ? local % 16 * 16 : local % 256,
                 prediction ? 0 : fine ? local / 16 * 16 : local / 256,
-                prediction ? 256 : fine ? 16 : 1, prediction ? 256 : fine ? 16 : 1, pixels, prediction, key.bps));
+                prediction ? 256 : fine ? 16 : 1, prediction ? 256 : fine ? 16 : 1, pixels, prediction, tick);
     }
 
     private static ChunkPos location(TileKey key, int local) {
@@ -370,9 +441,9 @@ public final class SharedMapTerrainService {
         if (java.util.Arrays.stream(pixels).noneMatch(color -> (color >>> 24) != 0)) return;
         active.subscribers.forEach((id, world) -> {
             ServerPlayer player = server.getPlayerList().getPlayer(id);
-            if (player != null && player.serverLevel() == active.level) ModNetwork.CHANNEL.send(player,
-                    new SharedMapTerrainPatchPacket(world, active.key.dimension, active.key.x, active.key.z,
-                            minX, minZ, width, height, pixels, false, active.key.bps));
+            if (player != null && player.serverLevel() == active.level) outgoing.offer(
+                    new SharedMapSendQueue.Target(id, world.world, active.key.dimension, active.key.x, active.key.z, active.key.bps),
+                    minX, minZ, width, height, pixels, false, tick);
         });
     }
 
@@ -401,6 +472,35 @@ public final class SharedMapTerrainService {
         }, startX, startZ, width, height);
     }
 
+    private int sendStatus(SharedMapSendQueue.Target target) {
+        ServerPlayer player = server.getPlayerList().getPlayer(target.player());
+        TileWork active = work.get(new TileKey(target.dimension(), target.tileX(), target.tileZ(), target.bps()));
+        Subscription subscription = active == null ? null : active.subscribers.get(target.player());
+        if (player == null || active == null || player.serverLevel() != active.level
+                || subscription == null || !subscription.world.equals(target.world())) return -1;
+        var connection = player.connection.getConnection();
+        var channel = connection.channel();
+        if (!connection.isConnected() || channel == null) return -1;
+        return channel.isWritable() && inFlight.available(target.player()) ? 1 : 0;
+    }
+
+    private void expireCachesAndSubscribers() {
+        predictionCache.values().removeIf(entry -> tick - entry.touched >= CACHE_TTL_TICKS);
+        savedTouched.entrySet().removeIf(entry -> {
+            if (tick - entry.getValue() < CACHE_TTL_TICKS) return false;
+            savedColors.remove(entry.getKey());
+            return true;
+        });
+        absentUntil.values().removeIf(expiry -> expiry <= tick);
+        for (TileWork active : List.copyOf(work.values())) {
+            active.subscribers.entrySet().removeIf(entry -> {
+                ServerPlayer player = server.getPlayerList().getPlayer(entry.getKey());
+                return player == null || player.serverLevel() != active.level || tick - entry.getValue().requested >= WORK_TTL_TICKS;
+            });
+            if (active.subscribers.isEmpty()) discard(active.key);
+        }
+    }
+
     private void discard(TileKey key) {
         TileWork removed = work.remove(key);
         if (removed != null) {
@@ -421,6 +521,10 @@ public final class SharedMapTerrainService {
         changedChunks.clear();
         predictionCache.clear();
         savedColors.clear();
+        savedTouched.clear();
+        outgoing.clear();
+        inFlight.clear();
+        MapRequestLimiter.clearAll();
         absentUntil.clear();
         samplers.clear();
     }

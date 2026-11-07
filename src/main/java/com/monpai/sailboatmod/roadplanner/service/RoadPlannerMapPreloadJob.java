@@ -166,6 +166,9 @@ public final class RoadPlannerMapPreloadJob {
         return dimensionId;
     }
 
+    /** Immutable, capped by admission; used to coalesce server-generated refreshes. */
+    Set<Long> coveredChunks() { return coveredChunks; }
+
     public boolean coversChunk(int chunkX, int chunkZ) {
         return coveredChunks.contains(ChunkPos.asLong(chunkX, chunkZ));
     }

@@ -238,6 +238,21 @@ public class RoadPlannerTile implements AutoCloseable {
         return true;
     }
 
+    /** Merge strips directly into the underlay; never replace actual terrain or clone the full tile per strip. */
+    public synchronized boolean applyPredictionPatch(int offsetX, int offsetZ, int width, int height, int[] pixels) {
+        if (offsetX < 0 || offsetZ < 0 || width < 1 || height < 1
+                || offsetX + (long) width > TILE_PIXEL_SIZE || offsetZ + (long) height > TILE_PIXEL_SIZE
+                || pixels == null || pixels.length > com.monpai.sailboatmod.network.packet.roadplanner.SharedMapTerrainPatchPacket.MAX_PIXELS
+                || pixels.length != (long) width * height) return false;
+        if (predictionPixels == null) predictionPixels = new int[TILE_PIXEL_SIZE * TILE_PIXEL_SIZE];
+        for (int z = 0; z < height; z++) for (int x = 0; x < width; x++) {
+            int color = pixels[z * width + x];
+            if ((color >>> 24) != 0) predictionPixels[(offsetZ + z) * TILE_PIXEL_SIZE + offsetX + x] = color;
+        }
+        dirty = true;
+        return true;
+    }
+
     public synchronized int[] copyDisplayPixels() {
         if (image == null) return new int[0];
         int[] displayed = tilePixels();

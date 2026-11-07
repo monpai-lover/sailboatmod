@@ -6,7 +6,9 @@ import com.monpai.sailboatmod.compat.flightcontrol.FlightControlBridge;
 public final class FlightResumePolicy {
     private FlightResumePolicy() { }
     public static boolean waitsForAirport(String reason) {
-        return "airport_unavailable".equals(reason) || "airport_reserved".equals(reason);
+        return "airport_unavailable".equals(reason) || "airport_reserved".equals(reason)
+                || "waiting_airport_metadata".equals(reason) || "waiting_airport_terrain".equals(reason)
+                || "waiting_ground_surface_reference".equals(reason);
     }
     public static FlightControlBridge.Action action(String phase) {
         if (phase == null) return null;

@@ -236,6 +236,48 @@ class MarketTransactionRegressionTest {
     }
 
     @Test
+    void preparedRailClaimBlocksBuyerSellerAndDirectRefund() throws Exception {
+        TestServerLevel level = newLevel();
+        setField(MinecraftServer.class, level.server, "serverThread", Thread.currentThread());
+        MarketSavedData data = MarketSavedData.get(level);
+        PurchaseOrder waiting = order(4, 100);
+        data.putListing(listing(6, 4));
+        data.putPurchaseOrder(waiting);
+        var escrow = new MarketOrderEscrow(waiting.orderId(), SELLER, "Seller", 100, 100, "", 0, "", 0);
+        data.putEscrow(escrow);
+
+        var freight = com.monpai.sailboatmod.transport.rail.RailFreightSavedData.get(level);
+        var source = new com.monpai.sailboatmod.transport.rail.RailStationRef("minecraft:overworld", SOURCE, new UUID(0, 10));
+        var target = new com.monpai.sailboatmod.transport.rail.RailStationRef("minecraft:overworld", TARGET, new UUID(0, 11));
+        var route = new com.monpai.sailboatmod.transport.rail.RailRoute(source, target, SOURCE, TARGET, TARGET, 32, "Freight");
+        UUID train = new UUID(0, 12);
+        UUID job = new UUID(0, 13);
+        assertTrue(freight.register(new com.monpai.sailboatmod.transport.rail.RailFreightSavedData.Registration(
+                train, UUID.fromString(SELLER), source, "Train", true)));
+        var entry = new ShipmentManifestEntry(waiting.listingId(), new ItemStack(Items.WHEAT),
+                waiting.orderId(), "0123456789abcdef0123456789abcdef", BUYER, "Buyer", waiting.quantity());
+        assertTrue(freight.begin(new com.monpai.sailboatmod.transport.rail.RailFreightSavedData.Job(
+                job, train, route, List.of(entry), new CompoundTag(),
+                com.monpai.sailboatmod.transport.rail.RailFreightSavedData.Phase.PREPARED, "interrupted")));
+        assertTrue(com.monpai.sailboatmod.transport.rail.RailFreightService.isOrderClaimed(level, waiting.orderId()));
+        assertFalse(MarketRefundService.canRefundOrders(level, data, List.of(waiting)));
+        assertFalse(MarketRefundService.refundAndReleaseOrder(level, data, waiting, "delivery_failed", false));
+        assertFalse(marketBlock(level).cancelPurchaseOrderById(BUYER, waiting.orderId()).success());
+        assertFalse(marketBlock(level).cancelListingResultById(SELLER, waiting.listingId()).success());
+        assertEquals(0, level.warehouse.insertedQuantity);
+        assertEquals(6, data.getListing(waiting.listingId()).availableCount());
+        assertEquals(4, data.getListing(waiting.listingId()).reservedCount());
+        assertEquals(escrow, data.getEscrow(waiting.orderId()));
+        assertEquals(waiting, data.getPurchaseOrder(waiting.orderId()));
+        assertEquals(0L, MarketWalletService.availableBalance(level, BUYER, "Buyer"));
+
+        assertTrue(freight.complete(train, job));
+        assertTrue(MarketRefundService.refundAndReleaseOrder(level, data, waiting, "buyer_cancel", true));
+        assertEquals(100L, MarketWalletService.availableBalance(level, BUYER, "Buyer"));
+        assertEquals(PurchaseOrder.STATUS_CANCELLED, data.getPurchaseOrder(waiting.orderId()).status());
+    }
+
+    @Test
     void repeatedRefundWithOriginalOrderSnapshotDoesNotDuplicateMoneyOrStock() throws Exception {
         TestServerLevel level = newLevel();
         MarketSavedData data = MarketSavedData.get(level);

@@ -16,7 +16,12 @@ class KnownVoyageWiringTest {
     @Test void missingChunkDoesNotBecomeCachedLand()throws Exception{String s=read("entity/SailboatEntity.java");assertTrue(read("route/water/local/LoadedBoatCollisionField.java").contains("if(chunk==null)return BoatCollisionField.Cell.unknown()"));assertTrue(s.contains("autopilotAimBlocked && followerTerrainUnknown"));}
     @Test void uiHasSingleClickDestinationsAndSeparateConstruction()throws Exception{assertTrue(read("client/DockClientHooks.java").contains("KnownDestinationScreen"));assertTrue(read("client/DockClientHooks.java").contains("new AutoRouteDockSelectionScreen"));assertTrue(read("client/screen/KnownDestinationScreen.java").contains("send(1,port.position())"));}
     @Test void pausedAndWaitingAreMapVisible()throws Exception{String s=read("market/logistics/ShippingTraceService.java");assertTrue(s.contains("\"WAITING_TERRAIN\".equals(normalized)"));assertTrue(s.contains("\"PAUSED\".equals(normalized)"));assertTrue(s.contains("\"REROUTING\".equals(normalized)"));}
-    @Test void protocolIncludesNewMenusAndPhases()throws Exception{String s=read("network/ModNetwork.java");assertTrue(s.contains("PROTOCOL_VERSION = \"22\""));assertTrue(s.contains("KnownVoyageMenuPacket.class"));assertTrue(s.contains("KnownDestinationsPacket.class"));}
+    @Test void protocolIncludesNewMenusAndPhases()throws Exception{
+        String s=read("network/ModNetwork.java");
+        assertTrue(s.contains("PROTOCOL_VERSION = \"26\""));
+        assertEquals(125L,java.util.regex.Pattern.compile("CHANNEL\\.registerMessage\\(\\s*packetId\\+\\+\\s*,\\s*([\\w.]+)\\.class").matcher(s).results().count());
+        assertTrue(s.contains("KnownVoyageMenuPacket.class"));assertTrue(s.contains("KnownDestinationsPacket.class"));
+    }
     @Test void liveSnapshotsCannotFallBackToStaleDiskAfterFailure()throws Exception{String s=read("route/water/LiveWaterSnapshots.java");assertTrue(s.contains("TERRAIN_NOT_READY"));assertTrue(s.contains("PortChunkSnapshot.capture"));assertFalse(s.contains("getChunkNow"));}
     @Test void marketItinerariesAreNotStoredAsNewInfrastructure()throws Exception{String s=read("route/water/WaterDestinationService.java");assertTrue(s.contains("source.installKnownVoyage"));assertFalse(s.contains(".register("));assertFalse(s.contains(".setRoutes("));}
 }

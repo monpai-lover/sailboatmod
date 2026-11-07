@@ -24,6 +24,15 @@ public final class RoadGraphRoutingService {
     }
 
     public List<BlockPos> route(String dimensionId, BlockPos start, BlockPos end, int connectorRadius) {
+        return route(dimensionId, start, end, connectorRadius, false);
+    }
+
+    List<BlockPos> routeToParking(String dimensionId, BlockPos start, BlockPos end, int connectorRadius) {
+        return route(dimensionId, start, end, connectorRadius, true);
+    }
+
+    private List<BlockPos> route(String dimensionId, BlockPos start, BlockPos end, int connectorRadius,
+                                 boolean parkingArrival) {
         if (repository == null || start == null || end == null) {
             return List.of();
         }
@@ -33,7 +42,7 @@ public final class RoadGraphRoutingService {
         if (startAttachment == null || endAttachment == null) {
             return List.of();
         }
-        RouteCandidate candidate = routeBetweenAttachments(startAttachment, endAttachment, graph);
+        RouteCandidate candidate = routeBetweenAttachments(startAttachment, endAttachment, graph, parkingArrival);
         return candidate == null || candidate.path().size() < 2 ? List.of() : candidate.path();
     }
 
@@ -92,7 +101,8 @@ public final class RoadGraphRoutingService {
         );
     }
 
-    private static RouteCandidate routeBetweenAttachments(Attachment start, Attachment end, Graph graph) {
+    private static RouteCandidate routeBetweenAttachments(Attachment start, Attachment end, Graph graph,
+                                                         boolean parkingArrival) {
         RouteCandidate best = null;
         if (start.edge() != null && end.edge() != null && start.edge().edgeId().equals(end.edge().edgeId())) {
             List<BlockPos> direct = new ArrayList<>();
@@ -102,8 +112,8 @@ public final class RoadGraphRoutingService {
             best = new RouteCandidate(List.copyOf(direct), pathLength(direct));
         }
 
-        for (EndpointOption startOption : endpointOptions(start, true)) {
-            for (EndpointOption endOption : endpointOptions(end, false)) {
+        for (EndpointOption startOption : endpointOptions(start, true, parkingArrival)) {
+            for (EndpointOption endOption : endpointOptions(end, false, parkingArrival)) {
                 List<UUID> nodePath = dijkstra(startOption.nodeId(), endOption.nodeId(), graph.adjacency());
                 if (nodePath.isEmpty()) {
                     continue;
@@ -121,9 +131,12 @@ public final class RoadGraphRoutingService {
         return best;
     }
 
-    private static List<EndpointOption> endpointOptions(Attachment attachment, boolean source) {
+    private static List<EndpointOption> endpointOptions(Attachment attachment, boolean source, boolean parkingArrival) {
         if (attachment.nodeId() != null) {
-            return List.of(new EndpointOption(attachment.nodeId(), List.of(attachment.origin(), attachment.roadPos())));
+            List<BlockPos> connector = parkingArrival && !source
+                    ? List.of(attachment.roadPos(), attachment.origin())
+                    : List.of(attachment.origin(), attachment.roadPos());
+            return List.of(new EndpointOption(attachment.nodeId(), connector));
         }
         RoadGraphEdgeRecord edge = attachment.edge();
         if (edge == null || edge.centerline().isEmpty()) {

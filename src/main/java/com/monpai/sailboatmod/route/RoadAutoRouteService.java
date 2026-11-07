@@ -204,19 +204,24 @@ public final class RoadAutoRouteService {
             return RouteResolution.none();
         }
 
-        // 可达性只信持久化路图(RoadGraph)：纯数据查询、零世界方块访问，区块卸载也稳定。
-        // 已建道路在建造完成时已写入路图(RoadPlannerBuiltRoadRegistry.registerGraphRoad)。
-        RoadGraphRoutingService graphRouting = new RoadGraphRoutingService(RoadGraphRepository.forLevel(level));
-        List<BlockPos> graphRoute = graphRouting.route(level.dimension().location().toString(), start, end, CARRIAGE_CONNECTOR_MAX_MANHATTAN);
-        if (graphRoute.size() >= 2) {
-            return new RouteResolution(PathSource.ROAD_NETWORK, graphRoute);
-        }
+        RouteResolution known = resolveKnownRoadRoute(level, start, end, false);
+        if (known.found()) return known;
 
         // 不再走 RoadSurfaceRouteService 世界方块扫描降级：它依赖 hasChunkAt/getBlockState，
         // 沿途区块卸载就误判路断 → 驿站可达城镇间歇性消失(发车回来选项消失、走一趟又出现)。
         // 无路图命中时仅保留地形 fallback(供尚未建路的临时连接)。
         Graph graph = new Graph(Set.of(), Map.of());
         return resolveTerrainFallbackRoute(level, start, end, graph);
+    }
+
+    /** Read the built road graph without scanning or requesting route chunks. */
+    static RouteResolution resolveKnownRoadRoute(ServerLevel level, BlockPos start, BlockPos end, boolean parkingArrival) {
+        var graphRouting = new RoadGraphRoutingService(RoadGraphRepository.forLevel(level));
+        String dimension = level.dimension().location().toString();
+        List<BlockPos> path = parkingArrival
+                ? graphRouting.routeToParking(dimension, start, end, CARRIAGE_CONNECTOR_MAX_MANHATTAN)
+                : graphRouting.route(dimension, start, end, CARRIAGE_CONNECTOR_MAX_MANHATTAN);
+        return path.size() >= 2 ? new RouteResolution(PathSource.ROAD_NETWORK, path) : RouteResolution.none();
     }
 
     private static RouteResolution resolveTerrainFallbackRoute(ServerLevel level,

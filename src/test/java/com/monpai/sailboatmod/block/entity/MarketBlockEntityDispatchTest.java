@@ -1,8 +1,10 @@
 package com.monpai.sailboatmod.block.entity;
 
 import com.monpai.sailboatmod.market.commodity.CommodityDefinition;
+import com.monpai.sailboatmod.transport.LogisticsCarrier;
 import org.junit.jupiter.api.Test;
 
+import java.lang.reflect.Proxy;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -12,6 +14,21 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class MarketBlockEntityDispatchTest {
+    @Test
+    void nativeTrainUsesRailFreightTerminalAndOrdinaryLandCarrierUsesPostStation() {
+        assertEquals("RAIL", MarketBlockEntity.terminalKindForCarrier(landCarrier("create-train")).name());
+        assertEquals("POST_STATION", MarketBlockEntity.terminalKindForCarrier(landCarrier("entity")).name());
+    }
+
+    private static LogisticsCarrier landCarrier(String providerId) {
+        return (LogisticsCarrier) Proxy.newProxyInstance(LogisticsCarrier.class.getClassLoader(),
+                new Class<?>[]{LogisticsCarrier.class}, (proxy, method, arguments) -> switch (method.getName()) {
+                    case "providerId" -> providerId;
+                    case "transportKind" -> LogisticsCarrier.Kind.LAND;
+                    default -> throw new AssertionError("Unexpected carrier call: " + method.getName());
+                });
+    }
+
     @Test
     void offlineOverviewKeepsDispatchableCarrierEvenWhenDockOwnerDiffers() {
         UUID dockOwner = UUID.randomUUID();

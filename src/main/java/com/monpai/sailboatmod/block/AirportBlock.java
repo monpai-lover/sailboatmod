@@ -17,6 +17,9 @@ import net.minecraft.world.item.context.BlockPlaceContext;
 import net.minecraft.world.level.Level;
 import net.minecraft.world.level.block.*;
 import net.minecraft.world.level.block.entity.BlockEntity;
+import net.minecraft.world.level.block.entity.BlockEntityTicker;
+import net.minecraft.world.level.block.entity.BlockEntityType;
+import com.monpai.sailboatmod.registry.ModBlockEntities;
 import net.minecraft.world.level.block.state.BlockState;
 import net.minecraft.world.level.block.state.StateDefinition;
 import net.minecraft.world.level.block.state.properties.DirectionProperty;
@@ -31,6 +34,9 @@ public final class AirportBlock extends BaseEntityBlock {
     @Override protected MapCodec<? extends BaseEntityBlock> codec() { return CODEC; }
     @Override public RenderShape getRenderShape(BlockState state) { return RenderShape.MODEL; }
     @Override public BlockEntity newBlockEntity(BlockPos pos, BlockState state) { return new AirportBlockEntity(pos, state); }
+    @Override public <T extends BlockEntity> BlockEntityTicker<T> getTicker(Level level, BlockState state, BlockEntityType<T> type) {
+        return level.isClientSide ? null : createTickerHelper(type, ModBlockEntities.AIRPORT_BLOCK_ENTITY.get(), AirportBlockEntity::serverTick);
+    }
     @Override public BlockState getStateForPlacement(BlockPlaceContext context) { return defaultBlockState().setValue(FACING, context.getHorizontalDirection().getOpposite()); }
     @Override public BlockState rotate(BlockState state, Rotation rotation) { return state.setValue(FACING, rotation.rotate(state.getValue(FACING))); }
     @Override public BlockState mirror(BlockState state, Mirror mirror) { return state.rotate(mirror.getRotation(state.getValue(FACING))); }
@@ -54,11 +60,18 @@ public final class AirportBlock extends BaseEntityBlock {
             return InteractionResult.CONSUME;
         }
         airport.initializeOwnerIfAbsent(serverPlayer);
-        serverPlayer.sendSystemMessage(Component.translatable("block.sailboatmod.airport.configure", airport.facilities().size()));
+        if (com.monpai.sailboatmod.transport.air.airport.AirportManagementService.canManage(serverPlayer, airport)) {
+            com.monpai.sailboatmod.network.ModNetwork.CHANNEL.send(serverPlayer,
+                    new com.monpai.sailboatmod.network.packet.airport.AirportSnapshotPacket(
+                            com.monpai.sailboatmod.transport.air.airport.AirportScreenData.capture(serverPlayer, airport, ""), true));
+        } else serverPlayer.sendSystemMessage(Component.translatable("screen.sailboatmod.airport.result.forbidden"));
         return InteractionResult.CONSUME;
     }
     @Override public void onRemove(BlockState state, Level level, BlockPos pos, BlockState newState, boolean movedByPiston) {
-        if (!state.is(newState.getBlock()) && level instanceof ServerLevel server) AirportSavedData.get(server).remove(level.dimension().location().toString(), pos);
+        if (!state.is(newState.getBlock()) && level instanceof ServerLevel server) {
+            com.monpai.sailboatmod.transport.board.TownVoyagePublisher.markEndpointRemoved(server, pos);
+            AirportSavedData.get(server).remove(level.dimension().location().toString(), pos);
+        }
         super.onRemove(state, level, pos, newState, movedByPiston);
     }
 }

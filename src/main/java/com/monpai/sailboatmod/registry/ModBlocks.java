@@ -123,6 +123,14 @@ public final class ModBlocks {
             "airport", () -> new com.monpai.sailboatmod.block.AirportBlock(
                     BlockBehaviour.Properties.of().mapColor(MapColor.COLOR_LIGHT_BLUE).strength(3.0F).sound(SoundType.METAL)));
 
+    public static final DeferredHolder<Block, Block> TOWN_ARRIVALS_BOARD = BLOCKS.register(
+            "town_arrivals_board", () -> new com.monpai.sailboatmod.block.TownArrivalsBoardBlock(
+                    BlockBehaviour.Properties.of().mapColor(MapColor.COLOR_BLACK).strength(1.5F).sound(SoundType.WOOD).noOcclusion()));
+
+    public static final DeferredHolder<Block, Block> RAIL_FREIGHT_TERMINAL = BLOCKS.register(
+            "rail_freight_terminal", () -> new com.monpai.sailboatmod.block.RailFreightTerminalBlock(
+                    BlockBehaviour.Properties.of().mapColor(MapColor.METAL).strength(3.0F).sound(SoundType.METAL)));
+
     private ModBlocks() {
     }
 }

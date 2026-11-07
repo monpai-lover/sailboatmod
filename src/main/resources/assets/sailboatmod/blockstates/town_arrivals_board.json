@@ -1,0 +1,19 @@
+{
+  "variants": {
+    "facing=south": {
+      "model": "sailboatmod:block/town_arrivals_board"
+    },
+    "facing=north": {
+      "model": "sailboatmod:block/town_arrivals_board",
+      "y": 180
+    },
+    "facing=east": {
+      "model": "sailboatmod:block/town_arrivals_board",
+      "y": 270
+    },
+    "facing=west": {
+      "model": "sailboatmod:block/town_arrivals_board",
+      "y": 90
+    }
+  }
+}

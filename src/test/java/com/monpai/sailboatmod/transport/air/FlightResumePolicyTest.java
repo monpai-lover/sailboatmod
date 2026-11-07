@@ -16,6 +16,9 @@ class FlightResumePolicyTest {
     @Test void airportWaitingRetainsTheAcceptedDepartureButHardFailuresDoNot() {
         assertTrue(FlightResumePolicy.waitsForAirport("airport_unavailable"));
         assertTrue(FlightResumePolicy.waitsForAirport("airport_reserved"));
+        assertTrue(FlightResumePolicy.waitsForAirport("waiting_airport_metadata"));
+        assertTrue(FlightResumePolicy.waitsForAirport("waiting_airport_terrain"));
+        assertFalse(FlightResumePolicy.waitsForAirport("airport_loading_too_large"));
         assertFalse(FlightResumePolicy.waitsForAirport("flight_control_conflict"));
         assertFalse(FlightResumePolicy.waitsForAirport("generated_profile_invalid"));
     }

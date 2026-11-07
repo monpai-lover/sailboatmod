@@ -737,6 +737,7 @@ const I18N = {
     terminal_type_label: "Dispatch terminal",
     terminal_type_port: "Port",
     terminal_type_post_station: "Post Station",
+    terminal_type_rail: "Rail Freight Terminal",
     market_notes: "Market Notes",
     sell_summary: "Sell side summary",
     demand_summary: "Buy side liquidity",
@@ -1069,6 +1070,7 @@ Object.assign(I18N["zh-CN"], I18N["en-US"], {
   terminal_type_label: "发货终端",
   terminal_type_port: "港口",
   terminal_type_post_station: "驿站",
+  terminal_type_rail: "铁路货运站",
   market_notes: "市场说明",
   sell_summary: "卖盘摘要",
   demand_summary: "买盘流动性",
@@ -5381,6 +5383,7 @@ function renderBuyingTab(commodity, canManage, canAct, options = null) {
               <select id="dispatch-terminal-type">
                 <option value="PORT" ${String(state.selectedDispatchTerminal).toUpperCase() === "PORT" ? "selected" : ""}>${escapeHtml(t("terminal_type_port"))}</option>
                 <option value="POST_STATION" ${String(state.selectedDispatchTerminal).toUpperCase() === "POST_STATION" ? "selected" : ""}>${escapeHtml(t("terminal_type_post_station"))}</option>
+                <option value="RAIL" ${String(state.selectedDispatchTerminal).toUpperCase() === "RAIL" ? "selected" : ""}>${escapeHtml(t("terminal_type_rail"))}</option>
               </select>
               <div class="dispatch-preview">
                 ${dispatchOrder ? `

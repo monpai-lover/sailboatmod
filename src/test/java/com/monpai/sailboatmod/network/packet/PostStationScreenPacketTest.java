@@ -40,6 +40,22 @@ class PostStationScreenPacketTest {
         assertEquals(2, decoded.data().selectedRouteWaypoints().size());
     }
 
+    @Test
+    void defaultStationNameDoesNotBecomeACustomOverrideInTheWireSnapshot() {
+        var original = sampleData();
+        var data = new PostStationScreenData(original.stationPos(), "Alpha", original.townId(), "Alpha", original.canManage(),
+                original.reachableTowns(), original.selectedTownIndex(), original.vehicles(), original.selectedVehicleIndex(),
+                original.autoReturnOnDispatch(), original.autoUnloadOnDispatch(), original.selectedRouteSummary(),
+                original.selectedRouteWaypoints(), original.advancedData(), "");
+        var buffer = new FriendlyByteBuf(Unpooled.buffer());
+        try {
+            OpenPostStationScreenPacket.encode(new OpenPostStationScreenPacket(data), buffer);
+            var decoded = OpenPostStationScreenPacket.decode(buffer).data();
+            assertEquals("Alpha", decoded.stationName()); assertEquals("", decoded.customName());
+            assertEquals(0, buffer.readableBytes());
+        } finally { buffer.release(); }
+    }
+
     private static PostStationScreenData sampleData() {
         DockScreenData advanced = new DockScreenData(
                 new BlockPos(1, 64, 1), "Station", "Owner", "owner-uuid",

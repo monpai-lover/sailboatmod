@@ -225,7 +225,7 @@ public class PostStationScreen extends TransportTerminalScreen<PostStationMenu> 
         page.layout(l -> l.gapAll(Ui.GAP_S).height(170));
         renameRow = Ui.row();
         renameRow.layout(l -> l.widthPercent(100).minWidth(0).flexWrap(FlexWrap.WRAP).gapAll(Ui.GAP_S).flexShrink(0));
-        nameInput = Ui.field(data.stationName(), text("rename.hint"), value -> { });
+        nameInput = Ui.field(data.customName(), Component.literal(data.stationName()), value -> { });
         nameInput.layout(l -> l.flexGrow(1).flexBasis(0).flexShrink(1).minWidth(40));
         renameButton = new ActionButton(text("rename.save"), Ui.Tone.PRIMARY, () -> {
             if (pending.begin("rename", ticks())) {
@@ -236,7 +236,7 @@ public class PostStationScreen extends TransportTerminalScreen<PostStationMenu> 
         renameRow.addChildren(nameInput, renameButton.inRow().element());
         zoneHint = Ui.text(text("zone_hint"), "sm-muted");
         miniMap.layout(l -> l.widthPercent(100).height(100).flexGrow(0).flexShrink(0));
-        page.addChildren(renameRow, zoneHint, miniMap);
+        page.addChildren(renameRow, Ui.paragraph(text("rename.default_hint"), "sm-muted"), zoneHint, miniMap);
         return page;
     }
 
@@ -332,7 +332,8 @@ public class PostStationScreen extends TransportTerminalScreen<PostStationMenu> 
         renameRow.setDisplay(manage);
         zoneHint.setDisplay(manage);
         if (!nameInput.isFocused()) {
-            nameInput.setText(data.stationName(), false);
+            nameInput.setText(data.customName(), false);
+            nameInput.textFieldStyle(s -> s.placeholder(Component.literal(data.stationName())));
         }
         syncAction(renameButton, manage, "rename", null);
         miniMap.setCenter(advanced.dockPos())

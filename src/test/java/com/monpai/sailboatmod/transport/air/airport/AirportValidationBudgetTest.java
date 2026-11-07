@@ -10,6 +10,27 @@ import net.minecraft.world.phys.AABB;
 import org.junit.jupiter.api.Test;
 
 class AirportValidationBudgetTest {
+    @Test void runwayLength2048IsLegalBut2049IsRejectedAndLegacy256RemainsLegal() {
+        assertTrue(runway(new BlockPos(2048, 80, 0), 32, 12).validGeometry());
+        assertFalse(runway(new BlockPos(2049, 80, 0), 32, 12).validGeometry());
+        assertTrue(runway(new BlockPos(256, 80, 0), 16, 12).validGeometry());
+        assertFalse(runway(new BlockPos(2048, 80, 0), 65, 12).validGeometry());
+    }
+
+    @Test void longestRunwayAtMaximumClearanceCompletesOnlyThroughBoundedSteps() {
+        var scan = new AirportValidation.Scan(runway(new BlockPos(2048, 80, 0), 32, 64));
+        var result = AirportValidation.Result.WAITING;
+        int ticks = 0;
+        while (result == AirportValidation.Result.WAITING && ticks++ <= AirportValidation.MAX_SCAN_STEPS / 2048 + 1) {
+            int[] reads = {0};
+            result = scan.advance(2048, p -> { reads[0]++; return true; }, p -> true, p -> true);
+            assertTrue(scan.stepsUsed() <= 2048);
+            assertTrue(reads[0] <= 2048);
+        }
+        assertEquals(AirportValidation.Result.VALID, result);
+        assertTrue(ticks > 100, "a long runway must never be scanned in one server tick");
+    }
+
     @Test void ordinaryAxialRunwayDoesNotSpendItsBudgetScanningEmptyAltitude() {
         ScanResult result = scan(runway(new BlockPos(120, 80, 0), 16, 16));
         assertEquals(AirportValidation.Result.VALID, result.result());
@@ -26,9 +47,9 @@ class AirportValidationBudgetTest {
                 runway(new BlockPos(85, 80, 85), 16, 16), p -> true, p -> true, p -> true));
     }
 
-    @Test void genuinelyOversizedClearanceStillRejectsBeforeReadingTerrain() {
-        var facility = runway(new BlockPos(512, 80, 0), 32, 64);
-        assertEquals(AirportValidation.Result.TOO_LARGE, AirportValidation.validate(facility, p -> true,
+    @Test void oversizedGeometryStillRejectsBeforeReadingTerrain() {
+        var facility = runway(new BlockPos(2049, 80, 0), 32, 64);
+        assertEquals(AirportValidation.Result.INVALID_GEOMETRY, AirportValidation.validate(facility, p -> true,
                 p -> { throw new AssertionError("oversized scan must not read terrain"); },
                 p -> { throw new AssertionError("oversized scan must not read support"); }));
     }

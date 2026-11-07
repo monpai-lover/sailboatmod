@@ -1,0 +1,9 @@
+{
+  "required": false,
+  "minVersion": "0.8.7",
+  "package": "com.monpai.sailboatmod.compat.flightcontrol.mixin",
+  "plugin": "com.monpai.sailboatmod.compat.flightcontrol.mixin.FlightControlMixinPlugin",
+  "compatibilityLevel": "JAVA_21",
+  "mixins": ["NavigationTerminalRecoveryMixin", "FixedWingCruiseTrimMixin", "FlightControlCruiseBudgetMixin", "FlightControlGroundNeutralMixin", "AircraftWheelContactMixin", "NativePitchBootstrapScopeMixin", "FixedWingMeasuredPitchMixin", "TrimEnvironmentScopeMixin", "TrimEnvironmentBudgetMixin", "TrimEnvironmentSampleMixin"],
+  "injectors": {"defaultRequire": 1}
+}
