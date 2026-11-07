@@ -15,6 +15,7 @@ import java.util.List;
 public record AirportScreenData(ResourceLocation dimension, BlockPos airportPos, String name, String town, String owner, boolean canManage,
         long revision, List<AirportFacility> facilities, AirportGroundLayout groundLayout,
         List<String> statuses, String result, String customName) {
+    private static final String AUTO_LAYOUT_FEATURE = "feature|auto_layout|1";
     public AirportScreenData {
         customName = customName == null ? "" : customName.trim();
         if (dimension == null || dimension.toString().length() > 256) throw new IllegalArgumentException("Invalid dimension");
@@ -29,6 +30,7 @@ public record AirportScreenData(ResourceLocation dimension, BlockPos airportPos,
             long revision, List<AirportFacility> facilities, AirportGroundLayout groundLayout, List<String> statuses, String result) {
         this(dimension, airportPos, name, town, owner, canManage, revision, facilities, groundLayout, statuses, result, name);
     }
+    public boolean supportsAutoLayout() { return statuses.contains(AUTO_LAYOUT_FEATURE); }
     public static AirportScreenData capture(ServerPlayer player, AirportBlockEntity airport, String result) {
         List<String> statuses = new ArrayList<>();
         for (AirportFacility facility : airport.facilities())
@@ -38,6 +40,7 @@ public record AirportScreenData(ResourceLocation dimension, BlockPos airportPos,
         for (var lease : airport.reservations()) statuses.add("reservation|" + lease.facilityId() + "|reserved");
         if (airport.groundReserved()) statuses.add("ground||reserved");
         if (airport.editorSession()!=null) statuses.add("editor||"+airport.editorSession().processedSteps());
+        if (statuses.size() < 160) statuses.add(AUTO_LAYOUT_FEATURE);
         var town = com.monpai.sailboatmod.nation.service.TownService.getTownAt(player.serverLevel(),airport.getBlockPos());
         long editorRevision = airport.editorRevision();
         AirportGroundLayout layout = airport.groundLayout();

@@ -19,21 +19,23 @@ public interface RailFreightNative {
     boolean connected(ServerLevel level, RailStationRef source, RailStationRef target);
     Optional<TrainView> atStation(ServerLevel level, RailStationRef station);
     Optional<TrainView> train(ServerLevel level, UUID trainId);
-    Optional<Path> plan(ServerLevel level, UUID trainId, UUID owner, RailStationRef source, RailStationRef target);
+    Optional<Path> plan(ServerLevel level, UUID trainId, UUID owner, RailStationRef source, RailStationRef target,
+                        List<RailStationRef> stopovers);
     @Nullable List<IItemHandlerModifiable> cargo(ServerLevel level, UUID trainId, UUID owner);
     boolean openStorage(ServerPlayer player, UUID trainId);
     @Nullable CompoundTag start(ServerLevel level, UUID trainId, UUID owner, RailStationRef source,
-                                RailStationRef target, UUID jobId, @Nullable CompoundTag completedSchedule);
+                                RailStationRef target, List<RailStationRef> stopovers, List<Integer> stopoverSeconds, UUID jobId,
+                                @Nullable CompoundTag completedSchedule);
     boolean clearOwnedSchedule(ServerLevel level, UUID trainId, UUID owner, RailStationRef station,
                                CompoundTag ownedSchedule, boolean requireCompleted);
-    boolean targetMatchesSchedule(ServerLevel level, UUID trainId, RailStationRef target, CompoundTag ownedSchedule);
+    boolean matchesOwnedSchedule(ServerLevel level, UUID trainId, List<RailStationRef> visits, CompoundTag ownedSchedule);
     void markDirty();
 
     record Path(int distanceMeters, String sourceName, String targetName) {}
 
     record TrainView(UUID id, UUID owner, String name, @Nullable RailStationRef station,
                      @Nullable RailStationRef destination, @Nullable Vec3 position, @Nullable AABB bounds,
-                     double speed, double remaining, boolean usable, boolean canDriveBothWays, boolean manual,
+                     double speed, double remaining, double legDistance, boolean usable, boolean canDriveBothWays, boolean manual,
                      boolean paused, boolean completed, boolean hasSchedule, @Nullable CompoundTag managedSchedule,
                      int cargoSlots, int cargoUsed, int fuelSafeSlots) {
         public boolean parkedAt(RailStationRef expected) {

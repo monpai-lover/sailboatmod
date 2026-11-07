@@ -114,6 +114,32 @@ public final class LandTransportNetworkService {
         return routeResolver.resolve(source, target, allowTerrainFallback);
     }
 
+    /** Listed destinations are individual loaded stations with verified parking endpoints on built roads. */
+    public List<StationDestination> knownStationDestinations(ServerLevel level, PostStationBlockEntity source) {
+        if (source.getTownId().isBlank()) return List.of();
+        BlockPos origin = source.getBlockPos();
+        return PostStationRegistry.get(level).stream()
+                .filter(pos -> !pos.equals(origin) && level.hasChunkAt(pos))
+                .sorted(Comparator.<BlockPos>comparingDouble(origin::distSqr).thenComparingLong(BlockPos::asLong))
+                .limit(32)
+                .map(pos -> knownStationRoute(level, source, pos))
+                .filter(Objects::nonNull)
+                .map(plan -> new StationDestination(plan.targetStationPos(), plan.targetStation().stationName(),
+                        plan.distanceMeters()))
+                .sorted(Comparator.comparingDouble(StationDestination::distance).thenComparingLong(value -> value.pos().asLong()))
+                .toList();
+    }
+
+    public record StationDestination(BlockPos pos, String name, double distance) { }
+
+    @Nullable
+    public LandRoutePlan knownStationRoute(ServerLevel level, PostStationBlockEntity source, BlockPos targetPos) {
+        if (source.getBlockPos().equals(targetPos) || source.getTownId().isBlank() || !level.hasChunkAt(targetPos)
+                || !(level.getBlockEntity(targetPos) instanceof PostStationBlockEntity target)
+                || target.isRemoved() || target.getLevel() != level || target.getTownId().isBlank()) return null;
+        return resolveServerRoute(stationRef(level, source), stationRef(level, target), false, false).plan();
+    }
+
     @Nullable
     public StationRef stationRef(Level level, PostStationBlockEntity station) {
         if (level == null || station == null) {
@@ -190,6 +216,11 @@ public final class LandTransportNetworkService {
     }
 
     private static RouteAvailability resolveServerRoute(StationRef source, StationRef target, boolean allowTerrainFallback) {
+        return resolveServerRoute(source, target, allowTerrainFallback, true);
+    }
+
+    private static RouteAvailability resolveServerRoute(StationRef source, StationRef target, boolean allowTerrainFallback,
+                                                        boolean includeIntermediateStations) {
         if (!(source.level() instanceof ServerLevel level)) {
             return RouteAvailability.unavailable(RouteFailureReason.MISSING_LEVEL);
         }
@@ -208,12 +239,10 @@ public final class LandTransportNetworkService {
         if (start == null || end == null) {
             return RouteAvailability.unavailable(RouteFailureReason.NO_ROAD_ROUTE);
         }
-        RoadAutoRouteService.RouteResolution resolution =
-                RoadAutoRouteService.resolveAutoRoutePreview(level, start, end);
+        RoadAutoRouteService.RouteResolution resolution = allowTerrainFallback
+                ? RoadAutoRouteService.resolveAutoRoutePreview(level, start, end)
+                : RoadAutoRouteService.resolveKnownRoadRoute(level, start, end);
         if (!resolution.found()) {
-            return RouteAvailability.unavailable(RouteFailureReason.NO_ROAD_ROUTE);
-        }
-        if (!allowTerrainFallback && resolution.source() == RoadAutoRouteService.PathSource.LAND_TERRAIN) {
             return RouteAvailability.unavailable(RouteFailureReason.NO_ROAD_ROUTE);
         }
         List<Vec3> waypoints = resolution.path().stream()
@@ -227,7 +256,7 @@ public final class LandTransportNetworkService {
         return RouteAvailability.reachable(LandRoutePlan.fromWaypoints(
                 source,
                 target,
-                stationsOnPath(level, source, target, resolution.path()),
+                includeIntermediateStations ? stationsOnPath(level, source, target, resolution.path()) : List.of(source, target),
                 waypoints,
                 "System",
                 sourceKind

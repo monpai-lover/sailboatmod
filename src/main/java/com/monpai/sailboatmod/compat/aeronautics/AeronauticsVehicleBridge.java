@@ -5,6 +5,7 @@ import com.monpai.sailboatmod.transport.physical.NativeGroundObservation;
 import com.monpai.sailboatmod.transport.physical.GroundSurfaceObservation;
 import java.util.List;
 import com.monpai.sailboatmod.transport.physical.PhysicalVehicleView;
+import net.minecraft.core.BlockPos;
 import net.minecraft.core.Direction;
 import net.minecraft.server.level.ServerLevel;
 import net.minecraft.world.level.block.entity.BlockEntity;
@@ -26,6 +27,21 @@ public final class AeronauticsVehicleBridge {
     private static volatile SableReflectionAccess access;
 
     private AeronauticsVehicleBridge() { }
+
+    public record SetupEquipment(List<BlockPos> throttles, List<BlockPos> steering, List<BlockPos> flightTerminals) { }
+
+    /** Find only exact native equipment on one completely observed assembled body. */
+    public static Optional<SetupEquipment> setupEquipment(@Nullable BlockEntity controller, UUID expectedBody) {
+        if (!serverThread(controller) || expectedBody == null) return Optional.empty();
+        SableReflectionAccess api = api();
+        if (api == null) return Optional.empty();
+        try {
+            return api.setupEquipment(bodyFor(api, controller), controller, expectedBody);
+        } catch (ReflectiveOperationException | RuntimeException | LinkageError failure) {
+            warn(failure);
+            return Optional.empty();
+        }
+    }
 
     public static Optional<PhysicalVehicleView> resolve(@Nullable BlockEntity controller, @Nullable Direction facing) {
         if (!serverThread(controller) || facing == null) return Optional.empty();

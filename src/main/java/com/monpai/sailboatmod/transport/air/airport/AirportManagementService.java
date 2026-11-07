@@ -9,6 +9,7 @@ import java.util.function.Function;
 import net.minecraft.core.BlockPos;
 import net.minecraft.core.Direction;
 import net.minecraft.nbt.CompoundTag;
+import net.minecraft.nbt.Tag;
 import net.minecraft.server.level.ServerLevel;
 import net.minecraft.server.level.ServerPlayer;
 import net.minecraft.world.phys.AABB;
@@ -64,6 +65,14 @@ public final class AirportManagementService {
             var proposal=new AirportEditorSession.Proposal(airport.facilities(),airport.groundLayout(),facility,true);
             return queue(player,airport,revision,proposal);
         }
+        if (kind.equals("auto_layout")) {
+            if (!action.contains("CornerA", Tag.TAG_LONG) || !action.contains("CornerB", Tag.TAG_LONG))
+                return new Result(false, "invalid_geometry", revision);
+            var proposal = AirportAutoLayout.propose(BlockPos.of(action.getLong("CornerA")), BlockPos.of(action.getLong("CornerB")),
+                    airport.facilities(), airport.groundLayout());
+            return proposal.isPresent() ? validateAndQueue(player, airport, revision, proposal.orElseThrow())
+                    : new Result(false, "invalid_geometry", revision);
+        }
         List<AirportFacility> facilities=new ArrayList<>(airport.facilities());
         List<AirportParkingStand> stands=new ArrayList<>(airport.groundLayout().stands());
         List<AirportTaxiRoute> routes=new ArrayList<>(airport.groundLayout().taxiRoutes());
@@ -78,19 +87,32 @@ public final class AirportManagementService {
                 default->{return new Result(false,"invalid_action",revision);}
             }
             AirportGroundLayout candidate=new AirportGroundLayout(airport.groundLayoutRevision()+1,stands,routes);
-            if(facilities.size()>16)return new Result(false,"too_large",revision);
-            var references=AirportGroundValidation.references(candidate,facilities);
-            if(references!=AirportGroundValidation.Result.VALID)return new Result(false,references.name().toLowerCase(Locale.ROOT),revision);
-            if(airport.configurationOccupied(facilities,candidate))return new Result(false,"occupied",revision);
-            for(var facility:facilities){
-                double radius=facility.managementDistance();
-                if(facility.start().distSqr(airportPos)>radius*radius||facility.end().distSqr(airportPos)>radius*radius)return new Result(false,"invalid_geometry",revision);
-            }
-            for(var stand:stands)if(stand.position().distanceToSqr(airportPos.getCenter())>512D*512)return new Result(false,"invalid_geometry",revision);
-            for(var route:routes)if(!AirportGroundValidation.withinManagementDistance(route,facilities,stands,airportPos))return new Result(false,"invalid_geometry",revision);
             AirportFacility changed=kind.equals("upsert_facility")?AirportFacility.load(action.getCompound("Facility")):null;
-            return queue(player,airport,revision,new AirportEditorSession.Proposal(facilities,candidate,changed,false));
+            return validateAndQueue(player,airport,revision,new AirportEditorSession.Proposal(facilities,candidate,changed,false));
         }catch(IllegalArgumentException|NullPointerException failure){return new Result(false,"invalid_geometry",revision);}
+    }
+    private static Result validateAndQueue(ServerPlayer player, AirportBlockEntity airport, long revision,
+                                           AirportEditorSession.Proposal proposal) {
+        var facilities = proposal.facilities();
+        var ground = proposal.ground();
+        var airportPos = airport.getBlockPos();
+        if (facilities.size() > 16) return new Result(false, "too_large", revision);
+        var references = AirportGroundValidation.references(ground, facilities);
+        if (references != AirportGroundValidation.Result.VALID)
+            return new Result(false, references.name().toLowerCase(Locale.ROOT), revision);
+        if (airport.configurationOccupied(facilities, ground)) return new Result(false, "occupied", revision);
+        for (var facility : facilities) {
+            double radius = facility.managementDistance();
+            if (facility.start().distSqr(airportPos) > radius * radius || facility.end().distSqr(airportPos) > radius * radius)
+                return new Result(false, "invalid_geometry", revision);
+        }
+        for (var stand : ground.stands())
+            if (stand.position().distanceToSqr(airportPos.getCenter()) > 512D * 512)
+                return new Result(false, "invalid_geometry", revision);
+        for (var route : ground.taxiRoutes())
+            if (!AirportGroundValidation.withinManagementDistance(route, facilities, ground.stands(), airportPos))
+                return new Result(false, "invalid_geometry", revision);
+        return queue(player, airport, revision, proposal);
     }
     private static Result queue(ServerPlayer player,AirportBlockEntity airport,long revision,AirportEditorSession.Proposal proposal){
         var request=new AirportEditorSession(player.getUUID(),revision,player.serverLevel().getGameTime(),proposal,airport.getTownId());

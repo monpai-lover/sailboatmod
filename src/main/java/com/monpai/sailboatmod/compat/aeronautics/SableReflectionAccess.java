@@ -21,6 +21,7 @@ import org.slf4j.LoggerFactory;
 import java.lang.reflect.Field;
 import java.lang.reflect.Method;
 import java.util.Map;
+import java.util.Optional;
 import java.util.UUID;
 import java.util.WeakHashMap;
 import java.util.concurrent.atomic.AtomicBoolean;
@@ -41,6 +42,7 @@ final class SableReflectionAccess {
     private final OffroadWheelReflectionAccess wheels;
     private final GroundSurfaceReflectionAccess groundSurfaces;
     private final NativeActuators actuators;
+    private final SablePlotMembers plotMembers;
     private final Map<Object, ThrottleLease> throttleLeases = new WeakHashMap<>();
 
     private record ThrottleLease(int command, int observedState) { }
@@ -93,6 +95,7 @@ final class SableReflectionAccess {
         toMojangBounds = boundsType.getMethod("toMojang");
         getMass = massType.getMethod("getMass");
         actuators = NativeActuators.bindIfAvailable(lookup);
+        plotMembers = SablePlotMembers.bindIfAvailable(lookup, bodyType);
     }
 
     Object containing(BlockEntity entity) throws ReflectiveOperationException {
@@ -102,6 +105,29 @@ final class SableReflectionAccess {
 
     Object levelOf(Object body) throws ReflectiveOperationException {
         return level.invoke(body);
+    }
+
+    Optional<AeronauticsVehicleBridge.SetupEquipment> setupEquipment(Object body, BlockEntity controller, UUID expectedId)
+            throws ReflectiveOperationException {
+        if (plotMembers == null || body == null || body.getClass() != bodyType || !isLive(body)
+                || !expectedId.equals(id.invoke(body))
+                || !(controller.getLevel() instanceof ServerLevel world) || levelOf(body) != world) return Optional.empty();
+        var loaded = plotMembers.read(body, world);
+        if (loaded.isEmpty() || loaded.orElseThrow().stream().noneMatch(entity -> entity == controller)) return Optional.empty();
+        List<BlockPos> throttles = new ArrayList<>();
+        List<BlockPos> steering = new ArrayList<>();
+        List<BlockPos> flightTerminals = new ArrayList<>();
+        for (BlockEntity entity : loaded.orElseThrow()) {
+            if (containing(entity) != body) return Optional.empty();
+            Class<?> type = entity.getClass();
+            if (actuators != null && type == actuators.throttleType()) throttles.add(entity.getBlockPos().immutable());
+            if (actuators != null && type == actuators.steeringType()) steering.add(entity.getBlockPos().immutable());
+            if ("ace.flight.block.NavigationTerminalBlockEntity".equals(type.getName()))
+                flightTerminals.add(entity.getBlockPos().immutable());
+        }
+        if (containing(controller) != body || !expectedId.equals(id.invoke(body))) return Optional.empty();
+        return Optional.of(new AeronauticsVehicleBridge.SetupEquipment(
+                List.copyOf(throttles), List.copyOf(steering), List.copyOf(flightTerminals)));
     }
 
     UUID passengerPhysicalId(Entity passenger) throws ReflectiveOperationException {

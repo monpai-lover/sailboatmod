@@ -2,6 +2,7 @@ package com.monpai.sailboatmod.compat.create;
 
 import com.monpai.sailboatmod.transport.rail.RailFreightCargoHold;
 import com.monpai.sailboatmod.transport.rail.RailFreightNative;
+import com.monpai.sailboatmod.transport.rail.RailRoute;
 import com.monpai.sailboatmod.transport.rail.RailStationRef;
 import com.simibubi.create.Create;
 import com.simibubi.create.content.trains.entity.Carriage;
@@ -96,19 +97,41 @@ public final class RailFreightNativeBridge implements RailFreightNative {
     }
 
     @Override
-    public Optional<Path> plan(ServerLevel level, UUID trainId, UUID owner, RailStationRef source, RailStationRef target) {
+    public Optional<Path> plan(ServerLevel level, UUID trainId, UUID owner, RailStationRef source, RailStationRef target,
+                               List<RailStationRef> stopovers) {
+        if (!RailRoute.validStopovers(source, target, stopovers)) return Optional.empty();
         Train train = ownedTrain(trainId, owner);
         GlobalStation from = station(level, source);
         GlobalStation to = station(level, target);
         if (!readyToMove(train, from) || !uniqueTarget(train, from) || !uniqueTarget(train, to) || from == to) {
             return Optional.empty();
         }
+        double distance = pathDistance(train, to);
+        if (!(distance > 0)) return Optional.empty();
+        if (!stopovers.isEmpty()) {
+            for (RailStationRef stop : stopovers) {
+                if (!uniqueTarget(train, graphStation(train, stop))) return Optional.empty();
+            }
+            RailStationRef previous = stopovers.getFirst();
+            double viaDistance = pathDistance(train, graphStation(train, previous));
+            if (!(viaDistance > 0)) return Optional.empty();
+            // Create searches from the actual train position. Later legs use native navigation at
+            // their departure; use station spacing for their provisional contribution to market ETA.
+            for (RailStationRef stop : stopovers.subList(1, stopovers.size())) {
+                viaDistance += Math.sqrt(previous.stationPos().distSqr(stop.stationPos()));
+                previous = stop;
+            }
+            viaDistance += Math.sqrt(previous.stationPos().distSqr(target.stationPos()));
+            distance = Math.max(distance, viaDistance);
+        }
+        if (distance > Integer.MAX_VALUE) return Optional.empty();
+        return Optional.of(new Path(Math.max(1, (int) Math.round(distance)), from.name, to.name));
+    }
+
+    private static double pathDistance(Train train, GlobalStation to) {
         var path = train.navigation.findPathTo(to, Double.MAX_VALUE);
         double distance = path == null ? 0 : Math.abs(path.distance);
-        if (path == null || path.destination != to || !Double.isFinite(distance) || distance <= 0 || distance > Integer.MAX_VALUE) {
-            return Optional.empty();
-        }
-        return Optional.of(new Path(Math.max(1, (int) Math.round(distance)), from.name, to.name));
+        return path != null && path.destination == to && Double.isFinite(distance) ? distance : 0;
     }
 
     @Override
@@ -155,21 +178,30 @@ public final class RailFreightNativeBridge implements RailFreightNative {
 
     @Override
     public @Nullable CompoundTag start(ServerLevel level, UUID trainId, UUID owner, RailStationRef source,
-                                       RailStationRef target, UUID jobId, @Nullable CompoundTag completedSchedule) {
+                                       RailStationRef target, List<RailStationRef> stopovers, List<Integer> stopoverSeconds, UUID jobId,
+                                       @Nullable CompoundTag completedSchedule) {
         Train train = ownedTrain(trainId, owner);
-        if (!valid(train) || plan(level, trainId, owner, source, target).isEmpty()) return null;
+        if (!valid(train) || !RailRoute.validStopoverSeconds(stopovers, stopoverSeconds)
+                || plan(level, trainId, owner, source, target, stopovers).isEmpty()) return null;
         Schedule existing = train.runtime.getSchedule();
         if (completedSchedule == null ? existing != null
                 : existing == null || !train.runtime.isAutoSchedule || !train.runtime.completed
                         || !completedSchedule.equals(existing.write(level.registryAccess()))) return null;
-        GlobalStation to = station(level, target);
-        if (!uniqueTarget(train, to)) return null;
-        DestinationInstruction destination = instruction(to.name);
-        destination.getData().putUUID(SCHEDULE_JOB, jobId);
-        ScheduledDelay wait = new ScheduledDelay();
-        wait.getData().putInt("Value", 1);
-        wait.getData().putInt("TimeUnit", TimedWaitCondition.TimeUnit.SECONDS.ordinal());
-        Schedule schedule = new Schedule(new ArrayList<>(List.of(new ScheduleEntry(destination, List.of(List.of(wait))))), false, 0);
+        var visits = new ArrayList<>(stopovers);
+        visits.add(target);
+        var entries = new ArrayList<ScheduleEntry>(visits.size());
+        for (int i = 0; i < visits.size(); i++) {
+            GlobalStation station = graphStation(train, visits.get(i));
+            if (station == null) return null;
+            DestinationInstruction destination = instruction(station.name);
+            destination.getData().putUUID(SCHEDULE_JOB, jobId);
+            ScheduledDelay wait = new ScheduledDelay();
+            int dwellSeconds = i < stopoverSeconds.size() ? stopoverSeconds.get(i) : RailRoute.DEFAULT_STOPOVER_SECONDS;
+            wait.getData().putInt("Value", dwellSeconds);
+            wait.getData().putInt("TimeUnit", TimedWaitCondition.TimeUnit.SECONDS.ordinal());
+            entries.add(new ScheduleEntry(destination, List.of(List.of(wait))));
+        }
+        Schedule schedule = new Schedule(entries, false, 0);
         CompoundTag serialized = schedule.write(level.registryAccess());
         // This is the normal Create automatic schedule entry point. Native ticks do all movement and stopping.
         train.runtime.setSchedule(schedule, true);
@@ -191,15 +223,24 @@ public final class RailFreightNativeBridge implements RailFreightNative {
     }
 
     @Override
-    public boolean targetMatchesSchedule(ServerLevel level, UUID trainId, RailStationRef target, CompoundTag expected) {
+    public boolean matchesOwnedSchedule(ServerLevel level, UUID trainId, List<RailStationRef> visits, CompoundTag expected) {
         Train train = nativeTrain(trainId);
         if (!valid(train) || train.runtime.getSchedule() == null || !train.runtime.isAutoSchedule) return false;
         Schedule schedule = train.runtime.getSchedule();
-        if (!expected.equals(schedule.write(level.registryAccess())) || schedule.entries.size() != 1
-                || !(schedule.entries.getFirst().instruction instanceof DestinationInstruction destination)) return false;
-        GlobalStation nativeStation = train.graph.getPoint(EdgePointType.STATION, target.stationId());
-        return target.equals(ref(nativeStation)) && uniqueTarget(train, nativeStation)
-                && destination.getData().getString("Text").equals(nativeStation.name);
+        if (visits.isEmpty() || visits.size() > RailRoute.MAX_STOPOVERS + 1 || schedule.cyclic
+                || schedule.entries.size() != visits.size() || !expected.equals(schedule.write(level.registryAccess()))) return false;
+        int current = train.runtime.currentEntry;
+        if (current < 0 || current > visits.size()) return false;
+        // Create resets currentEntry to zero once a non-cyclic schedule completes.
+        int next = train.runtime.completed ? visits.size() - 1 : Math.min(current, visits.size() - 1);
+        for (int i = 0; i < visits.size(); i++) {
+            GlobalStation station = graphStation(train, visits.get(i));
+            if (station == null || !(schedule.entries.get(i).instruction instanceof DestinationInstruction destination)
+                    || !destination.getData().getString("Text").equals(station.name)) return false;
+            if (i == next && (!uniqueTarget(train, station)
+                    || train.navigation.destination != null && train.navigation.destination != station)) return false;
+        }
+        return true;
     }
 
     @Override
@@ -235,7 +276,8 @@ public final class RailFreightNativeBridge implements RailFreightNative {
         Schedule schedule = valid ? train.runtime.getSchedule() : null;
         return new TrainView(train.id, train.owner, train.name == null ? "" : train.name.getString(), ref(station),
                 valid ? ref(train.navigation.destination) : null, position, bounds, train.speed,
-                valid ? train.navigation.distanceToDestination : Double.NaN, valid,
+                valid ? train.navigation.distanceToDestination : Double.NaN,
+                valid ? train.navigation.distanceStartedAt : Double.NaN, valid,
                 valid && drivers(train), valid && (train.manualTick || train.countPlayerPassengers() != 0),
                 valid && train.runtime.paused, valid && train.runtime.completed, schedule != null,
                 schedule != null && train.runtime.isAutoSchedule ? schedule.write(level.registryAccess()) : null,
@@ -293,6 +335,11 @@ public final class RailFreightNativeBridge implements RailFreightNative {
         if (!level.dimension().location().toString().equals(reference.dimensionId())) return null;
         GlobalStation actual = stationAt(level, reference.stationPos());
         return actual != null && reference.stationId().equals(actual.getId()) ? actual : null;
+    }
+
+    private static @Nullable GlobalStation graphStation(Train train, RailStationRef reference) {
+        GlobalStation station = train.graph.getPoint(EdgePointType.STATION, reference.stationId());
+        return reference.equals(ref(station)) ? station : null;
     }
 
     private static @Nullable RailStationRef ref(@Nullable GlobalStation station) {

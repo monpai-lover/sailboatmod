@@ -20,7 +20,7 @@ public record AirportActionPacket(ResourceLocation dimension, BlockPos airportPo
         double yaw, double length, double width, int clearance, double speed, int holdPoint) {
     public static final int MAX_POINTS = 64;
     public enum Action { REFRESH, RENAME, UPSERT_RUNWAY, REMOVE_RUNWAY, VALIDATE_RUNWAY,
-        UPSERT_STAND, REMOVE_STAND, UPSERT_TAXI_ROUTE, REMOVE_TAXI_ROUTE }
+        UPSERT_STAND, REMOVE_STAND, UPSERT_TAXI_ROUTE, REMOVE_TAXI_ROUTE, APPLY_AUTO_LAYOUT }
     public AirportActionPacket {
         if (dimension == null || dimension.toString().length() > 256) throw new IllegalArgumentException("Invalid dimension");
         airportPos = Objects.requireNonNull(airportPos).immutable();
@@ -72,10 +72,8 @@ public record AirportActionPacket(ResourceLocation dimension, BlockPos airportPo
             case UPSERT_RUNWAY -> {
                 requirePoints(2);
                 if (width != Math.rint(width)) throw new IllegalArgumentException("Runway width must be whole blocks");
-                for (Vec3 point : points) if (point.x != Math.rint(point.x) || point.y != Math.rint(point.y) || point.z != Math.rint(point.z))
-                    throw new IllegalArgumentException("Runway coordinates must be whole blocks");
                 result.putString("Action","upsert_facility");
-                result.put("Facility",new AirportFacility(id,AirportFacility.Type.RUNWAY,BlockPos.containing(points.getFirst()),BlockPos.containing(points.getLast()),(int)width,clearance).save());
+                result.put("Facility",new AirportFacility(id,AirportFacility.Type.RUNWAY,wholeBlock(points.getFirst()),wholeBlock(points.getLast()),(int)width,clearance).save());
             }
             case UPSERT_STAND -> {
                 requirePoints(1); result.putString("Action","upsert_stand");
@@ -86,8 +84,19 @@ public record AirportActionPacket(ResourceLocation dimension, BlockPos airportPo
                 result.put("TaxiRoute",new AirportTaxiRoute(id,flag ? AirportTaxiRoute.Direction.INBOUND : AirportTaxiRoute.Direction.OUTBOUND,
                         runwayId,standId,points,width,clearance,speed,holdPoint).save());
             }
+            case APPLY_AUTO_LAYOUT -> {
+                requirePoints(2);
+                result.putString("Action", "auto_layout");
+                result.putLong("CornerA", wholeBlock(points.getFirst()).asLong());
+                result.putLong("CornerB", wholeBlock(points.getLast()).asLong());
+            }
         }
         return result;
+    }
+    private static BlockPos wholeBlock(Vec3 point) {
+        if (point.x != Math.rint(point.x) || point.y != Math.rint(point.y) || point.z != Math.rint(point.z))
+            throw new IllegalArgumentException("Airport coordinates must be whole blocks");
+        return BlockPos.containing(point);
     }
     private void requirePoints(int expected) { if (points.size() != expected) throw new IllegalArgumentException("Wrong point count"); }
     public static void handle(AirportActionPacket packet, Supplier<NetworkEvent.Context> supplier) {

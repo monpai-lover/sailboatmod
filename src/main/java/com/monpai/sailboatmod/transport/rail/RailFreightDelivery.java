@@ -144,8 +144,7 @@ final class RailFreightDelivery {
         ShippingTraceSavedData traces = ShippingTraceSavedData.get(level);
         long now = level.getGameTime();
         var town = TownService.getTownAt(level, job.route().source().stationPos());
-        double progress = train.parkedAt(job.route().target()) ? 1 : job.route().target().equals(train.destination())
-                && Double.isFinite(train.remaining()) ? Math.clamp(1 - train.remaining() / job.route().distanceMeters(), 0, 1) : 0;
+        double progress = outboundProgress(job.route(), train);
         double speed = Double.isFinite(train.speed()) ? Math.abs(train.speed()) * 20 : 0;
         for (ShipmentManifestEntry entry : job.manifest()) {
             ShippingOrder shipment = market.getShippingOrder(entry.shippingOrderId());
@@ -160,6 +159,25 @@ final class RailFreightDelivery {
                     shipment.sourceTerminalName(), shipment.targetTerminalName(), points, points.size(), progress,
                     existing == null ? now : existing.startedGameTime(), now, position.x, position.z, speed, List.of(), false));
         }
+    }
+
+    private static double outboundProgress(RailRoute route, RailFreightNative.TrainView train) {
+        if (train.parkedAt(route.target())) return 1;
+        if (route.stopovers().isEmpty()) {
+            return route.target().equals(train.destination()) && Double.isFinite(train.remaining())
+                    ? Math.clamp(1 - train.remaining() / route.distanceMeters(), 0, 1) : 0;
+        }
+        var visits = route.outboundStations();
+        if (train.destination() != null) {
+            int leg = visits.indexOf(train.destination());
+            if (leg < 0) return 0;
+            double progress = Double.isFinite(train.legDistance()) && train.legDistance() > 0 && Double.isFinite(train.remaining())
+                    ? Math.clamp(1 - train.remaining() / train.legDistance(), 0, 1) : 0;
+            return (leg + progress) / visits.size();
+        }
+        if (train.station() == null) return 0;
+        int parked = visits.indexOf(train.station());
+        return parked >= 0 && train.parkedAt(visits.get(parked)) ? (parked + 1.0) / visits.size() : 0;
     }
 
     private static boolean matchesOrder(Job job, ShipmentManifestEntry entry, @Nullable PurchaseOrder order) {

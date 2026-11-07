@@ -13,6 +13,7 @@ import net.minecraft.world.item.ItemStack;
 import net.minecraft.world.level.saveddata.SavedData;
 import org.jetbrains.annotations.Nullable;
 
+import java.util.ArrayList;
 import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -35,6 +36,7 @@ public final class RailFreightSavedData extends SavedData {
     private static final Set<String> JOB_KEYS = Set.of("JobId", "TrainId", "Route", "Manifest", "OwnedSchedule", "Phase", "Status");
     private static final Set<String> STATION_KEYS = Set.of("DimensionId", "StationPos", "StationId");
     private static final Set<String> ROUTE_KEYS = Set.of("Source", "Target", "SourceTerminal", "TargetTerminal", "BuyerWarehouse", "DistanceMeters", "RouteName");
+    private static final Set<String> STOPOVER_ROUTE_KEYS = Set.of("Source", "Target", "SourceTerminal", "TargetTerminal", "BuyerWarehouse", "DistanceMeters", "RouteName", "Stopovers");
     private static final Set<String> MANIFEST_KEYS = Set.of("ListingId", "ItemStack", "PurchaseOrderId", "ShippingOrderId", "RecipientUuid", "RecipientName", "Quantity");
 
     public enum Phase { PREPARED, OUTBOUND, RETURN }
@@ -299,15 +301,42 @@ public final class RailFreightSavedData extends SavedData {
         tag.putLong("BuyerWarehouse", route.buyerWarehouse().asLong());
         tag.putInt("DistanceMeters", route.distanceMeters());
         tag.putString("RouteName", route.routeName());
+        if (!route.stopovers().isEmpty()) {
+            ListTag stops = new ListTag();
+            for (int i = 0; i < route.stopovers().size(); i++) {
+                CompoundTag stop = writeStation(route.stopovers().get(i));
+                int seconds = route.stopoverSeconds().get(i);
+                if (seconds != RailRoute.DEFAULT_STOPOVER_SECONDS) stop.putInt("DwellSeconds", seconds);
+                stops.add(stop);
+            }
+            tag.put("Stopovers", stops);
+        }
         return tag;
     }
 
     private static RailRoute readRoute(CompoundTag tag) {
-        requireKeys(tag, ROUTE_KEYS);
+        boolean hasStops = tag.contains("Stopovers");
+        requireKeys(tag, hasStops ? STOPOVER_ROUTE_KEYS : ROUTE_KEYS);
         requireType(tag, "DistanceMeters", Tag.TAG_INT);
+        List<RailStationRef> stops = new ArrayList<>();
+        List<Integer> seconds = new ArrayList<>();
+        if (hasStops) {
+            for (Tag raw : compoundList(tag, "Stopovers", RailRoute.MAX_STOPOVERS)) {
+                CompoundTag stop = (CompoundTag) raw;
+                int dwell = RailRoute.DEFAULT_STOPOVER_SECONDS;
+                if (stop.contains("DwellSeconds")) {
+                    requireType(stop, "DwellSeconds", Tag.TAG_INT);
+                    dwell = stop.getInt("DwellSeconds");
+                    stop = stop.copy();
+                    stop.remove("DwellSeconds");
+                }
+                stops.add(readStation(stop));
+                seconds.add(dwell);
+            }
+        }
         return new RailRoute(readStation(compound(tag, "Source")), readStation(compound(tag, "Target")),
                 pos(tag, "SourceTerminal"), pos(tag, "TargetTerminal"), pos(tag, "BuyerWarehouse"),
-                tag.getInt("DistanceMeters"), string(tag, "RouteName"));
+                tag.getInt("DistanceMeters"), string(tag, "RouteName"), stops, seconds);
     }
 
     private static ShipmentManifestEntry readManifestEntry(CompoundTag tag) {

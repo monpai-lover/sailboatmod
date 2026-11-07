@@ -8,6 +8,7 @@ import net.minecraft.core.RegistryAccess;
 import net.minecraft.core.component.DataComponents;
 import net.minecraft.core.registries.BuiltInRegistries;
 import net.minecraft.nbt.CompoundTag;
+import net.minecraft.nbt.ListTag;
 import net.minecraft.nbt.Tag;
 import net.minecraft.network.chat.Component;
 import net.minecraft.server.Bootstrap;
@@ -109,6 +110,41 @@ class RailFreightSavedDataTest {
         assertTrue(ItemStack.isSameItemSameComponents(cargo(), entry.itemStack()));
         assertFalse(restored.begin(job(OTHER_JOB, OTHER_TRAIN, "purchase-a", "shipping-b", Phase.PREPARED)));
         assertFalse(restored.unregister(TRAIN));
+    }
+
+    @Test
+    void activeStopoversSurviveRestartInOrderWithCargoClaimAndOwnedSchedule() {
+        RailFreightSavedData data = prepared();
+        assertTrue(data.replace(job(JOB, TRAIN, "purchase-a", "shipping-a", Phase.OUTBOUND)));
+        CompoundTag serialized = data.save(new CompoundTag(), registries());
+        CompoundTag savedJob = serialized.getList("Jobs", Tag.TAG_COMPOUND).getCompound(0);
+        CompoundTag route = savedJob.getCompound("Route");
+        var stops = new ListTag();
+        for (int x : List.of(52, 28)) {
+            CompoundTag stop = route.getCompound("Source").copy();
+            stop.putLong("StationPos", new BlockPos(x, 64, 8).asLong());
+            stop.putUUID("StationId", new UUID(0, x));
+            stops.add(stop);
+        }
+        stops.getCompound(0).putInt("DwellSeconds", 45);
+        route.put("Stopovers", stops);
+        var owned = new CompoundTag();
+        ListTag entries = stops.copy();
+        entries.add(route.getCompound("Target").copy());
+        owned.put("Entries", entries);
+        savedJob.put("OwnedSchedule", owned);
+
+        RailFreightSavedData restored = RailFreightSavedData.load(serialized, registries());
+        assertTrue(restored.claimsPurchase("purchase-a"));
+        Job active = restored.job(TRAIN);
+        assertNotNull(active, "A valid ordered stopover list must retain the active job");
+        assertEquals(Phase.OUTBOUND, active.phase());
+        assertEquals(owned, active.ownedSchedule());
+        assertEquals(List.of(new BlockPos(52, 64, 8), new BlockPos(28, 64, 8), TARGET.stationPos()),
+                active.route().outboundStations().stream().map(RailStationRef::stationPos).toList());
+        assertEquals(List.of(45, 1), active.route().stopoverSeconds());
+        assertEquals(4, active.manifest().getFirst().quantity());
+        assertEquals(serialized, restored.save(new CompoundTag(), registries()));
     }
 
     @Test

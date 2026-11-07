@@ -7,6 +7,7 @@ import com.lowdragmc.lowdraglib2.gui.ui.elements.ScrollerView;
 import com.monpai.sailboatmod.client.ui.kit.*;
 import com.monpai.sailboatmod.client.AirSurfaceClientSelection;
 import com.monpai.sailboatmod.client.RegisteredVehicleControllerClientHooks;
+import com.monpai.sailboatmod.client.ui.vehicle.DestinationPicker;
 import com.monpai.sailboatmod.network.ModNetwork;
 import com.monpai.sailboatmod.network.packet.RegisteredVehicleControllerActionPacket;
 import com.monpai.sailboatmod.transport.control.*;
@@ -49,6 +50,8 @@ public final class RegisteredVehicleControllerScreen extends ThemedScreen {
     private final java.util.ArrayList<FuelEngineLabels> fuelEngineLabels=new java.util.ArrayList<>();
     private final java.util.ArrayList<FuelPropellerLabels> fuelPropellerLabels=new java.util.ArrayList<>();
     private Button fuelStartButton,autoReturnButton;
+    private long departureSubmittedTick = -1;
+    private boolean showImportedRoutes;
     private Label statusLabel;
     private ScrollerView content;
     private TabBar<String> tabs;
@@ -62,7 +65,8 @@ public final class RegisteredVehicleControllerScreen extends ThemedScreen {
         this.data = data;
         this.packetSender = Objects.requireNonNull(packetSender);
         if ("routes".equals(data.values().getString("InitialPage"))) page = "routes";
-        nameDraft = data.values().getString("Name");
+        nameDraft = data.values().getBoolean("ChooseRegistrationMode") && data.values().getBoolean("NamedRegistration")
+                ? "" : data.values().getString("Name");
         speedDraft = Double.toString(data.values().getDouble("MaxSpeed"));
         String throttle = data.values().getString("ThrottleTarget");
         groundThrottleDraft = throttle.isBlank() || throttle.equals("-") ? "1 0 0" : throttle;
@@ -105,6 +109,9 @@ public final class RegisteredVehicleControllerScreen extends ThemedScreen {
     }
 
     public void update(ControllerScreenData update, boolean repaint) {
+        boolean setupChanged = data.values().getBoolean("ChooseRegistrationMode") != update.values().getBoolean("ChooseRegistrationMode")
+                || data.values().getBoolean("RegistrationStructureReady") != update.values().getBoolean("RegistrationStructureReady")
+                || !data.values().getString("SetupStatus").equals(update.values().getString("SetupStatus"));
         boolean parkingChanged = !data.values().getString("ParkingBrake").equals(update.values().getString("ParkingBrake"))
                 || data.values().getBoolean("ParkingBrakeReleased") != update.values().getBoolean("ParkingBrakeReleased");
         boolean assistScopeChanged = supportsTakeoffAssist(data.values()) != supportsTakeoffAssist(update.values());
@@ -116,11 +123,14 @@ public final class RegisteredVehicleControllerScreen extends ThemedScreen {
                 ||data.values().getBoolean("Paused")!=update.values().getBoolean("Paused");
         boolean destinationsChanged = !data.values().getList("Destinations", Tag.TAG_STRING).equals(update.values().getList("Destinations", Tag.TAG_STRING))
                 || !data.values().getList("Routes", Tag.TAG_STRING).equals(update.values().getList("Routes", Tag.TAG_STRING))
+                || !Objects.equals(data.values().get(departureKey(data.values())), update.values().get(departureKey(update.values())))
+                || !departureKey(data.values()).equals(departureKey(update.values()))
                 || surfaceEditingChanged || data.values().getInt("ManifestCount") != update.values().getInt("ManifestCount");
         data = update;
+        if (repaint || data.values().getBoolean("Active")) departureSubmittedTick = -1;
         if (statusLabel != null) {
             statusLabel.setValue(statusText());
-            if (repaint || parkingChanged && "status".equals(page) || assistScopeChanged && "routes".equals(page)
+            if (repaint || setupChanged || parkingChanged && "status".equals(page) || assistScopeChanged && "routes".equals(page)
                     || aircraftModeChanged && ("power".equals(page) || "status".equals(page))
                     || destinationsChanged && "routes".equals(page)
                     ||(surfacesChanged||surfaceEditingChanged||fuelRowsChanged)&&"power".equals(page)) renderPage();
@@ -133,8 +143,10 @@ public final class RegisteredVehicleControllerScreen extends ThemedScreen {
         boolean preflightQueued = airportPreflightQueued(values);
         String state = values.getString("Status").toLowerCase(java.util.Locale.ROOT);
         String key = "screen.sailboatmod.controller.reason." + values.getString("Reason");
-        return Component.literal(values.getString("Name") + " · ")
-                .append(t(preflightQueued ? "airport_preflight_queued" : "status." + state))
+        var title = Component.literal(values.getString("Name") + " · ");
+        if (departureSubmittedTick >= 0) return title.append(t(values.getBoolean("AirRail")
+                ? "airport_departure_submitting" : "departure_submitting"));
+        return title.append(t(preflightQueued ? "airport_preflight_queued" : "status." + state))
                 .append("\n")
                 .append(I18n.exists(key) ? Component.translatable(key)
                         : t(preflightQueued ? "reason.airport_preflight_queued" : "reason.check_status"));
@@ -179,6 +191,12 @@ public final class RegisteredVehicleControllerScreen extends ThemedScreen {
         takeoffAssistToggle = null;
         takeoffAssistSave = null;
         CompoundTag values = data.values();
+        boolean chooseMode = values.getBoolean("ChooseRegistrationMode");
+        tabs.element().setDisplay(!chooseMode);
+        if (chooseMode) {
+            renderRegistrationChoices(values);
+            return;
+        }
         switch (page) {
             case "status" -> {
                 row(t("owner"), values.getString("Owner"));
@@ -210,7 +228,12 @@ public final class RegisteredVehicleControllerScreen extends ThemedScreen {
                         button("unregister", ControllerAction.UNREGISTER),
                         button("refresh", ControllerAction.REFRESH));
                 content.addScrollViewChild(actions);
-                content.addScrollViewChild(Ui.paragraph(t("registration_hint"), "sm-muted"));
+                content.addScrollViewChild(Ui.paragraph(t(values.getBoolean("Registered")
+                        ? "registered_setup_hint" : "registration_hint"), "sm-muted"));
+                String setup = values.getString("SetupStatus");
+                if (!setup.isBlank()) content.addScrollViewChild(Ui.paragraph(t("setup." + setup), "sm-muted"));
+                if (values.getBoolean("CanAutoConfigure"))
+                    content.addScrollViewChild(button("auto_configure", ControllerAction.AUTO_CONFIGURE));
             }
             case "cargo" -> {
                 content.addScrollViewChild(Ui.paragraph(t("cargo_hint"), "sm-muted"));
@@ -239,38 +262,41 @@ public final class RegisteredVehicleControllerScreen extends ThemedScreen {
                 row(t("manifest"), Integer.toString(values.getInt("ManifestCount")));
             }
             case "routes" -> {
-                row(t("terminal"), values.getString("Terminal"));
+                String departureKey = departureKey(values);
+                boolean knownDeparture = values.contains(departureKey, Tag.TAG_COMPOUND);
+                boolean importedRoutesAvailable = knownDeparture && !"AIR".equals(values.getString("Kind"))
+                        && !values.getList("Routes", Tag.TAG_STRING).isEmpty();
+                boolean manualRouteControls = !knownDeparture || importedRoutesAvailable && showImportedRoutes;
+                var departure = values.getCompound(departureKey);
+                String originName = departure.getString("OriginName");
+                row(t("terminal"), originName.isBlank() ? values.getString("Terminal") : originName);
                 row(t("progress"), values.getInt("Target") + " / " + values.getInt("PointCount"));
                 UIElement manage = Ui.wrapRow(Ui.GAP_S);
                 manage.addChildren(
                         button("AIR".equals(values.getString("Kind")) && "FIXED_WING".equals(values.getString("AircraftClass"))
                                 ? "bind_stand_airport" : "bind_terminal", ControllerAction.BIND_NEAREST_TERMINAL),
                         button("import_routes", ControllerAction.IMPORT_ROUTES));
-                content.addScrollViewChild(manage);
-                content.addScrollViewChild(Ui.paragraph(t("destination"), "sm-strong"));
-                ListTag destinations = values.getList("Destinations", Tag.TAG_STRING);
-                if (values.getList("Routes", Tag.TAG_STRING).isEmpty())
-                    content.addScrollViewChild(Ui.paragraph(t("no_destinations"), "sm-muted"));
-                int i = 0;
-                for (Tag raw : values.getList("Routes", Tag.TAG_STRING)) {
-                    final int index = i++;
-                    String label =
-                            (index == values.getInt("SelectedRoute") ? "● " : "")
-                                    + (index < destinations.size() ? destinations.getString(index) : raw.getAsString());
-                    Button destination = Ui.button(
-                                    Component.literal(label),
-                                    Ui.Tone.SECONDARY,
-                                    () -> { if (destinationSelectionAllowed(data.values())) send(ControllerAction.SELECT_ROUTE, "", index); });
-                    destination.setActive(destinationSelectionAllowed(values));
-                    content.addScrollViewChild(destination);
+                if (importedRoutesAvailable) manage.addChild(Ui.button(t(showImportedRoutes
+                        ? "hide_imported_routes" : "show_imported_routes"), Ui.Tone.SECONDARY, () -> {
+                    showImportedRoutes = !showImportedRoutes;
+                    renderPage();
+                }));
+                if (!knownDeparture) content.addScrollViewChild(manage);
+                content.addScrollViewChild(Ui.paragraph(knownDeparture ? DestinationPicker.title() : t("destination"), "sm-strong"));
+                if (knownDeparture) renderKnownDestinations(values, departureKey, departure);
+                if (manualRouteControls) {
+                    if (knownDeparture) content.addScrollViewChild(Ui.paragraph(t("imported_routes"), "sm-strong"));
+                    renderRouteDestinations(values);
                 }
                 if(values.getBoolean("AirRail"))renderFuelSummary();
                 UIElement drive = Ui.wrapRow(Ui.GAP_S);
-                fuelStartButton=Ui.button(t(fuelStartLabel(values)),Ui.Tone.SECONDARY,()->{
-                    if(fuelStartAllowed(data.values()))send(ControllerAction.START);
-                });
+                if (manualRouteControls) {
+                    fuelStartButton = Ui.button(t(fuelStartLabel(values)), Ui.Tone.SECONDARY, () -> {
+                        if (fuelStartAllowed(data.values())) send(ControllerAction.START);
+                    });
+                    drive.addChild(fuelStartButton);
+                }
                 drive.addChildren(
-                        fuelStartButton,
                         button("pause", ControllerAction.PAUSE),
                         button("resume", ControllerAction.RESUME),
                         button("stop", ControllerAction.STOP));
@@ -291,7 +317,10 @@ public final class RegisteredVehicleControllerScreen extends ThemedScreen {
                                                 : "auto_unload_off"),
                                 Ui.Tone.SECONDARY,
                                 () -> send(ControllerAction.TOGGLE_AUTO_UNLOAD)));
-                content.addScrollViewChild(Ui.paragraph(t("route_hint"), "sm-muted"));
+                String hint = !knownDeparture ? "route_hint"
+                        : values.getBoolean("AirRail") ? "airport_departure_hint" : "departure_hint";
+                content.addScrollViewChild(Ui.paragraph(t(hint), "sm-muted"));
+                if (knownDeparture) content.addScrollViewChild(manage);
                 refreshFuelValues();
                 if (supportsTakeoffAssist(values)) renderTakeoffAssist(values);
             }
@@ -577,7 +606,9 @@ public final class RegisteredVehicleControllerScreen extends ThemedScreen {
         return values.getBoolean("Active") && !values.getBoolean("Paused")
                 && (values.getBoolean("DepartureFlightPending") || values.getBoolean("ReturnFlightPending"));
     }
-    private static boolean returnEditingAllowed(CompoundTag values){return !values.getBoolean("Active")&&!values.getBoolean("Paused");}
+    private static boolean returnEditingAllowed(CompoundTag values) {
+        return !values.getBoolean("AutoReturnLocked") && !values.getBoolean("Active") && !values.getBoolean("Paused");
+    }
     private static boolean validFuelTicks(CompoundTag values,String key){return values.contains(key,Tag.TAG_LONG)&&values.getLong(key)>=0;}
     private static Component fuelDuration(CompoundTag values,String key,boolean ceiling) {
         if(!validFuelTicks(values,key))return t("fuel_unknown");
@@ -681,6 +712,82 @@ public final class RegisteredVehicleControllerScreen extends ThemedScreen {
         return I18n.exists(key) ? I18n.get(key) : value;
     }
 
+    private static String departureKey(CompoundTag values) {
+        return values.contains("KnownDeparture", Tag.TAG_COMPOUND) ? "KnownDeparture" : "AirportDeparture";
+    }
+
+    private void renderRegistrationChoices(CompoundTag values) {
+        boolean ready = values.getBoolean("RegistrationStructureReady");
+        boolean named = values.getBoolean("NamedRegistration");
+        var choices = new java.util.ArrayList<Button>();
+        content.addScrollViewChild(Ui.paragraph(t(ready ? "registration_choose_mode" : "registration_assemble_first"), "sm-strong"));
+        if (named) {
+            var name = Ui.field(nameDraft, t("name"), value -> {
+                nameDraft = value;
+                choices.forEach(choice -> choice.setActive(ready && validRegistrationName()));
+            });
+            name.layout(l -> l.widthPercent(100));
+            content.addScrollViewChild(name);
+        }
+        for (VehicleRegistrationMode mode : VehicleRegistrationMode.values()) {
+            Button choice = Ui.button(t("registration_mode." + mode.name().toLowerCase(Locale.ROOT)),
+                    Ui.Tone.PRIMARY, () -> {
+                        var current = data.values();
+                        if (!current.getBoolean("ChooseRegistrationMode") || !current.getBoolean("RegistrationStructureReady")) return;
+                        if (current.getBoolean("NamedRegistration")) {
+                            if (!validRegistrationName()) return;
+                            send(ControllerAction.REGISTER, mode.name() + ":" + nameDraft.strip(), 0);
+                        } else send(ControllerAction.REGISTER, mode.name(), 0);
+                    });
+            choices.add(choice);
+            choice.setActive(ready && (!named || validRegistrationName()));
+            content.addScrollViewChild(choice);
+        }
+        content.addScrollViewChild(button("refresh", ControllerAction.REFRESH));
+    }
+
+    private boolean validRegistrationName() {
+        String name = nameDraft.strip();
+        return !name.isBlank() && name.codePointCount(0, name.length()) <= 64
+                && nameDraft.codePoints().noneMatch(Character::isISOControl);
+    }
+
+    private void renderKnownDestinations(CompoundTag values, String key, CompoundTag departure) {
+        if (!departure.getString("Reason").isBlank())
+            content.addScrollViewChild(Ui.paragraph(t("reason." + departure.getString("Reason")), "sm-muted"));
+        long origin = departure.getLong("Origin");
+        for (Tag raw : departure.getList("Options", Tag.TAG_COMPOUND)) {
+            CompoundTag option = (CompoundTag) raw;
+            long target = option.getLong("Pos");
+            DestinationPicker.add(content, option.getString("Name"), option.getDouble("Distance"),
+                    Component.empty(), destinationSelectionAllowed(values), () -> {
+                var current = data.values();
+                if (departureSubmittedTick >= 0 || !destinationSelectionAllowed(current)
+                        || !departureKey(current).equals(key) || !current.getCompound(key).equals(departure)) return;
+                departureSubmittedTick = ticks();
+                statusLabel.setValue(statusText());
+                send("KnownDeparture".equals(key) ? ControllerAction.START_KNOWN_DESTINATION
+                        : ControllerAction.START_AIRPORT_DESTINATION, origin + ":" + target, 0);
+            });
+        }
+    }
+
+    private void renderRouteDestinations(CompoundTag values) {
+        ListTag routes = values.getList("Routes", Tag.TAG_STRING);
+        ListTag destinations = values.getList("Destinations", Tag.TAG_STRING);
+        if (routes.isEmpty()) content.addScrollViewChild(Ui.paragraph(t("no_destinations"), "sm-muted"));
+        for (int index = 0; index < routes.size(); index++) {
+            int routeIndex = index;
+            String label = (index == values.getInt("SelectedRoute") ? "● " : "")
+                    + (index < destinations.size() ? destinations.getString(index) : routes.getString(index));
+            Button button = Ui.button(Component.literal(label), Ui.Tone.SECONDARY, () -> {
+                if (destinationSelectionAllowed(data.values())) send(ControllerAction.SELECT_ROUTE, "", routeIndex);
+            });
+            button.setActive(destinationSelectionAllowed(values));
+            content.addScrollViewChild(button);
+        }
+    }
+
     private static boolean destinationSelectionAllowed(CompoundTag values) {
         return !values.getBoolean("Active") && !values.getBoolean("Paused") && values.getInt("ManifestCount") == 0;
     }
@@ -747,6 +854,10 @@ public final class RegisteredVehicleControllerScreen extends ThemedScreen {
 
     @Override
     protected void onUiTick() {
+        if (departureSubmittedTick >= 0 && ticks() - departureSubmittedTick >= 100) {
+            departureSubmittedTick = -1;
+            statusLabel.setValue(statusText());
+        }
         if (ticks() % 40 == 0) send(ControllerAction.REFRESH, "", 1);
     }
 }

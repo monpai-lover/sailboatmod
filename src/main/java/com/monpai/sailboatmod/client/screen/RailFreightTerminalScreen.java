@@ -5,31 +5,59 @@ import com.lowdragmc.lowdraglib2.gui.ui.elements.ScrollerView;
 import com.monpai.sailboatmod.client.ui.kit.*;
 import com.monpai.sailboatmod.network.ModNetwork;
 import com.monpai.sailboatmod.network.packet.rail.RailTerminalActionPacket;
+import com.monpai.sailboatmod.transport.rail.RailRoute;
+import com.monpai.sailboatmod.transport.rail.ui.RailTerminalStopovers;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.resources.language.I18n;
 import net.minecraft.core.BlockPos;
 import net.minecraft.nbt.*;
 import net.minecraft.network.chat.Component;
 import net.minecraft.resources.ResourceLocation;
-import java.util.UUID;
+import java.util.*;
 
 public final class RailFreightTerminalScreen extends ThemedScreen {
     private CompoundTag data;
     private ScrollerView content;
     private String nameDraft;
-    private boolean pendingRename;
+    private long pendingRenameUntil;
+    private boolean stopoverPage;
+    private long pendingStopoversUntil;
+    private RailTerminalActionPacket.Action pendingStopoverAction;
+    private boolean actionTimedOut;
+    private RailTerminalStopovers.Choice stopoverTarget;
+    private record StopoverRow(RailTerminalStopovers.Choice choice, String seconds) {}
+    private final List<StopoverRow> stopoverDraft = new ArrayList<>();
+    private List<StopoverRow> savedStops = List.of();
+    private long stopoverRevision;
     private static final UUID NONE = new UUID(0, 0);
+    private static final long ACTION_TIMEOUT_TICKS = 100;
     public RailFreightTerminalScreen(CompoundTag data) { super(t("title")); this.data = data.copy(); this.nameDraft = data.getString("CustomName"); }
     public static void openOrUpdate(CompoundTag data, boolean open) {
         var mc = Minecraft.getInstance();
         if (mc.level == null || !mc.level.dimension().location().toString().equals(data.getString("Dimension")) || !data.hasUUID("TerminalId")) return;
         if (mc.screen instanceof RailFreightTerminalScreen screen
                 && screen.data.getUUID("TerminalId").equals(data.getUUID("TerminalId")) && screen.data.getLong("Pos") == data.getLong("Pos")) {
-            if (data.getLong("Revision") >= screen.data.getLong("Revision") && !screen.data.equals(data)) {
-                if (screen.nameDraft.equals(screen.data.getString("CustomName")) || screen.pendingRename && data.getString("Result").equals("saved"))
+            String result = data.getString("Result");
+            String action = data.getString("ReplyAction");
+            boolean renameReply = !result.isBlank() && (action.equals(RailTerminalActionPacket.Action.RENAME.name())
+                    || action.isBlank() && screen.pendingRenameUntil != 0 && !supportsStopovers(data));
+            boolean stopsReply = !result.isBlank() && screen.pendingStopoverAction != null
+                    && action.equals(screen.pendingStopoverAction.name());
+            if (data.getLong("Revision") >= screen.data.getLong("Revision")
+                    && (!screen.data.equals(data) || renameReply || stopsReply)) {
+                if (screen.nameDraft.equals(screen.data.getString("CustomName")) || renameReply && result.equals("saved"))
                     screen.nameDraft = data.getString("CustomName");
-                if (!data.getString("Result").isBlank()) screen.pendingRename = false;
-                screen.data = data.copy(); screen.renderContent();
+                if (renameReply) screen.pendingRenameUntil = 0;
+                boolean reloadStopovers = !screen.stopoversDirty();
+                if (stopsReply) {
+                    screen.pendingStopoversUntil = 0;
+                    screen.pendingStopoverAction = null;
+                    reloadStopovers |= result.equals("saved");
+                }
+                if (renameReply || stopsReply) screen.actionTimedOut = false;
+                screen.data = data.copy();
+                if (reloadStopovers) screen.selectStopoverTarget(screen.stopoverTarget);
+                screen.renderContent();
             }
         } else if (open) mc.setScreen(new RailFreightTerminalScreen(data));
     }
@@ -41,15 +69,28 @@ public final class RailFreightTerminalScreen extends ThemedScreen {
         content = Ui.scroller("sm-pane"); root.addChildren(content); renderContent(); return root;
     }
     @Override protected void onUiTick() {
-        if (ticks() % 40 == 0) send(RailTerminalActionPacket.Action.REFRESH, BlockPos.ZERO, NONE);
+        long now = ticks();
+        boolean renameExpired = pendingRenameUntil != 0 && now >= pendingRenameUntil;
+        boolean stopsExpired = pendingStopoversUntil != 0 && now >= pendingStopoversUntil;
+        if (renameExpired || stopsExpired) {
+            if (renameExpired) pendingRenameUntil = 0;
+            if (stopsExpired) {
+                pendingStopoversUntil = 0;
+                pendingStopoverAction = null;
+            }
+            actionTimedOut = true;
+            renderContent();
+        }
+        if (now % 40 == 0) send(RailTerminalActionPacket.Action.REFRESH, BlockPos.ZERO, NONE);
     }
     private void send(RailTerminalActionPacket.Action action, BlockPos station, UUID train) {
         ModNetwork.CHANNEL.sendToServer(new RailTerminalActionPacket(ResourceLocation.parse(data.getString("Dimension")),
                 BlockPos.of(data.getLong("Pos")), data.getUUID("TerminalId"), data.getLong("Revision"), action, station, train));
     }
     private void rename(String value) {
-        if (pendingRename || !com.monpai.sailboatmod.dock.FacilityNames.validOverride(value)) return;
-        pendingRename = true;
+        if (pendingRenameUntil != 0 || !com.monpai.sailboatmod.dock.FacilityNames.validOverride(value)) return;
+        pendingRenameUntil = ticks() + ACTION_TIMEOUT_TICKS;
+        actionTimedOut = false;
         ModNetwork.CHANNEL.sendToServer(new RailTerminalActionPacket(ResourceLocation.parse(data.getString("Dimension")),
                 BlockPos.of(data.getLong("Pos")), data.getUUID("TerminalId"), data.getLong("Revision"),
                 RailTerminalActionPacket.Action.RENAME, BlockPos.ZERO, NONE, value));
@@ -59,15 +100,27 @@ public final class RailFreightTerminalScreen extends ThemedScreen {
         if (content == null) return;
         content.clearAllScrollViewChildren();
         line(t("terminal_name", data.getString("Name")));
+        if (supportsStopovers(data)) {
+            UIElement tabs = Ui.wrapRow(Ui.GAP_S);
+            tabs.addChildren(
+                    Ui.button(t("terminal_tab"), stopoverPage ? Ui.Tone.SECONDARY : Ui.Tone.PRIMARY, () -> showStopovers(false)),
+                    Ui.button(t("stopover_tab"), stopoverPage ? Ui.Tone.PRIMARY : Ui.Tone.SECONDARY, () -> showStopovers(true)));
+            content.addScrollViewChild(tabs);
+        }
+        String result = data.getString("Result");
+        if (!result.isBlank()) line(t("result." + result));
+        if (actionTimedOut) line(t("action_timeout"));
+        if (stopoverPage && supportsStopovers(data)) {
+            renderStopovers();
+            return;
+        }
         var name = Ui.field(nameDraft, Component.literal(data.getString("Name")), value -> nameDraft = value);
         content.addScrollViewChild(name);
         UIElement names = Ui.wrapRow(Ui.GAP_S);
         var saveName = Ui.button(t("save_name"), Ui.Tone.PRIMARY, () -> rename(nameDraft));
         var followTown = Ui.button(t("follow_town"), Ui.Tone.SECONDARY, () -> rename(""));
-        saveName.setActive(!pendingRename); followTown.setActive(!pendingRename); names.addChildren(saveName, followTown);
+        saveName.setActive(pendingRenameUntil == 0); followTown.setActive(pendingRenameUntil == 0); names.addChildren(saveName, followTown);
         content.addScrollViewChild(names); line(t("name_hint")); line(t("native_name_hint"));
-        String result = data.getString("Result");
-        if (!result.isBlank()) line(t("result." + result));
         line(t("warehouse", data.getString("Warehouse").isBlank() ? t("none") : Component.literal(data.getString("Warehouse"))));
         line(t("station", data.getString("Station").isBlank() ? t("none") : Component.literal(data.getString("Station"))));
         if (!data.getBoolean("StationValid")) line(t("station_missing"));
@@ -106,5 +159,158 @@ public final class RailFreightTerminalScreen extends ThemedScreen {
             if (!train.getBoolean("Owned")) line(t("not_owner"));
             content.addScrollViewChild(actions);
         }
+    }
+
+    private void showStopovers(boolean show) {
+        stopoverPage = show;
+        renderContent();
+    }
+
+    private static boolean supportsStopovers(CompoundTag data) {
+        return data.contains("StopoverPlans", Tag.TAG_LIST);
+    }
+
+    private boolean stopoversDirty() { return !stopoverDraft.equals(savedStops); }
+
+    private List<RailTerminalStopovers.Plan> savedStopovers() {
+        return data.getList("StopoverPlans", Tag.TAG_COMPOUND).stream()
+                .map(raw -> RailTerminalStopovers.Plan.load((CompoundTag) raw)).toList();
+    }
+
+    private void selectStopoverTarget(RailTerminalStopovers.Choice target) {
+        stopoverTarget = target;
+        stopoverRevision = data.getLong("Revision");
+        savedStops = savedStopovers().stream().filter(plan -> plan.destination().equals(target))
+                .findFirst().map(RailFreightTerminalScreen::stopoverRows).orElse(List.of());
+        stopoverDraft.clear();
+        stopoverDraft.addAll(savedStops);
+    }
+
+    private static List<StopoverRow> stopoverRows(RailTerminalStopovers.Plan plan) {
+        var rows = new ArrayList<StopoverRow>();
+        for (int i = 0; i < plan.stops().size(); i++)
+            rows.add(new StopoverRow(plan.stops().get(i), Integer.toString(plan.dwellSeconds().get(i))));
+        return List.copyOf(rows);
+    }
+
+    private void renderStopovers() {
+        boolean timed = data.getBoolean("TimedStopovers");
+        line(t(timed ? "stopover_timed_hint" : "stopover_hint"));
+        if (data.getBoolean("StopoversUnreadable")) {
+            line(t("result.invalid_stopover_data"));
+            return;
+        }
+        Map<RailTerminalStopovers.Choice, String> choices = new LinkedHashMap<>();
+        for (Tag raw : data.getList("StopoverChoices", Tag.TAG_COMPOUND)) {
+            var entry = (CompoundTag) raw;
+            choices.put(RailTerminalStopovers.Choice.load(entry), entry.getString("Name"));
+        }
+        if (stopoverTarget == null) {
+            var targets = new LinkedHashSet<>(choices.keySet());
+            savedStopovers().forEach(plan -> targets.add(plan.destination()));
+            if (targets.isEmpty()) line(t("stopover_no_targets"));
+            for (var target : targets)
+                content.addScrollViewChild(Ui.button(Component.literal(stopoverLabel(target, choices)), Ui.Tone.SECONDARY,
+                        () -> { selectStopoverTarget(target); renderContent(); }));
+            return;
+        }
+        boolean stale = stopoverRevision != data.getLong("Revision");
+        boolean editable = pendingStopoversUntil == 0 && !stale;
+        boolean targetAvailable = choices.containsKey(stopoverTarget);
+        line(t("stopover_target", stopoverLabel(stopoverTarget, choices)));
+        if (!targetAvailable) line(t("stopover_unavailable"));
+        if (stale) line(t("stopover_stale_draft"));
+        if (stopoverDraft.isEmpty()) line(t("stopover_direct"));
+        var save = Ui.button(t("stopover_save"), Ui.Tone.PRIMARY, () -> saveStopovers(choices.keySet()));
+        var discard = Ui.button(t("stopover_discard"), Ui.Tone.SECONDARY,
+                () -> { selectStopoverTarget(stopoverTarget); renderContent(); });
+        var changeTarget = Ui.button(t("stopover_choose_target"), Ui.Tone.SECONDARY,
+                () -> { selectStopoverTarget(null); renderContent(); });
+        Runnable refreshControls = () -> {
+            save.setActive(stopoversSaveable(choices.keySet()));
+            discard.setActive(pendingStopoversUntil == 0 && (stopoversDirty() || stale));
+            changeTarget.setActive(pendingStopoversUntil == 0 && !stopoversDirty());
+        };
+        for (int i = 0; i < stopoverDraft.size(); i++) {
+            int index = i;
+            var row = stopoverDraft.get(i);
+            var choice = row.choice();
+            line(Component.literal((i + 1) + ". " + stopoverLabel(choice, choices)));
+            if (!choices.containsKey(choice)) line(t("stopover_unavailable"));
+            UIElement actions = Ui.wrapRow(Ui.GAP_S);
+            if (timed) {
+                actions.addChildren(Ui.text(t("stopover_seconds")));
+                var field = Ui.signedField(row.seconds(), t("stopover_seconds"), 1, RailRoute.MAX_STOPOVER_SECONDS, value -> {
+                    stopoverDraft.set(index, new StopoverRow(choice, value));
+                    refreshControls.run();
+                });
+                field.layout(l -> l.width(66));
+                field.setActive(editable);
+                Ui.setClass(field, "sm-invalid", !row.seconds().isEmpty() && !validStopoverSeconds(row));
+                actions.addChildren(field);
+            }
+            var up = Ui.button(t("stopover_up"), Ui.Tone.SECONDARY, () -> moveStopover(index, -1));
+            var down = Ui.button(t("stopover_down"), Ui.Tone.SECONDARY, () -> moveStopover(index, 1));
+            var remove = Ui.button(t("stopover_remove"), Ui.Tone.SECONDARY,
+                    () -> { stopoverDraft.remove(index); renderContent(); });
+            up.setActive(editable && i > 0);
+            down.setActive(editable && i + 1 < stopoverDraft.size());
+            remove.setActive(editable);
+            actions.addChildren(up, down, remove);
+            content.addScrollViewChild(actions);
+        }
+        UIElement controls = Ui.wrapRow(Ui.GAP_S);
+        refreshControls.run();
+        controls.addChildren(save, discard, changeTarget);
+        content.addScrollViewChild(controls);
+        if (!targetAvailable || stopoverDraft.size() >= RailRoute.MAX_STOPOVERS) return;
+        for (var choice : choices.keySet()) {
+            if (choice.terminalPos().equals(stopoverTarget.terminalPos()) || choice.station().equals(stopoverTarget.station())
+                    || stopoverDraft.stream().map(StopoverRow::choice).anyMatch(stop -> stop.terminalPos().equals(choice.terminalPos())
+                    || stop.station().equals(choice.station()))) continue;
+            var add = Ui.button(t("stopover_add", stopoverLabel(choice, choices)), Ui.Tone.SECONDARY,
+                    () -> { stopoverDraft.add(new StopoverRow(choice, Integer.toString(RailRoute.DEFAULT_STOPOVER_SECONDS))); renderContent(); });
+            add.setActive(editable);
+            content.addScrollViewChild(add);
+        }
+    }
+
+    private static String stopoverLabel(RailTerminalStopovers.Choice choice, Map<RailTerminalStopovers.Choice, String> choices) {
+        String name = choices.getOrDefault(choice, "");
+        String position = choice.station().stationPos().toShortString();
+        return name.isBlank() ? position : name + " · " + position;
+    }
+
+    private void moveStopover(int index, int delta) {
+        Collections.swap(stopoverDraft, index, index + delta);
+        renderContent();
+    }
+
+    private static boolean validStopoverSeconds(StopoverRow row) {
+        return Ui.isNumberWithin(row.seconds(), 1, RailRoute.MAX_STOPOVER_SECONDS);
+    }
+
+    private boolean stopoversSaveable(Set<RailTerminalStopovers.Choice> available) {
+        return stopoverTarget != null && pendingStopoversUntil == 0 && stopoverRevision == data.getLong("Revision")
+                && stopoversDirty() && (stopoverDraft.isEmpty() || available.contains(stopoverTarget)
+                && stopoverDraft.stream().map(StopoverRow::choice).allMatch(available::contains))
+                && (!data.getBoolean("TimedStopovers") || stopoverDraft.stream().allMatch(RailFreightTerminalScreen::validStopoverSeconds));
+    }
+
+    private void saveStopovers(Set<RailTerminalStopovers.Choice> available) {
+        if (!stopoversSaveable(available)) return;
+        var dimension = ResourceLocation.parse(data.getString("Dimension"));
+        var position = BlockPos.of(data.getLong("Pos"));
+        var id = data.getUUID("TerminalId");
+        var choices = stopoverDraft.stream().map(StopoverRow::choice).toList();
+        var packet = data.getBoolean("TimedStopovers")
+                ? RailTerminalActionPacket.setTimedStopovers(dimension, position, id, stopoverRevision, stopoverTarget, choices,
+                        stopoverDraft.stream().map(row -> Integer.parseInt(row.seconds().trim())).toList())
+                : RailTerminalActionPacket.setStopovers(dimension, position, id, stopoverRevision, stopoverTarget, choices);
+        pendingStopoversUntil = ticks() + ACTION_TIMEOUT_TICKS;
+        pendingStopoverAction = packet.action();
+        actionTimedOut = false;
+        ModNetwork.CHANNEL.sendToServer(packet);
+        renderContent();
     }
 }

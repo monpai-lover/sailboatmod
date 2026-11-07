@@ -18,6 +18,7 @@ public final class AirportMapOverlay {
     public static final int SAVED=0xFF84B9D9,VALID=0xFF8FD5AA,RESERVED=0xFFE5AE61,INVALID=0xFFEF8888;
     public static final int OUTBOUND=0xFF79C6F0,INBOUND=0xFFC09AEF;
     public static final int SELECTED=0xFF79E8F4,DRAFT=0xFFFFD16F,CONFLICT=0xFFFF9471;
+    private static final int AUTO_REGION = 0xFF87B7FF;
     private AirportMapOverlay() {}
     public static void render(GuiGraphics graphics,Font font,RoadPlannerMapView view,ClaimMapViewport viewport,AirportPlannerModel model) {
         if(viewport.width()<4||viewport.height()<4)return;
@@ -57,6 +58,37 @@ public final class AirportMapOverlay {
                 graphics.fill(x-5,y-1,x+6,y+2,0xFFF3F4E8);
             }
         } finally {graphics.disableScissor();}
+    }
+    public static void renderAutoLayout(GuiGraphics g, Font font, RoadPlannerMapView view, ClaimMapViewport vp,
+                                        BlockPos first, BlockPos second, AirportEditorSession.Proposal proposal) {
+        if (vp.width() < 4 || vp.height() < 4) return;
+        g.enableScissor(vp.x(), vp.y(), vp.right(), vp.bottom());
+        try {
+            if (second != null) {
+                int minX = Math.min(first.getX(), second.getX()), maxX = Math.max(first.getX(), second.getX()) + 1;
+                int minZ = Math.min(first.getZ(), second.getZ()), maxZ = Math.max(first.getZ(), second.getZ()) + 1;
+                int y = first.getY();
+                polygon(g, view, vp, List.of(new Vec3(minX,y,minZ), new Vec3(maxX,y,minZ),
+                        new Vec3(maxX,y,maxZ), new Vec3(minX,y,maxZ)), AUTO_REGION, true, true);
+            }
+            point(g, font, view, vp, center(first), "1", AUTO_REGION, true);
+            if (second != null) point(g, font, view, vp, center(second), "2", AUTO_REGION, true);
+            if (proposal == null) return;
+            AirportFacility proposedRunway = proposal.changedRunway();
+            runway(g, font, view, vp, proposedRunway.id(), center(proposedRunway.start()), center(proposedRunway.end()),
+                    proposedRunway.width(), DRAFT, false, true);
+            String proposedStandId = "";
+            for (AirportTaxiRoute route : proposal.ground().taxiRoutes()) {
+                if (!route.runwayId().equals(proposedRunway.id())) continue;
+                proposedStandId = route.standId();
+                boolean outbound = route.direction() == AirportTaxiRoute.Direction.OUTBOUND;
+                taxi(g, font, view, vp, route.id(), route.points(), route.width(), route.holdPointIndex(),
+                        outbound ? OUTBOUND : INBOUND, SAVED, outbound, false, true);
+            }
+            proposal.ground().stand(proposedStandId).ifPresent(stand -> {
+                stand(g, font, view, vp, stand.id(), stand.position(), stand.yawDegrees(), stand.length(), stand.width(), VALID, false, true);
+            });
+        } finally { g.disableScissor(); }
     }
     static int stateColor(AirportScreenData data,String kind,String id) {
         for(String status:data.statuses()) {

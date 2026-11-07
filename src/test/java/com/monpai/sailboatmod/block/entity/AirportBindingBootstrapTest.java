@@ -1,6 +1,7 @@
 package com.monpai.sailboatmod.block.entity;
 
 import static org.junit.jupiter.api.Assertions.*;
+import com.monpai.sailboatmod.route.RouteDefinition;
 import com.monpai.sailboatmod.transport.LogisticsCarrier;
 import com.monpai.sailboatmod.transport.air.AircraftClass;
 import com.monpai.sailboatmod.transport.air.FlightMission;
@@ -103,6 +104,90 @@ class AirportBindingBootstrapTest {
         set(controller,"flightRecovering",true);set(controller,"recoveryRequired",true);
         assertTrue(bind(),"Source metadata discovery is independent of retired native calibration/cache fields");
         assertFalse((boolean)get(controller,"active"));assertFalse(c.isCarrierInsideDockZone(controller));
+    }
+    @Test void arrivedV5UsesItsNewSourceAirportRouteBeforeAnOlderImportEvenWithDestinationUnloaded() throws Exception {
+        var d = airport(new BlockPos(-1600, 81, 560), false);
+        var saved = AirportSavedData.get(level);
+        var destination = publish(saved, c.getBlockPos(), "FixedWingC");
+        var fallbackDestination = publish(saved, new BlockPos(-896, 81, 560), "FixedWingE");
+        publish(saved, d.getBlockPos(), "FixedWingD");
+        set(DockBlockEntity.class, d, "dockName", "FixedWingD");
+        level.unloaded.add(new ChunkPos(c.getBlockPos()));
+        level.unloaded.add(new ChunkPos(fallbackDestination.pos()));
+        var localReturn = airportRoute("D airport route", "FixedWingD", "FixedWingC", -1600, -32);
+        var staleOutbound = airportRoute("previous flight", "FixedWingC", "FixedWingD", -32, -1600);
+        var importedReturn = airportRoute("duplicate imported return", "FixedWingD", "FixedWingC", -1600, -32);
+        var importedSideRoute = airportRoute("imported connection", "FixedWingD", "FixedWingE", -1600, -896);
+        setAirportRoutes(d, localReturn);
+        var imports = new ArrayList<>(List.of(staleOutbound, importedReturn, importedSideRoute));
+        set(controller, "routeCatalog", imports);
+        set(controller, "sourceTerminal", d.getBlockPos());
+
+        var destinations = airportDestinations(d, saved);
+        assertEquals(Map.of(destination, localReturn, fallbackDestination, importedSideRoute), destinations);
+        assertEquals(List.of(destination, fallbackDestination), List.copyOf(destinations.keySet()));
+        assertEquals(List.of(staleOutbound, importedReturn, importedSideRoute), imports,
+                "Opening the menu must not rewrite the saved catalog");
+        assertNull(get(controller, "destinationTerminal"));
+
+        saved.remove("minecraft:overworld", destination.pos());
+        assertEquals(Map.of(fallbackDestination, importedSideRoute), airportDestinations(d, saved),
+                "A later lookup must discard a stale route whose airport was removed");
+    }
+    @Test void controllerImportRemainsAvailableWhenBothAirportNamesChangedAndLocalRoutesAreUnusable() throws Exception {
+        var d = airport(new BlockPos(-1600, 81, 560), false);
+        var saved = AirportSavedData.get(level);
+        publish(saved, d.getBlockPos(), "FixedWingD");
+        publish(saved, c.getBlockPos(), "FixedWingC");
+        publish(saved, d.getBlockPos(), "West Field");
+        var destination = publish(saved, c.getBlockPos(), "East Field");
+        set(DockBlockEntity.class, d, "dockName", "West Field");
+        level.unloaded.add(new ChunkPos(c.getBlockPos()));
+        set(controller, "sourceTerminal", d.getBlockPos());
+        setAirportRoutes(d, airportRoute("wrong origin", "East Field", "West Field", -32, -1600),
+                airportRoute("unknown target", "West Field", "Removed airport", -1600, -32));
+        var imported = airportRoute("legacy return", "fixedwingd", "fixedwingc", -1600, -32);
+        set(controller, "routeCatalog", List.of(imported));
+
+        assertEquals(Map.of(destination, imported), airportDestinations(d, saved));
+    }
+    @Test void destinationCatalogRejectsSelfForeignOriginAndAmbiguousHistoricalAirportNames() throws Exception {
+        var d = airport(new BlockPos(-1600, 81, 560), false);
+        var saved = AirportSavedData.get(level);
+        publish(saved, d.getBlockPos(), "FixedWingD");
+        set(DockBlockEntity.class, d, "dockName", "FixedWingD");
+        publish(saved, c.getBlockPos(), "FixedWingC");
+        publish(saved, old.getBlockPos(), "Shared Airfield");
+        var other = new BlockPos(768, 81, 560);
+        publish(saved, other, "Shared Airfield");
+        publish(saved, other, "Other Airfield");
+        set(controller, "sourceTerminal", d.getBlockPos());
+        setAirportRoutes(d, airportRoute("self", "FixedWingD", "FixedWingD", -1600, -1600),
+                airportRoute("ambiguous legacy target", "FixedWingD", "Shared Airfield", -1600, 136));
+        set(controller, "routeCatalog", List.of(
+                airportRoute("stale foreign import", "Other Airfield", "FixedWingC", 768, -32),
+                airportRoute("ambiguous legacy origin", "Shared Airfield", "FixedWingC", 136, -32)));
+
+        assertTrue(airportDestinations(d, saved).isEmpty());
+    }
+    private static AirportSavedData.AirportSnapshot publish(AirportSavedData saved, BlockPos pos, String name) {
+        var airport = new AirportSavedData.AirportSnapshot("minecraft:overworld", pos, name, "town", "owner", List.of());
+        saved.put(airport);
+        return airport;
+    }
+    private static RouteDefinition airportRoute(String name, String source, String destination, int fromX, int toX) {
+        var points = List.of(new Vec3(fromX, -60, 560), new Vec3(fromX, -12, 560),
+                new Vec3(toX, -12, 560), new Vec3(toX, -60, 560));
+        return new RouteDefinition(name, points, "Owner", "owner", 1, Math.abs(toX - fromX) + 96, source, destination);
+    }
+    private static void setAirportRoutes(AirportBlockEntity airport, RouteDefinition... routes) throws Exception {
+        set(DockBlockEntity.class, airport, "routes", new ArrayList<>(List.of(routes)));
+    }
+    @SuppressWarnings("unchecked")
+    private Map<AirportSavedData.AirportSnapshot, RouteDefinition> airportDestinations(AirportBlockEntity source, AirportSavedData saved) throws Exception {
+        Method method = RegisteredVehicleControllerBlockEntity.class.getDeclaredMethod("knownAirportDestinations", AirportBlockEntity.class, AirportSavedData.class);
+        method.setAccessible(true);
+        return (Map<AirportSavedData.AirportSnapshot, RouteDefinition>) method.invoke(controller, source, saved);
     }
     private boolean bind()throws Exception{Method m=RegisteredVehicleControllerBlockEntity.class.getDeclaredMethod("bindParkedStandAirport",ServerLevel.class);m.setAccessible(true);return(boolean)m.invoke(controller,level);}
     private PhysicalVehicleView view(AABB hull,Vec3 speed){return new PhysicalVehicleView(physical,"minecraft:overworld",new Vec3(84.94,83,515.58),new Vec3(-1,0,0),speed,hull,86.75,true);}

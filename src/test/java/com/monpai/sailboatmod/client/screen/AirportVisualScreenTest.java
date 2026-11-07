@@ -209,6 +209,90 @@ class AirportVisualScreenTest {
         assertEquals(81, screen.planner().groundY());
     }
 
+    @Test void automaticRegionPreviewsBeforeSendingAndRejectsAnUnreviewedRevision() throws Exception {
+        var packets = new ArrayList<AirportActionPacket>();
+        var screen = new AirportScreen(autoLayoutSnapshot(4, true, ""), packets::add);
+        invoke(screen, "beginAutoLayout");
+        UIElement body = screen.buildBody();
+        assertTrue(translations(body).contains("screen.sailboatmod.airport.auto_layout"));
+        pickRegionCorner(screen, new Vec3(.5, 81, .5));
+        pickRegionCorner(screen, new Vec3(127.5, 81, 63.5));
+        assertTrue(translations(body).contains("screen.sailboatmod.airport.auto_layout_ready"));
+        assertTrue(packets.isEmpty());
+
+        screen.update(autoLayoutSnapshot(5, true, ""), false);
+        invoke(screen, "saveAutoLayout");
+        assertTrue(packets.isEmpty(), "The new revision must be reviewed before applying the preview");
+        invoke(screen, "previewAutoLayout");
+        invoke(screen, "saveAutoLayout");
+        var action = packets.getFirst();
+        assertEquals("APPLY_AUTO_LAYOUT", action.action().name());
+        assertEquals(5, action.revision());
+        assertEquals(List.of(new Vec3(0, 81, 0), new Vec3(127, 81, 63)), action.points());
+        screen.update(autoLayoutSnapshot(5, true, "foreign_town"), true);
+        assertTrue(translations(body).contains("screen.sailboatmod.airport.auto_layout_ready"), "A failed server check must retain the proposed geometry");
+    }
+
+    @Test void automaticLayoutPreservesManualDraftAndIsHiddenOnOlderServers() throws Exception {
+        var legacy = new AirportScreen(autoLayoutSnapshot(2, false, ""), packet -> fail("Legacy server received auto layout"));
+        assertFalse(translations(legacy.buildBody()).contains("screen.sailboatmod.airport.auto_layout"));
+
+        var screen = new AirportScreen(autoLayoutSnapshot(2, true, ""), packet -> fail("Unsaved manual work was bypassed"));
+        assertTrue(screen.planner().startNew(AirportPlannerModel.Tool.STAND));
+        screen.planner().click(new Vec3(20.5, 81, 16.5));
+        var before = screen.planner().draft().orElseThrow();
+        var body = buildSelected(screen);
+        precisionFields(screen).get("width").setText("", true);
+        invoke(screen, "beginAutoLayout");
+        pickRegionCorner(screen, new Vec3(.5, 81, .5));
+        pickRegionCorner(screen, new Vec3(127.5, 81, 63.5));
+        invoke(screen, "saveAutoLayout");
+        assertEquals(before, screen.planner().draft().orElseThrow());
+        assertTrue(translations(body).contains("screen.sailboatmod.airport.auto_layout_manual_draft"));
+        invoke(screen, "endAutoLayout");
+        assertEquals("", precisionFields(screen).get("width").getText());
+    }
+
+    @Test void lostAutomaticLayoutAcknowledgementUnlocksRetryButAcknowledgedScanRemainsPending() throws Exception {
+        var packets = new ArrayList<AirportActionPacket>();
+        var screen = new AirportScreen(autoLayoutSnapshot(2, true, ""), packets::add);
+        invoke(screen, "beginAutoLayout");
+        pickRegionCorner(screen, new Vec3(.5, 81, .5));
+        pickRegionCorner(screen, new Vec3(127.5, 81, 63.5));
+        invoke(screen, "saveAutoLayout");
+        invoke(screen, "saveAutoLayout");
+        assertEquals(1, packets.size());
+
+        advanceEditorClock(screen, 101);
+        invoke(screen, "saveAutoLayout");
+        assertEquals(2, packets.size(), "No acceptance reply must leave the draft available to retry");
+        assertEquals(packets.getFirst(), packets.getLast());
+
+        screen.update(autoLayoutSnapshot(2, true, "pending"), false);
+        advanceEditorClock(screen, 205);
+        invoke(screen, "saveAutoLayout");
+        assertEquals(2, packets.size(), "A confirmed server scan owns the request until it replies");
+    }
+
+    private static void advanceEditorClock(AirportScreen screen, long tick) throws Exception {
+        var clock = com.monpai.sailboatmod.client.ui.kit.ThemedScreen.class.getDeclaredField("ticks");
+        clock.setAccessible(true);
+        clock.setLong(screen, tick);
+        screen.onUiTick();
+    }
+
+    private static AirportScreenData autoLayoutSnapshot(long revision, boolean supported, String result) {
+        return new AirportScreenData(Level.OVERWORLD.location(), new BlockPos(0, 81, 0), "Airport", "Town", "Owner", true,
+                revision, List.of(), AirportGroundLayout.empty().withRevision(revision),
+                supported ? List.of("feature|auto_layout|1") : List.of(), result);
+    }
+
+    private static void pickRegionCorner(AirportScreen screen, Vec3 value) throws Exception {
+        var method = AirportScreen.class.getDeclaredMethod("pickAutoLayoutCorner", Vec3.class);
+        method.setAccessible(true);
+        method.invoke(screen, value);
+    }
+
     private static AirportScreenData snapshot(long revision) {
         return new AirportScreenData(Level.OVERWORLD.location(), BlockPos.ZERO, "Airport", "Town", "Owner", true,
                 revision, List.of(), new AirportGroundLayout(revision, List.of(), List.of()), List.of(), "");

@@ -3,6 +3,7 @@ package com.monpai.sailboatmod.client.screen;
 import com.lowdragmc.lowdraglib2.gui.ui.UIElement;
 import com.lowdragmc.lowdraglib2.gui.ui.elements.Button;
 import com.lowdragmc.lowdraglib2.gui.ui.elements.Label;
+import com.lowdragmc.lowdraglib2.gui.ui.elements.TextField;
 import com.lowdragmc.lowdraglib2.gui.ui.elements.TextElement;
 import com.lowdragmc.lowdraglib2.gui.ui.event.UIEventListener;
 import com.monpai.sailboatmod.network.packet.RegisteredVehicleControllerActionPacket;
@@ -21,6 +22,10 @@ import org.junit.jupiter.api.Test;
 import static org.junit.jupiter.api.Assertions.*;
 
 class RegisteredVehicleMenuUiTest {
+    private static final BlockPos AIRPORT_ORIGIN = new BlockPos(-213, 81, 19);
+    private static final BlockPos AIRPORT_EAST = new BlockPos(240, 81, 126);
+    private static final BlockPos AIRPORT_WEST = new BlockPos(-460, 75, 290);
+
     @Test void rMenuOpensTheExistingRoutesPageAndShowsServerDestinationNames() {
         var screen = new RegisteredVehicleControllerScreen(data(false, false));
         UIElement body = screen.buildBody();
@@ -62,6 +67,146 @@ class RegisteredVehicleMenuUiTest {
         assertTrue(translations.contains("screen.sailboatmod.controller.no_destinations"));
     }
 
+    @Test void aircraftDestinationClickSendsOneStartWithTheAuthoritativeOriginAndTarget() throws Exception {
+        var sent = new ArrayList<RegisteredVehicleControllerActionPacket>();
+        var snapshot = aircraftData(false, false, false);
+        var screen = new RegisteredVehicleControllerScreen(snapshot, sent::add);
+        UIElement body = screen.buildBody();
+
+        assertNotNullButton(body, "East Airport");
+        assertNull(button(body, "Ocean B"), "Aircraft departure must replace previously imported route buttons");
+        assertFalse(hasTranslatedButton(body, "start"));
+        assertFalse(hasTranslatedButton(body, "fuel_check_start"));
+        click(assertNotNullButton(body, "West Airport"));
+
+        assertEquals(1, sent.size());
+        var packet = sent.getFirst();
+        assertEquals("START_AIRPORT_DESTINATION", packet.action().name());
+        assertEquals(AIRPORT_ORIGIN.asLong() + ":" + AIRPORT_WEST.asLong(), packet.value());
+        assertEquals(0, packet.index());
+        assertEquals(snapshot.registrationId(), packet.registrationId());
+        assertEquals(snapshot.controllerPos(), packet.controllerPos());
+        screen.update(aircraftData(false, false, false), false);
+        click(assertNotNullButton(body, "West Airport"));
+        assertEquals(1, sent.size(), "An earlier periodic refresh is not the start acknowledgment");
+        screen.update(aircraftData(false, false, false), true);
+        click(assertNotNullButton(body, "West Airport"));
+        assertEquals(2, sent.size(), "After a server rejection, the same destination can be retried");
+    }
+
+    @Test void aircraftDestinationCannotStartAfterAnActivePausedOrCargoSnapshot() throws Exception {
+        for (var snapshot : List.of(aircraftData(true, false, false), aircraftData(false, true, false),
+                aircraftData(false, false, true))) {
+            var sent = new ArrayList<RegisteredVehicleControllerActionPacket>();
+            var screen = new RegisteredVehicleControllerScreen(aircraftData(false, false, false), sent::add);
+            UIElement body = screen.buildBody();
+            var previousButton = assertNotNullButton(body, "West Airport");
+            screen.update(snapshot, false);
+
+            click(previousButton);
+            var currentButton = button(body, "West Airport");
+            if (currentButton != null) click(currentButton);
+            assertTrue(sent.isEmpty(), "Even an earlier button callback must respect the current aircraft state");
+        }
+    }
+
+    @Test void everyRegisteredModeUsesTheSameKnownDestinationAction() throws Exception {
+        for (String kind : List.of("SEA", "LAND", "AIR")) {
+            var base = aircraftData(false, false, false);
+            var values = base.values();
+            values.putString("Kind", kind);
+            values.putBoolean("AirRail", "AIR".equals(kind));
+            values.put("KnownDeparture", values.getCompound("AirportDeparture"));
+            values.remove("AirportDeparture");
+            var sent = new ArrayList<RegisteredVehicleControllerActionPacket>();
+            var screen = new RegisteredVehicleControllerScreen(
+                    new ControllerScreenData(base.controllerPos(), base.registrationId(), values), sent::add);
+            UIElement body = screen.buildBody();
+            assertNull(button(body, "Ocean B"), kind);
+            click(assertNotNullButton(body, "West Airport"));
+            assertEquals(1, sent.size(), kind);
+            assertEquals("START_KNOWN_DESTINATION", sent.getFirst().action().name(), kind);
+            assertEquals(AIRPORT_ORIGIN.asLong() + ":" + AIRPORT_WEST.asLong(), sent.getFirst().value(), kind);
+        }
+    }
+
+    @Test void unifiedRegistrationOffersVehicleTypesBeforeShowingAdvancedControls() throws Exception {
+        var base = data(false, false);
+        var values = base.values();
+        values.putBoolean("ChooseRegistrationMode", true);
+        values.putBoolean("RegistrationStructureReady", true);
+        var sent = new ArrayList<RegisteredVehicleControllerActionPacket>();
+        UIElement body = new RegisteredVehicleControllerScreen(
+                new ControllerScreenData(base.controllerPos(), base.registrationId(), values), sent::add).buildBody();
+        assertNull(button(body, "Ocean B"));
+        assertFalse(hasTranslatedButton(body, "register"));
+        for (String mode : List.of("water", "land", "fixed_wing", "rotorcraft", "airship")) {
+            click(assertNotNullButton(body, "screen.sailboatmod.controller.registration_mode." + mode));
+        }
+        assertEquals(List.of("WATER", "LAND", "FIXED_WING", "ROTORCRAFT", "AIRSHIP"),
+                sent.stream().map(RegisteredVehicleControllerActionPacket::value).toList());
+        assertTrue(sent.stream().allMatch(p -> p.action() == ControllerAction.REGISTER));
+    }
+
+    @Test void firstRegistrationSendsNameAndVehicleTypeTogether() throws Exception {
+        var base = data(false, false);
+        var values = base.values();
+        values.putBoolean("ChooseRegistrationMode", true);
+        values.putBoolean("NamedRegistration", true);
+        values.putBoolean("RegistrationStructureReady", true);
+        var sent = new ArrayList<RegisteredVehicleControllerActionPacket>();
+        UIElement body = new RegisteredVehicleControllerScreen(
+                new ControllerScreenData(base.controllerPos(), base.registrationId(), values), sent::add).buildBody();
+        var register = assertNotNullButton(body, "screen.sailboatmod.controller.registration_mode.fixed_wing");
+        click(register);
+        assertTrue(sent.isEmpty());
+        var fields = new ArrayList<TextField>();
+        walk(body, element -> { if (element instanceof TextField field) fields.add(field); });
+        assertEquals(1, fields.size());
+        fields.getFirst().setText("Test:Airliner", true);
+        click(register);
+        assertEquals(1, sent.size());
+        assertEquals(ControllerAction.REGISTER, sent.getFirst().action());
+        assertEquals("FIXED_WING:Test:Airliner", sent.getFirst().value());
+    }
+
+    @Test void emptyAircraftDepartureDoesNotOfferImportedRoutesOrStandaloneStart() {
+        var snapshot = aircraftData(false, false, false);
+        var departure = snapshot.values().getCompound("AirportDeparture");
+        departure.put("Options", new ListTag());
+        departure.putString("Reason", "airport_stand_required");
+        UIElement body = new RegisteredVehicleControllerScreen(snapshot).buildBody();
+        assertNull(button(body, "East Airport"));
+        assertNull(button(body, "Ocean B"));
+        assertFalse(hasTranslatedButton(body, "start"));
+        assertFalse(hasTranslatedButton(body, "fuel_check_start"));
+    }
+
+    private static ControllerScreenData aircraftData(boolean active, boolean paused, boolean manifest) {
+        var base = data(active, manifest);
+        var tag = base.values();
+        tag.putString("Kind", "AIR");
+        tag.putString("AircraftClass", "FIXED_WING");
+        tag.putBoolean("AirRail", true);
+        tag.putBoolean("Paused", paused);
+        var departure = new CompoundTag();
+        departure.putLong("Origin", AIRPORT_ORIGIN.asLong());
+        departure.putString("OriginName", "Origin Airport");
+        var options = new ListTag();
+        options.add(airportOption(AIRPORT_EAST, "East Airport"));
+        options.add(airportOption(AIRPORT_WEST, "West Airport"));
+        departure.put("Options", options);
+        tag.put("AirportDeparture", departure);
+        return new ControllerScreenData(base.controllerPos(), base.registrationId(), tag);
+    }
+
+    private static CompoundTag airportOption(BlockPos position, String name) {
+        var option = new CompoundTag();
+        option.putLong("Pos", position.asLong());
+        option.putString("Name", name);
+        return option;
+    }
+
     private static ControllerScreenData data(boolean active, boolean manifest) {
         var tag = new CompoundTag();
         tag.putString("InitialPage", "routes"); tag.putString("Name", "Registered vehicle");
@@ -79,6 +224,14 @@ class RegisteredVehicleMenuUiTest {
         var found = new ArrayList<Button>();
         walk(root, element -> { if (element instanceof Button b && b.text.getText().getString().contains(name)) found.add(b); });
         return found.isEmpty() ? null : found.getFirst();
+    }
+    private static boolean hasTranslatedButton(UIElement root, String suffix) {
+        var found = new ArrayList<Button>();
+        walk(root, element -> {
+            if (element instanceof Button b && b.text.getText().getContents() instanceof TranslatableContents text
+                    && text.getKey().equals("screen.sailboatmod.controller." + suffix)) found.add(b);
+        });
+        return !found.isEmpty();
     }
     private static void click(Button button) throws Exception {
         var callback = Button.class.getDeclaredField("onClick"); callback.setAccessible(true);

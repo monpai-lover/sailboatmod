@@ -21,28 +21,68 @@ public final class WaterDestinationService {
     }
     private static final Map<ServerLevel,Map<BlockPos,View>> VIEWS=new WeakHashMap<>();
     private WaterDestinationService() { }
+
+    public record Destination(BlockPos pos, String name, double distance) { }
+    public record Departures(boolean pending, List<Destination> destinations) { }
+
+    public static Departures knownDestinations(ServerLevel level, DockBlockEntity source, boolean requireReturn) {
+        if (!PortDockSnapshot.isPort(source)) return new Departures(false, List.of());
+        BlockPos origin = source.getBlockPos();
+        var catalog = KnownVoyageService.catalog(level, origin, null);
+        if (!catalog.ports().containsKey(origin) || catalog.routes().isEmpty()) return new Departures(false, List.of());
+        View view = view(level, origin, catalog);
+        if (view == null || !view.ready) return new Departures(true, List.of());
+        List<Destination> destinations = view.trips.entrySet().stream()
+                .filter(entry -> !origin.equals(entry.getKey()) && catalog.ports().containsKey(entry.getKey()))
+                .filter(entry -> !requireReturn || KnownVoyageService.reversible(catalog, entry.getValue().routeIds()))
+                .map(entry -> new Destination(entry.getKey(), catalog.ports().get(entry.getKey()).dockName(), entry.getValue().length()))
+                .sorted(Comparator.comparingDouble(Destination::distance).thenComparingLong(value -> value.pos().asLong()))
+                .limit(512)
+                .toList();
+        return new Departures(false, destinations);
+    }
+
     public static RouteDefinition knownItinerary(ServerLevel level,DockBlockEntity source,BlockPos target) {
-        if(!PortDockSnapshot.isPort(source)||target.equals(source.getBlockPos()))return null;
-        var catalog=KnownVoyageService.catalog(level,source.getBlockPos(),null);
-        if(!catalog.ports().containsKey(target))return null;
-        var cache=VIEWS.computeIfAbsent(level,l->new LinkedHashMap<>());View view=cache.get(source.getBlockPos());
-        if(view==null||view.catalog.revision()!=catalog.revision()||!view.catalog.routes().equals(catalog.routes())) {
-            if(view!=null)view.cancelled=true;
-            if(cache.size()>=64&&!cache.containsKey(source.getBlockPos()))return null;
-            if(cache.values().stream().filter(v->!v.ready&&!v.cancelled).count()>=8)return null;
-            View requested=new View(catalog);cache.put(source.getBlockPos().immutable(),requested);
-            BlockPos origin=source.getBlockPos().immutable();
-            WaterRouteTaskExecutor.submit(()->WaterRouteCancellation.run(()->requested.cancelled,
-                    ()->KnownWaterRouteGraph.build(catalog.routes()).fromDock(origin)))
-                    .whenComplete((trips,error)->level.getServer().execute(()->{
-                        if(requested.cancelled)return;
-                        requested.trips=error==null?trips:Map.of();requested.ready=true;
-                    }));
-            return null;
+        return knownItinerary(level, source, target, false);
+    }
+
+    public static RouteDefinition knownItinerary(ServerLevel level, DockBlockEntity source, BlockPos target, boolean requireReturn) {
+        if (!PortDockSnapshot.isPort(source) || target.equals(source.getBlockPos())) return null;
+        var catalog = KnownVoyageService.catalog(level, source.getBlockPos(), null);
+        var port = catalog.ports().get(target);
+        if (port == null || !catalog.ports().containsKey(source.getBlockPos())) return null;
+        View view = view(level, source.getBlockPos(), catalog);
+        if (view == null || !view.ready) return null;
+        var trip = view.trips.get(target);
+        if (trip == null || requireReturn && !KnownVoyageService.reversible(catalog, trip.routeIds())) return null;
+        return KnownVoyageService.definition(trip, source.getDockName(), port.dockName());
+    }
+
+    private static View view(ServerLevel level, BlockPos origin, KnownVoyageService.Catalog catalog) {
+        var cache = VIEWS.computeIfAbsent(level, ignored -> new LinkedHashMap<>(16, .75F, true));
+        View current = cache.get(origin);
+        if (current != null && !current.cancelled && current.catalog.revision() == catalog.revision()
+                && current.catalog.routes().equals(catalog.routes())) return current;
+        if (current != null) current.cancelled = true;
+        if (cache.values().stream().filter(value -> !value.ready && !value.cancelled).count() >= 8) return null;
+        if (cache.size() >= 64 && current == null) {
+            BlockPos oldestReady = cache.entrySet().stream()
+                    .filter(entry -> entry.getValue().ready || entry.getValue().cancelled)
+                    .map(Map.Entry::getKey).findFirst().orElse(null);
+            if (oldestReady == null) return null;
+            cache.remove(oldestReady);
         }
-        if(!view.ready)return null;
-        var trip=view.trips.get(target);if(trip==null)return null;
-        return KnownVoyageService.definition(trip,source.getDockName(),catalog.ports().get(target).dockName());
+        View requested = new View(catalog);
+        BlockPos source = origin.immutable();
+        cache.put(source, requested);
+        WaterRouteTaskExecutor.submit(() -> WaterRouteCancellation.run(() -> requested.cancelled,
+                () -> KnownWaterRouteGraph.build(catalog.routes()).fromDock(source)))
+                .whenComplete((trips, error) -> level.getServer().execute(() -> {
+                    if (requested.cancelled) return;
+                    requested.trips = error == null ? trips : Map.of();
+                    requested.ready = true;
+                }));
+        return requested;
     }
     public static int ensureMarketRoute(ServerLevel level,DockBlockEntity source,DockBlockEntity target) {
         if(!PortDockSnapshot.isPort(target))return -1;

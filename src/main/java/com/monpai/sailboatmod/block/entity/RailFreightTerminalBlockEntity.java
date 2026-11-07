@@ -10,6 +10,7 @@ import com.monpai.sailboatmod.registry.ModBlockEntities;
 import com.monpai.sailboatmod.transport.LogisticsCarrier;
 import com.monpai.sailboatmod.transport.rail.*;
 import com.monpai.sailboatmod.transport.rail.ui.RailTerminalRegistry;
+import com.monpai.sailboatmod.transport.rail.ui.RailTerminalStopovers;
 import net.minecraft.core.BlockPos;
 import net.minecraft.core.HolderLookup;
 import net.minecraft.nbt.*;
@@ -25,12 +26,28 @@ public final class RailFreightTerminalBlockEntity extends DockBlockEntity implem
     private UUID terminalId = UUID.randomUUID();
     private long revision;
     private RailStationRef bound;
+    private final Map<BlockPos, RailTerminalStopovers.Plan> stopoverPlans = new LinkedHashMap<>();
+    private Tag unreadableStopovers;
     public RailFreightTerminalBlockEntity(BlockPos pos, BlockState state) { super(ModBlockEntities.RAIL_FREIGHT_TERMINAL_BLOCK_ENTITY.get(), pos, state); }
     public UUID terminalId() { return terminalId; }
     public long revision() { return revision; }
     @Override public Optional<RailStationRef> stationRef() {
         if (!(level instanceof ServerLevel server) || !validTownBinding()) return Optional.empty();
         return RailFreightService.inspectStation(server, bound.stationPos()).filter(bound::equals);
+    }
+    @Override public List<RailStationRef> railStopovers(BlockPos targetTerminal) {
+        var plan = stopoverPlans.get(targetTerminal);
+        return plan == null ? List.of() : plan.stops().stream().map(RailTerminalStopovers.Choice::station).toList();
+    }
+    @Override public List<Integer> railStopoverSeconds(BlockPos targetTerminal) {
+        var plan = stopoverPlans.get(targetTerminal);
+        return plan == null ? List.of() : plan.dwellSeconds();
+    }
+    @Override public boolean railStopoversMatch(BlockPos targetTerminal, RailStationRef targetStation) {
+        if (unreadableStopovers != null) return false;
+        var plan = stopoverPlans.get(targetTerminal);
+        return plan == null || level instanceof ServerLevel server && plan.destination().station().equals(targetStation)
+                && matchesStopoverChoice(server, plan.destination());
     }
     private boolean validTownBinding() {
         if (level == null || bound == null || !bound.dimensionId().equals(level.dimension().location().toString())
@@ -89,6 +106,10 @@ public final class RailFreightTerminalBlockEntity extends DockBlockEntity implem
                     if (!pos.equals(worldPosition) && level.hasChunkAt(pos) && level.getBlockEntity(pos) instanceof RailFreightTerminalBlockEntity other
                             && selected.equals(other.bound)) return "station_in_use";
                 }
+                if (!selected.equals(bound)) {
+                    stopoverPlans.clear();
+                    unreadableStopovers = null;
+                }
                 bound = selected;
                 var network = TerminalNetworkSavedData.get(level);
                 var previous = network.getEntry(level.dimension().location().toString(), worldPosition.asLong());
@@ -106,10 +127,59 @@ public final class RailFreightTerminalBlockEntity extends DockBlockEntity implem
                         ? RailFreightService.unregister(player, packet.trainId())
                         : RailFreightService.setEnabled(player, packet.trainId(), packet.action() == RailTerminalActionPacket.Action.ENABLE);
             }
+            case SET_STOPOVERS -> {
+                var requested = packet.stopovers();
+                var current = stopoverPlans.get(requested.destination().terminalPos());
+                return saveStopovers(server, legacyStopoverEdit(requested, current));
+            }
+            case SET_TIMED_STOPOVERS -> { return saveStopovers(server, packet.stopovers()); }
             default -> changed = false;
         }
         if (!changed) return "rejected";
         revision++; setChanged(); return "saved";
+    }
+    static RailTerminalStopovers.Plan legacyStopoverEdit(RailTerminalStopovers.Plan requested,
+                                                         RailTerminalStopovers.Plan current) {
+        if (current == null || !current.destination().equals(requested.destination()))
+            return new RailTerminalStopovers.Plan(requested.destination(), requested.stops());
+        var seconds = new ArrayList<Integer>(requested.stops().size());
+        for (var stop : requested.stops()) {
+            int previous = current.stops().indexOf(stop);
+            seconds.add(previous < 0 ? RailRoute.DEFAULT_STOPOVER_SECONDS : current.dwellSeconds().get(previous));
+        }
+        return new RailTerminalStopovers.Plan(requested.destination(), requested.stops(), seconds);
+    }
+    private String saveStopovers(ServerLevel server, RailTerminalStopovers.Plan plan) {
+        if (unreadableStopovers != null) return "invalid_stopover_data";
+        var target = plan.destination();
+        var current = stopoverPlans.get(target.terminalPos());
+        // A saved route can be cleared even if its remote terminal was removed or unloaded.
+        if (plan.stops().isEmpty() && current != null && current.destination().equals(target)) {
+            stopoverPlans.remove(target.terminalPos());
+        } else {
+            var source = stationRef().orElse(null);
+            if (!matchesStopoverChoice(server, target)) return "invalid_stopover_target";
+            if (!plan.validFrom(worldPosition, source)) return "invalid_stopover_station";
+            if (plan.stops().isEmpty()) return "saved";
+            if (current == null && stopoverPlans.size() >= RailTerminalStopovers.MAX_ROUTES) return "stopover_limit";
+            RailStationRef previous = source;
+            for (var stop : plan.stops()) {
+                if (!matchesStopoverChoice(server, stop)) return "invalid_stopover_station";
+                if (!RailFreightService.stationsConnected(server, previous, stop.station())) return "invalid_stopover_connection";
+                previous = stop.station();
+            }
+            if (!RailFreightService.stationsConnected(server, previous, target.station())) return "invalid_stopover_connection";
+            if (plan.equals(current)) return "saved";
+            stopoverPlans.put(target.terminalPos(), plan);
+        }
+        revision++;
+        setChanged();
+        return "saved";
+    }
+    private static boolean matchesStopoverChoice(ServerLevel server, RailTerminalStopovers.Choice choice) {
+        BlockPos pos = choice.terminalPos();
+        return server.hasChunkAt(pos) && server.getBlockEntity(pos) instanceof RailFreightTerminalBlockEntity terminal
+                && terminal.terminalId.equals(choice.terminalId()) && terminal.stationRef().filter(choice.station()::equals).isPresent();
     }
     public CompoundTag snapshot(ServerPlayer player, String result) {
         CompoundTag data = new CompoundTag();
@@ -146,10 +216,37 @@ public final class RailFreightTerminalBlockEntity extends DockBlockEntity implem
             if (train.target() != null) entry.putString("Target", train.target().stationPos().toShortString());
             trains.add(entry);
         }
-        data.put("Trains", trains); return data;
+        data.put("Trains", trains);
+        data.putBoolean("TimedStopovers", true);
+        data.putBoolean("StopoversUnreadable", unreadableStopovers != null);
+        ListTag plans = new ListTag();
+        stopoverPlans.values().forEach(plan -> plans.add(plan.save()));
+        data.put("StopoverPlans", plans);
+        ListTag choices = new ListTag();
+        RailStationRef stopoverSource = stationRef().orElse(null);
+        if (stopoverSource != null) {
+            RailTerminalRegistry.get(server).stream().filter(pos -> !pos.equals(worldPosition))
+                    .sorted(Comparator.<BlockPos>comparingDouble(pos -> pos.distSqr(worldPosition)).thenComparingLong(BlockPos::asLong))
+                    .limit(64).forEach(pos -> {
+                        if (!server.hasChunkAt(pos) || !(server.getBlockEntity(pos) instanceof RailFreightTerminalBlockEntity other)) return;
+                        other.stationRef().filter(station -> RailFreightService.stationsConnected(server, stopoverSource, station)).ifPresent(station -> {
+                            CompoundTag entry = new RailTerminalStopovers.Choice(pos, other.terminalId, station).save();
+                            entry.putString("Name", other.getDockName());
+                            choices.add(entry);
+                        });
+                    });
+        }
+        data.put("StopoverChoices", choices);
+        return data;
     }
     public void reply(ServerPlayer player, String result, boolean open) {
-        if (canManage(player)) ModNetwork.CHANNEL.send(player, new RailTerminalSnapshotPacket(snapshot(player, result), open));
+        reply(player, result, open, null);
+    }
+    public void reply(ServerPlayer player, String result, boolean open, RailTerminalActionPacket.Action action) {
+        if (!canManage(player)) return;
+        CompoundTag data = snapshot(player, result);
+        if (action != null && !result.isBlank()) data.putString("ReplyAction", action.name());
+        ModNetwork.CHANNEL.send(player, new RailTerminalSnapshotPacket(data, open));
     }
     @Override protected void refreshTerminalNetworkEntry() {
         if (!(level instanceof ServerLevel server)) return;
@@ -191,6 +288,12 @@ public final class RailFreightTerminalBlockEntity extends DockBlockEntity implem
     @Override protected void saveAdditional(CompoundTag tag, HolderLookup.Provider provider) {
         super.saveAdditional(tag, provider); tag.putUUID("RailTerminalId", terminalId); tag.putLong("RailRevision", revision);
         if (bound != null) { tag.putString("RailDimension", bound.dimensionId()); tag.putLong("RailStationPos", bound.stationPos().asLong()); tag.putUUID("RailStationId", bound.stationId()); }
+        if (unreadableStopovers != null) tag.put("RailStopovers", unreadableStopovers.copy());
+        else if (!stopoverPlans.isEmpty()) {
+            ListTag plans = new ListTag();
+            stopoverPlans.values().forEach(plan -> plans.add(plan.save()));
+            tag.put("RailStopovers", plans);
+        }
     }
     @Override public void loadAdditional(CompoundTag tag, HolderLookup.Provider provider) {
         super.loadAdditional(tag, provider);
@@ -200,5 +303,23 @@ public final class RailFreightTerminalBlockEntity extends DockBlockEntity implem
         var dimension = net.minecraft.resources.ResourceLocation.tryParse(tag.getString("RailDimension"));
         if (tag.hasUUID("RailStationId") && dimension != null && dimension.toString().equals(tag.getString("RailDimension")))
             bound = new RailStationRef(tag.getString("RailDimension"), BlockPos.of(tag.getLong("RailStationPos")), tag.getUUID("RailStationId"));
+        stopoverPlans.clear();
+        unreadableStopovers = null;
+        Tag raw = tag.get("RailStopovers");
+        if (raw == null) return;
+        try {
+            if (!(raw instanceof ListTag plans) || plans.size() > RailTerminalStopovers.MAX_ROUTES
+                    || !plans.isEmpty() && plans.getElementType() != Tag.TAG_COMPOUND)
+                throw new IllegalArgumentException("Invalid rail stopover catalog");
+            for (Tag value : plans) {
+                var plan = RailTerminalStopovers.Plan.load((CompoundTag) value);
+                if (plan.stops().isEmpty() || !plan.validFrom(worldPosition, bound)
+                        || stopoverPlans.putIfAbsent(plan.destination().terminalPos(), plan) != null)
+                    throw new IllegalArgumentException("Invalid or duplicate rail stopover route");
+            }
+        } catch (IllegalArgumentException failure) {
+            stopoverPlans.clear();
+            unreadableStopovers = raw.copy();
+        }
     }
 }

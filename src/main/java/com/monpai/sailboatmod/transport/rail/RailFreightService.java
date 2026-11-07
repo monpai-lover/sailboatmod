@@ -141,12 +141,15 @@ public final class RailFreightService {
         if (!(carrier instanceof RailFreightCarrier rail) || rail.level() != level || source == null || target == null
                 || !serverThread(level) || !binding(level, sourceTerminal, source) || !binding(level, targetTerminal, target)
                 || warehouse(level, buyerWarehouse, target) == null) return Optional.empty();
+        var stopovers = configuredStopovers(level, source, target, sourceTerminal, targetTerminal);
+        if (stopovers == null) return Optional.empty();
         return read(level, Optional.empty(), api -> {
             TrainView view = api.atStation(level, source).orElse(null);
             if (view == null || !view.id().equals(rail.getTransportUuid()) || !rail.ownerId().equals(view.owner())
                     || !ready(RailFreightSavedData.get(level), source, view)) return Optional.empty();
-            return api.plan(level, view.id(), view.owner(), source, target).map(path -> new RailRoute(source, target,
-                    sourceTerminal, targetTerminal, buyerWarehouse, path.distanceMeters(), path.sourceName() + " → " + path.targetName()));
+            return api.plan(level, view.id(), view.owner(), source, target, stopovers.stations()).map(path -> new RailRoute(source, target,
+                    sourceTerminal, targetTerminal, buyerWarehouse, path.distanceMeters(),
+                    path.sourceName() + " → " + path.targetName(), stopovers.stations(), stopovers.seconds()));
         });
     }
 
@@ -156,7 +159,9 @@ public final class RailFreightService {
                 || level.getServer().tickRateManager().isFrozen()) return null;
         Optional<RailRoute> fresh = plan(level, rail, route.source(), route.target(), route.sourceTerminal(),
                 route.targetTerminal(), route.buyerWarehouse());
-        if (fresh.isEmpty() || !fresh.get().routeName().equals(route.routeName())) return null;
+        if (fresh.isEmpty() || !fresh.get().routeName().equals(route.routeName())
+                || !fresh.get().stopovers().equals(route.stopovers())
+                || !fresh.get().stopoverSeconds().equals(route.stopoverSeconds())) return null;
         RailFreightNative api = nativeApi();
         if (api == null) return null;
         RailFreightSavedData data = RailFreightSavedData.get(level);
@@ -249,8 +254,8 @@ public final class RailFreightService {
         }
         RailRoute route = job.route();
         RailStationRef destination = job.phase() == Phase.RETURN ? route.source() : route.target();
-        if (train.manual() || !api.targetMatchesSchedule(level, train.id(), destination, job.ownedSchedule())
-                || train.destination() != null && !destination.equals(train.destination())) {
+        List<RailStationRef> visits = job.phase() == Phase.RETURN ? List.of(destination) : route.outboundStations();
+        if (train.manual() || !api.matchesOwnedSchedule(level, train.id(), visits, job.ownedSchedule())) {
             status(data, job, "schedule_changed");
             return;
         }
@@ -282,7 +287,7 @@ public final class RailFreightService {
         if (!RailFreightDelivery.empty(cargo)) { status(data, job, "return_cargo_present"); return; }
         if (!binding(level, route.sourceTerminal(), route.source())) { status(data, job, "return_unavailable"); return; }
         CompoundTag returnSchedule = api.start(level, train.id(), train.owner(), route.target(), route.source(),
-                job.jobId(), job.ownedSchedule());
+                List.of(), List.of(), job.jobId(), job.ownedSchedule());
         if (returnSchedule == null) { status(data, job, "return_unavailable"); return; }
         data.replace(new Job(job.jobId(), job.trainId(), route, job.manifest(), returnSchedule, Phase.RETURN, "returning"));
     }
@@ -326,8 +331,12 @@ public final class RailFreightService {
                     || data.job(prepared.trainId()) != prepared || !RailFreightDelivery.validWaitingOrders(level, prepared)) return false;
             RailRoute route = prepared.route();
             if (!binding(level, route.sourceTerminal(), route.source()) || !binding(level, route.targetTerminal(), route.target())) return false;
+            var stopovers = configuredStopovers(level, route.source(), route.target(), route.sourceTerminal(), route.targetTerminal());
+            if (stopovers == null || !stopovers.stations().equals(route.stopovers())
+                    || !stopovers.seconds().equals(route.stopoverSeconds())) return false;
             try {
-                schedule = api.start(level, prepared.trainId(), carrier.ownerId(), route.source(), route.target(), prepared.jobId(), null);
+                schedule = api.start(level, prepared.trainId(), carrier.ownerId(), route.source(), route.target(),
+                        route.stopovers(), route.stopoverSeconds(), prepared.jobId(), null);
                 return schedule != null && data.replace(new Job(prepared.jobId(), prepared.trainId(), route,
                         prepared.manifest(), schedule, Phase.OUTBOUND, "waiting_market_commit"));
             } catch (RuntimeException | LinkageError failure) {
@@ -399,6 +408,19 @@ public final class RailFreightService {
         BlockEntity entity = loadedBlockEntity(level, pos);
         return entity instanceof RailFreightTerminalAccess terminal && terminal.stationRef().filter(station::equals).isPresent()
                 && sameTown(level, pos, station.stationPos());
+    }
+
+    private record ConfiguredStopovers(List<RailStationRef> stations, List<Integer> seconds) {}
+
+    private static @Nullable ConfiguredStopovers configuredStopovers(ServerLevel level, RailStationRef source, RailStationRef target,
+                                                                     BlockPos sourceTerminal, BlockPos targetTerminal) {
+        BlockEntity entity = loadedBlockEntity(level, sourceTerminal);
+        if (!(entity instanceof RailFreightTerminalAccess terminal) || !terminal.railStopoversMatch(targetTerminal, target)) return null;
+        var stations = terminal.railStopovers(targetTerminal);
+        if (!RailRoute.validStopovers(source, target, stations)) return null;
+        var seconds = terminal.railStopoverSeconds(targetTerminal);
+        if (!RailRoute.validStopoverSeconds(stations, seconds)) return null;
+        return new ConfiguredStopovers(List.copyOf(stations), List.copyOf(seconds));
     }
 
     private static @Nullable TownWarehouseBlockEntity warehouse(ServerLevel level, BlockPos pos, RailStationRef station) {
