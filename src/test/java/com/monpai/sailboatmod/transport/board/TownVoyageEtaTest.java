@@ -30,6 +30,35 @@ class TownVoyageEtaTest {
         assertEquals(200, remainingGroundBlocks(path, 2, point(1000, 100)).orElseThrow(), 1e-9);
         assertEquals(300, remainingGroundBlocks(path, 1, point(400, 0)).orElseThrow(), 1e-9);
     }
+    @Test void lookaheadTargetKeepsUntravelledStraightRoadInTheRemainingDistance() {
+        var path = preprocessGround("g", straightRoad()).orElseThrow();
+        Vec3 confirmed = point(2.25, 0.05);
+        assertEquals(7.75, remainingGroundBlocks(path, 6, confirmed).orElseThrow(), 1e-9);
+        assertEquals(7.75, remainingGroundBlocks(path, 7, confirmed).orElseThrow(), 1e-9);
+    }
+    @Test void advancingGuidanceAloneCannotGiveAStationaryCarrierAnEta() {
+        var tracker = new TownCarrierVoyageTracker();
+        List<Vec3> road = straightRoad();
+        TownCarrierVoyageTracker.GeometryBudget budget = (id, points) -> true;
+        assertTrue(tracker.ground(road, 6, point(2, 0), 100, true, budget).isEmpty());
+        assertTrue(tracker.ground(road, 7, point(2, 0), 120, true, budget).isEmpty(),
+                "Changing the control target must not count as physical travel");
+        assertEquals(140, tracker.ground(road, 8, point(3, 0), 140, true, budget).orElseThrow());
+    }
+    @Test void lookbehindCannotUseAnEarlierCrossingOrTheOppositeRunOfAReversal() {
+        var crossing = preprocessGround("g", List.of(point(-4, 0), point(0, 0), point(0, 4),
+                point(4, 4), point(0, 0), point(4, 0))).orElseThrow();
+        assertTrue(remainingGroundBlocks(crossing, 5, point(-2, 0)).isEmpty(),
+                "The earlier straight section on the same line is separated by a loop");
+        var reversal = preprocessGround("g", List.of(point(0, 0), point(4, 0), point(0, 0))).orElseThrow();
+        assertTrue(remainingGroundBlocks(reversal, 2, point(4.25, 0)).isEmpty(),
+                "A reversed run cannot borrow the earlier outbound direction");
+    }
+    private static List<Vec3> straightRoad() {
+        List<Vec3> points = new ArrayList<>();
+        for (int x = 0; x <= 10; x++) points.add(point(x, 0));
+        return points;
+    }
     @Test void duplicateZeroSegmentsAreValidAndPathInputsAreCopied() {
         var points = new ArrayList<>(List.of(point(0, 0), point(0, 0), point(10, 0)));
         var path = preprocessGround("g", points).orElseThrow(); points.clear();

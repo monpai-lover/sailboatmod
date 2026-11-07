@@ -14,15 +14,20 @@ import java.util.List;
 /** Immutable server snapshot. No client draft is used as authoritative airport state. */
 public record AirportScreenData(ResourceLocation dimension, BlockPos airportPos, String name, String town, String owner, boolean canManage,
         long revision, List<AirportFacility> facilities, AirportGroundLayout groundLayout,
-        List<String> statuses, String result) {
+        List<String> statuses, String result, String customName) {
     public AirportScreenData {
+        customName = customName == null ? "" : customName.trim();
         if (dimension == null || dimension.toString().length() > 256) throw new IllegalArgumentException("Invalid dimension");
         airportPos = airportPos.immutable(); facilities = List.copyOf(facilities); statuses = List.copyOf(statuses);
         if (facilities.size() > 16 || groundLayout.stands().size() > 32 || groundLayout.taxiRoutes().size() > 64 || statuses.size() > 160)
             throw new IllegalArgumentException("Snapshot too large");
         if (revision != groundLayout.revision()) throw new IllegalArgumentException("Conflicting snapshot revisions");
-        if (revision < 0 || name.length() > 128 || town.length() > 128 || owner.length() > 128 || result.length() > 64
+        if (customName.length() > 128 || revision < 0 || name.length() > 128 || town.length() > 128 || owner.length() > 128 || result.length() > 64
                 || statuses.stream().anyMatch(value -> value.length() > 256)) throw new IllegalArgumentException("Invalid snapshot");
+    }
+    public AirportScreenData(ResourceLocation dimension, BlockPos airportPos, String name, String town, String owner, boolean canManage,
+            long revision, List<AirportFacility> facilities, AirportGroundLayout groundLayout, List<String> statuses, String result) {
+        this(dimension, airportPos, name, town, owner, canManage, revision, facilities, groundLayout, statuses, result, name);
     }
     public static AirportScreenData capture(ServerPlayer player, AirportBlockEntity airport, String result) {
         List<String> statuses = new ArrayList<>();
@@ -35,10 +40,10 @@ public record AirportScreenData(ResourceLocation dimension, BlockPos airportPos,
         if (airport.editorSession()!=null) statuses.add("editor||"+airport.editorSession().processedSteps());
         var town = com.monpai.sailboatmod.nation.service.TownService.getTownAt(player.serverLevel(),airport.getBlockPos());
         return new AirportScreenData(player.serverLevel().dimension().location(),airport.getBlockPos(),airport.getDockName(),town == null ? "" : town.name(),airport.getOwnerName(),
-                AirportManagementService.canManage(player,airport),airport.groundLayoutRevision(),airport.facilities(),airport.groundLayout(),statuses,result);
+                AirportManagementService.canManage(player,airport),airport.groundLayoutRevision(),airport.facilities(),airport.groundLayout(),statuses,result,airport.getCustomDockName());
     }
     public CompoundTag save() {
-        CompoundTag tag = new CompoundTag(); tag.putString("Dimension",dimension.toString()); tag.putLong("Pos",airportPos.asLong()); tag.putString("Name",name);
+        CompoundTag tag = new CompoundTag(); tag.putString("Dimension",dimension.toString()); tag.putLong("Pos",airportPos.asLong()); tag.putString("Name",name); tag.putString("CustomName",customName);
         tag.putString("Town",town == null ? "" : town); tag.putString("Owner",owner); tag.putBoolean("CanManage",canManage); tag.putLong("Revision",revision);
         ListTag values = new ListTag(); facilities.forEach(value -> values.add(value.save())); tag.put("Facilities",values);
         tag.put("Ground",groundLayout.save()); ListTag lines = new ListTag(); statuses.forEach(value -> lines.add(StringTag.valueOf(value)));
@@ -53,6 +58,6 @@ public record AirportScreenData(ResourceLocation dimension, BlockPos airportPos,
         List<AirportFacility> facilities = new ArrayList<>(); raw.forEach(value -> facilities.add(AirportFacility.load((CompoundTag)value)));
         List<String> statuses = new ArrayList<>(); lines.forEach(value -> statuses.add(value.getAsString()));
         return new AirportScreenData(dimension,BlockPos.of(tag.getLong("Pos")),tag.getString("Name"),tag.getString("Town"),tag.getString("Owner"),tag.getBoolean("CanManage"),
-                tag.getLong("Revision"),facilities,AirportGroundLayout.load(tag.getCompound("Ground")),statuses,tag.getString("Result"));
+                tag.getLong("Revision"),facilities,AirportGroundLayout.load(tag.getCompound("Ground")),statuses,tag.getString("Result"),tag.contains("CustomName",Tag.TAG_STRING)?tag.getString("CustomName"):tag.getString("Name"));
     }
 }

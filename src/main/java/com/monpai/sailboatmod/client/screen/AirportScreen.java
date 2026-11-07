@@ -57,7 +57,7 @@ public final class AirportScreen extends ThemedScreen {
         this.packetSender = Objects.requireNonNull(packetSender);
         planner = new AirportPlannerModel(data);
         camera = RoadPlannerMapView.centered(data.airportPos().getX() + .5, data.airportPos().getZ() + .5, 1);
-        nameDraft = data.name(); nameRevision = data.revision(); planeY = Integer.toString(data.airportPos().getY());
+        nameDraft = data.customName(); nameRevision = data.revision(); planeY = Integer.toString(data.airportPos().getY());
     }
     public BlockPos airportPos() { return data().airportPos(); }
     public AirportScreenData data() { return planner.snapshot(); }
@@ -107,19 +107,22 @@ public final class AirportScreen extends ThemedScreen {
     public void update(AirportScreenData update, boolean repaint) {
         if (!data().dimension().equals(update.dimension()) || !airportPos().equals(update.airportPos())) return;
         long previousRevision = data().revision();
+        boolean nameChanged = !data().name().equals(update.name());
         boolean wasBusy = busy();
         if (pendingNameRevision >= 0 && !update.result().isEmpty() && !"pending".equals(update.result())) {
-            if ("ok".equals(update.result()) && update.name().equals(pendingName)) nameRevision = update.revision();
+            if ("ok".equals(update.result()) && update.customName().equals(pendingName.trim())) {
+                nameRevision = update.revision(); nameDraft = update.customName();
+            }
             pendingName = null; pendingNameRevision = -1;
         }
-        boolean nameUnedited = nameDraft.equals(data().name());
+        boolean nameUnedited = nameDraft.equals(data().customName());
         planner.applySnapshot(update);
-        if (nameUnedited) { nameDraft = update.name(); nameRevision = update.revision(); }
+        if (nameUnedited) { nameDraft = update.customName(); nameRevision = update.revision(); }
         refreshStatus();
         if (!update.result().isEmpty() && !"pending".equals(update.result())) toast.show(t("result." + update.result()),
                 "ok".equals(update.result()) || "valid".equals(update.result()), ticks());
         // Async replies must refresh existing controls without reopening a closed screen.
-        if (repaint || previousRevision != data().revision() || (wasBusy && !busy())) renderInspector();
+        if (repaint || nameChanged || previousRevision != data().revision() || (wasBusy && !busy())) renderInspector();
         AirportClientHooks.updatePreview(this);
     }
     private Component statusText() {
@@ -297,14 +300,16 @@ public final class AirportScreen extends ThemedScreen {
     }
     private TextField field(String label, String initial, Consumer<String> change) {
         UIElement row = Ui.column(); row.layout(l -> l.widthPercent(100).gapAll(1).flexShrink(0));
-        TextField input = Ui.field(initial, t(label), change); input.layout(l -> l.widthPercent(100)); input.setActive(data().canManage() && !busy());
+        TextField input = Ui.field(initial, label.equals("name") ? Component.literal(data().name()) : t(label), change); input.layout(l -> l.widthPercent(100)); input.setActive(data().canManage() && !busy());
         row.addChildren(Ui.clippedText(t(label), "sm-muted"), input);
         inspector.addScrollViewChild(row); return input;
     }
     private void overview() {
         text(t("visual_hint")); text(Component.literal(data().town() + " · " + data().owner()));
         field("name", nameDraft, value -> nameDraft = value);
+        text(t("name_default_hint"));
         actions(button("rename", () -> send(AirportActionPacket.Action.RENAME, nameDraft)),
+                button("name_follow_town", () -> { nameDraft = ""; send(AirportActionPacket.Action.RENAME, ""); }),
                 button("refresh", () -> send(AirportActionPacket.Action.REFRESH, "")));
         if (nameRevision != data().revision()) actions(button("review_current", () -> { nameRevision = data().revision(); refreshStatus(); }));
         text(Component.translatable("screen.sailboatmod.airport.counts", data().facilities().size(), data().groundLayout().taxiRoutes().size(), data().groundLayout().stands().size()));

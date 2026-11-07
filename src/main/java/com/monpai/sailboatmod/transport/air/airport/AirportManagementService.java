@@ -67,8 +67,8 @@ public final class AirportManagementService {
                 case "remove_stand"->{if(!stands.removeIf(s->s.id().equals(action.getString("Id"))))return new Result(false,"invalid_action",revision);}
                 case "upsert_taxi_route"->{var value=AirportTaxiRoute.load(action.getCompound("TaxiRoute"));routes.removeIf(r->r.id().equals(value.id()));routes.add(value);}
                 case "remove_taxi_route"->{if(!routes.removeIf(r->r.id().equals(action.getString("Id"))))return new Result(false,"invalid_action",revision);}
-                case "rename"->{rename=action.getString("Name").trim();if(rename.isEmpty()||rename.length()>64)return new Result(false,"invalid_geometry",revision);
-                    String target=rename;if(AirportSavedData.get(level).airports(level.dimension().location().toString()).stream().anyMatch(a->!a.pos().equals(airportPos)&&a.name().equalsIgnoreCase(target)))return new Result(false,"duplicate_name",revision);}
+                case "rename"->{rename=action.getString("Name").trim();if(!com.monpai.sailboatmod.dock.FacilityNames.validOverride(rename))return new Result(false,"invalid_geometry",revision);
+                    String target=rename;if(!rename.isBlank()&&AirportSavedData.get(level).airports(level.dimension().location().toString()).stream().anyMatch(a->!a.pos().equals(airportPos)&&a.name().equalsIgnoreCase(target)))return new Result(false,"duplicate_name",revision);}
                 default->{return new Result(false,"invalid_action",revision);}
             }
             AirportGroundLayout candidate=new AirportGroundLayout(revision+1,stands,routes);
@@ -115,7 +115,7 @@ public final class AirportManagementService {
             boolean current=request.canCommit(airport.editorSession(),player.getUUID(),airport.groundLayoutRevision(),canManage(player,airport),now,authority.claimRevision());
             if(!current)result="stale_revision";
             else if(!request.loadedBeforeCommit(p->!level.isOutsideBuildHeight(p)&&level.hasChunkAt(p)))result="unloaded";
-            else if(request.proposal.rename()!=null&&AirportSavedData.get(level).airports(level.dimension().location().toString()).stream().anyMatch(a->!a.pos().equals(airport.getBlockPos())&&a.name().equalsIgnoreCase(request.proposal.rename())))result="duplicate_name";
+            else if(request.proposal.rename()!=null&&!request.proposal.rename().isBlank()&&AirportSavedData.get(level).airports(level.dimension().location().toString()).stream().anyMatch(a->!a.pos().equals(airport.getBlockPos())&&a.name().equalsIgnoreCase(request.proposal.rename())))result="duplicate_name";
             else if(request.proposal.validationOnly()){
                 airport.editorValidatedFacility(request.proposal.changedRunway());
                 result="valid";

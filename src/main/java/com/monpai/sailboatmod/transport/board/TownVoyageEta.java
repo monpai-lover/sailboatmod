@@ -11,6 +11,8 @@ public final class TownVoyageEta {
     public static final int MAX_PATH_POINTS = 8192, MAX_PROGRESS_SAMPLES = 16;
     public static final long MAX_SAMPLE_AGE_TICKS = 200;
     private static final double MAX_LENGTH_BLOCKS = 10_000_000, MAX_BLOCKS_PER_TICK = 100;
+    private static final int MAX_APPROACH_SEGMENTS = 16;
+    private static final double APPROACH_CORRIDOR_BLOCKS = 0.75, STRAIGHT_TOLERANCE = 1.0e-6;
     public static final class GroundPath {
         private final String geometryId;
         private final List<Vec3> points;
@@ -40,15 +42,39 @@ public final class TownVoyageEta {
         }
         return Optional.of(new GroundPath(geometryId, copy, suffix));
     }
-    /** Projection clamps to the current target segment; subsequent turns retain their full XZ arc length. */
+    /** Keep the untravelled approach when guidance has already advanced along a straight run. */
     public static OptionalDouble remainingGroundBlocks(GroundPath path, int currentTargetIndex, Vec3 confirmedPosition) {
         if (path == null || !validPoint(confirmedPosition) || currentTargetIndex < 1 || currentTargetIndex >= path.points.size()) return OptionalDouble.empty();
         Vec3 from = path.points.get(currentTargetIndex - 1), to = path.points.get(currentTargetIndex);
         double dx = to.x - from.x, dz = to.z - from.z;
-        double lengthSquared = dx * dx + dz * dz;
-        double fraction = lengthSquared == 0 ? 1 : Math.clamp(((confirmedPosition.x - from.x) * dx + (confirmedPosition.z - from.z) * dz) / lengthSquared, 0, 1);
-        double remaining = path.suffix[currentTargetIndex] + Math.sqrt(lengthSquared) * (1 - fraction);
+        double length = Math.hypot(dx, dz);
+        if (length == 0) return OptionalDouble.of(path.suffix[currentTargetIndex]);
+        double alongX = dx / length, alongZ = dz / length;
+        double offsetX = confirmedPosition.x - from.x, offsetZ = confirmedPosition.z - from.z;
+        double along = offsetX * alongX + offsetZ * alongZ;
+        if (along < -STRAIGHT_TOLERANCE) {
+            double crossTrack = Math.abs(offsetX * alongZ - offsetZ * alongX);
+            if (crossTrack > APPROACH_CORRIDOR_BLOCKS
+                    || !onStraightApproach(path, currentTargetIndex, alongX, alongZ, -along)) return OptionalDouble.empty();
+        }
+        double remaining = path.suffix[currentTargetIndex] + Math.max(0, length - along);
         return Double.isFinite(remaining) && remaining >= 0 && remaining <= MAX_LENGTH_BLOCKS ? OptionalDouble.of(remaining) : OptionalDouble.empty();
+    }
+
+    private static boolean onStraightApproach(GroundPath path, int targetIndex, double alongX, double alongZ, double behind) {
+        // The preceding run must be contiguous and share the current heading. A bend or reversal
+        // leaves the physical segment uncertain, so an earlier crossing cannot supply progress.
+        int earliest = Math.max(1, targetIndex - MAX_APPROACH_SEGMENTS);
+        for (int i = targetIndex - 1; i >= earliest; i--) {
+            Vec3 from = path.points.get(i - 1), to = path.points.get(i);
+            double dx = to.x - from.x, dz = to.z - from.z;
+            if (dx == 0 && dz == 0) continue;
+            double forward = dx * alongX + dz * alongZ;
+            if (forward <= 0 || Math.abs(dx * alongZ - dz * alongX) > STRAIGHT_TOLERANCE) return false;
+            behind -= forward;
+            if (behind <= STRAIGHT_TOLERANCE) return true;
+        }
+        return false;
     }
     /** A sample is real confirmed along-path progress in blocks, never a proposed target or commanded speed. */
     public static OptionalDouble effectiveSpeed(List<ProgressSample> samples, String geometryId, long nowTick, boolean paused) {

@@ -77,6 +77,15 @@ public final class RegisteredTransportSavedData extends SavedData {
         return List.copyOf(entries.values());
     }
 
+    /** Resolve only a claimed current body; menu requests never search remote chunks or nearby craft. */
+    public Entry controllerForPhysical(String dimensionId, UUID physicalId) {
+        if (dimensionId == null || physicalId == null) return null;
+        UUID registration = physicalClaims.get(dimensionId + ":" + physicalId);
+        Entry entry = registration == null ? null : entries.get(registration);
+        return entry != null && dimensionId.equals(entry.dimensionId()) && physicalId.equals(entry.physicalId())
+                ? entry : null;
+    }
+
     public boolean isOwnedRegistration(UUID id) {
         return knownRegistrations.contains(id);
     }

@@ -53,7 +53,7 @@
   "entity.sailboatmod.sailboat": "帆船",
   "container.sailboatmod.sailboat_storage": "船舱储物",
   "key.categories.sailboatmod": "帆船模组",
-  "key.sailboatmod.open_info": "打开帆船信息",
+  "key.sailboatmod.open_info": "载具菜单（船只／车／飞机）",
   "screen.sailboatmod.info": "帆船信息",
   "screen.sailboatmod.name": "船名",
   "screen.sailboatmod.rename": "保存船名",
@@ -2557,5 +2557,15 @@
   "screen.sailboatmod.rail.status.return_cargo_present": "车厢还有其他货物，暂不空车返程",
   "screen.sailboatmod.rail.status.waiting_market_commit": "货物已预装，等待订单确认",
   "screen.sailboatmod.market.unlist.failed_rail_custody": "货物已装入列车，请等待铁路任务处理后再下架。",
-  "screen.sailboatmod.rail.route": "线路：%s → %s"
+  "screen.sailboatmod.rail.route": "线路：%s → %s",
+  "screen.sailboatmod.post_station.rename.default_hint": "留空保存：跟随当前城镇名称。",
+  "screen.sailboatmod.airport.name_default_hint": "留空保存会跟随城镇名称；自定义名称会一直保留。",
+  "screen.sailboatmod.airport.name_follow_town": "跟随城镇名称",
+  "screen.sailboatmod.rail.terminal_name": "货运站名称：%s",
+  "screen.sailboatmod.rail.name_hint": "留空保存会跟随当前城镇名称。",
+  "screen.sailboatmod.rail.save_name": "保存名称",
+  "screen.sailboatmod.rail.follow_town": "跟随城镇名称",
+  "screen.sailboatmod.rail.native_name_hint": "此名称用于铁路货运终端；原生停靠站可在 Create 车站界面改名。",
+  "screen.sailboatmod.controller.no_destinations": "暂无目的地。请先绑定出发站，并导入该载具可用的航线。",
+  "screen.sailboatmod.controller.destination": "目的地"
 }

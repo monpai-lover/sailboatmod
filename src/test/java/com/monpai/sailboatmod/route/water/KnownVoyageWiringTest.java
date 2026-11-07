@@ -18,8 +18,8 @@ class KnownVoyageWiringTest {
     @Test void pausedAndWaitingAreMapVisible()throws Exception{String s=read("market/logistics/ShippingTraceService.java");assertTrue(s.contains("\"WAITING_TERRAIN\".equals(normalized)"));assertTrue(s.contains("\"PAUSED\".equals(normalized)"));assertTrue(s.contains("\"REROUTING\".equals(normalized)"));}
     @Test void protocolIncludesNewMenusAndPhases()throws Exception{
         String s=read("network/ModNetwork.java");
-        assertTrue(s.contains("PROTOCOL_VERSION = \"25\""));
-        assertEquals(124L,java.util.regex.Pattern.compile("CHANNEL\\.registerMessage\\(\\s*packetId\\+\\+\\s*,\\s*([\\w.]+)\\.class").matcher(s).results().count());
+        assertTrue(s.contains("PROTOCOL_VERSION = \"26\""));
+        assertEquals(125L,java.util.regex.Pattern.compile("CHANNEL\\.registerMessage\\(\\s*packetId\\+\\+\\s*,\\s*([\\w.]+)\\.class").matcher(s).results().count());
         assertTrue(s.contains("KnownVoyageMenuPacket.class"));assertTrue(s.contains("KnownDestinationsPacket.class"));
     }
     @Test void liveSnapshotsCannotFallBackToStaleDiskAfterFailure()throws Exception{String s=read("route/water/LiveWaterSnapshots.java");assertTrue(s.contains("TERRAIN_NOT_READY"));assertTrue(s.contains("PortChunkSnapshot.capture"));assertFalse(s.contains("getChunkNow"));}

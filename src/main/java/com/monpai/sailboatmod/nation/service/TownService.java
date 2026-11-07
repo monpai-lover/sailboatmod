@@ -49,6 +49,7 @@ public final class TownService {
         NationResult result = renameTownInternal(data, town, rawNewName);
         if (result.success()) {
             TownFlagBlockTracker.refreshTownFlags(actor.getServer(), town.townId());
+            com.monpai.sailboatmod.dock.FacilityNames.refreshTown(actor.getServer(), town.townId());
         }
         return result;
     }
@@ -65,6 +66,7 @@ public final class TownService {
         NationResult result = renameTownInternal(data, town, rawNewName);
         if (result.success()) {
             TownFlagBlockTracker.refreshTownFlags(actor.getServer(), town.townId());
+            com.monpai.sailboatmod.dock.FacilityNames.refreshTown(actor.getServer(), town.townId());
         }
         return result;
     }

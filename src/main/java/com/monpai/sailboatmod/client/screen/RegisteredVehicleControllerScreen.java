@@ -61,6 +61,7 @@ public final class RegisteredVehicleControllerScreen extends ThemedScreen {
         super(t("title"));
         this.data = data;
         this.packetSender = Objects.requireNonNull(packetSender);
+        if ("routes".equals(data.values().getString("InitialPage"))) page = "routes";
         nameDraft = data.values().getString("Name");
         speedDraft = Double.toString(data.values().getDouble("MaxSpeed"));
         String throttle = data.values().getString("ThrottleTarget");
@@ -113,11 +114,15 @@ public final class RegisteredVehicleControllerScreen extends ThemedScreen {
         boolean fuelRowsChanged=!fuelRows(data.values()).equals(fuelRows(update.values()));
         boolean surfaceEditingChanged=data.values().getBoolean("Active")!=update.values().getBoolean("Active")
                 ||data.values().getBoolean("Paused")!=update.values().getBoolean("Paused");
+        boolean destinationsChanged = !data.values().getList("Destinations", Tag.TAG_STRING).equals(update.values().getList("Destinations", Tag.TAG_STRING))
+                || !data.values().getList("Routes", Tag.TAG_STRING).equals(update.values().getList("Routes", Tag.TAG_STRING))
+                || surfaceEditingChanged || data.values().getInt("ManifestCount") != update.values().getInt("ManifestCount");
         data = update;
         if (statusLabel != null) {
             statusLabel.setValue(statusText());
             if (repaint || parkingChanged && "status".equals(page) || assistScopeChanged && "routes".equals(page)
                     || aircraftModeChanged && ("power".equals(page) || "status".equals(page))
+                    || destinationsChanged && "routes".equals(page)
                     ||(surfacesChanged||surfaceEditingChanged||fuelRowsChanged)&&"power".equals(page)) renderPage();
             else {refreshTakeoffAssistValues();refreshAirSurfaceValues();refreshFuelValues();}
         }
@@ -239,17 +244,22 @@ public final class RegisteredVehicleControllerScreen extends ThemedScreen {
                                 ? "bind_stand_airport" : "bind_terminal", ControllerAction.BIND_NEAREST_TERMINAL),
                         button("import_routes", ControllerAction.IMPORT_ROUTES));
                 content.addScrollViewChild(manage);
+                content.addScrollViewChild(Ui.paragraph(t("destination"), "sm-strong"));
+                ListTag destinations = values.getList("Destinations", Tag.TAG_STRING);
+                if (values.getList("Routes", Tag.TAG_STRING).isEmpty())
+                    content.addScrollViewChild(Ui.paragraph(t("no_destinations"), "sm-muted"));
                 int i = 0;
                 for (Tag raw : values.getList("Routes", Tag.TAG_STRING)) {
                     final int index = i++;
                     String label =
                             (index == values.getInt("SelectedRoute") ? "● " : "")
-                                    + raw.getAsString();
-                    content.addScrollViewChild(
-                            Ui.button(
+                                    + (index < destinations.size() ? destinations.getString(index) : raw.getAsString());
+                    Button destination = Ui.button(
                                     Component.literal(label),
                                     Ui.Tone.SECONDARY,
-                                    () -> send(ControllerAction.SELECT_ROUTE, "", index)));
+                                    () -> { if (destinationSelectionAllowed(data.values())) send(ControllerAction.SELECT_ROUTE, "", index); });
+                    destination.setActive(destinationSelectionAllowed(values));
+                    content.addScrollViewChild(destination);
                 }
                 if(values.getBoolean("AirRail"))renderFuelSummary();
                 UIElement drive = Ui.wrapRow(Ui.GAP_S);
@@ -660,6 +670,10 @@ public final class RegisteredVehicleControllerScreen extends ThemedScreen {
         if (value.isBlank()) return "—";
         String key = "screen.sailboatmod.controller." + prefix + value.toLowerCase(java.util.Locale.ROOT);
         return I18n.exists(key) ? I18n.get(key) : value;
+    }
+
+    private static boolean destinationSelectionAllowed(CompoundTag values) {
+        return !values.getBoolean("Active") && !values.getBoolean("Paused") && values.getInt("ManifestCount") == 0;
     }
 
     private static boolean supportsTakeoffAssist(CompoundTag values) {

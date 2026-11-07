@@ -53,7 +53,7 @@
   "entity.sailboatmod.sailboat": "Sailboat",
   "container.sailboatmod.sailboat_storage": "Sailboat Storage",
   "key.categories.sailboatmod": "Sailboat Mod",
-  "key.sailboatmod.open_info": "Open Sailboat Info",
+  "key.sailboatmod.open_info": "Vehicle menu (boat / car / aircraft)",
   "screen.sailboatmod.info": "Sailboat Info",
   "screen.sailboatmod.name": "Ship Name",
   "screen.sailboatmod.rename": "Rename",
@@ -2557,5 +2557,15 @@
   "screen.sailboatmod.rail.status.return_cargo_present": "Other cargo remains; empty return paused",
   "screen.sailboatmod.rail.status.waiting_market_commit": "Cargo prepared; waiting for order confirmation",
   "screen.sailboatmod.market.unlist.failed_rail_custody": "Cargo is already held by a train. Wait for the rail job before unlisting.",
-  "screen.sailboatmod.rail.route": "Route: %s → %s"
+  "screen.sailboatmod.rail.route": "Route: %s → %s",
+  "screen.sailboatmod.post_station.rename.default_hint": "Save an empty name to follow the current town name.",
+  "screen.sailboatmod.airport.name_default_hint": "Leave empty to follow the town name; a custom name stays unchanged.",
+  "screen.sailboatmod.airport.name_follow_town": "Use town name",
+  "screen.sailboatmod.rail.terminal_name": "Freight terminal: %s",
+  "screen.sailboatmod.rail.name_hint": "Save an empty name to follow the current town name.",
+  "screen.sailboatmod.rail.save_name": "Save name",
+  "screen.sailboatmod.rail.follow_town": "Use town name",
+  "screen.sailboatmod.rail.native_name_hint": "This names the freight terminal. Rename the native stop in the Create station screen.",
+  "screen.sailboatmod.controller.no_destinations": "No destinations yet. Bind a departure terminal and import routes for this vehicle.",
+  "screen.sailboatmod.controller.destination": "Destination"
 }

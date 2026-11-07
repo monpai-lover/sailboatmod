@@ -78,6 +78,7 @@ public final class RailFreightTerminalBlockEntity extends DockBlockEntity implem
         if (packet.action() == RailTerminalActionPacket.Action.REFRESH) return "";
         boolean changed;
         switch (packet.action()) {
+            case RENAME -> { setDockName(packet.name()); changed = true; }
             case BIND -> {
                 if (bound != null && !RailFreightService.registrationsAt(server, bound).isEmpty()) return "registered_station";
                 var selected = RailFreightService.inspectStation(server, packet.stationPos()).orElse(null);
@@ -113,7 +114,7 @@ public final class RailFreightTerminalBlockEntity extends DockBlockEntity implem
     public CompoundTag snapshot(ServerPlayer player, String result) {
         CompoundTag data = new CompoundTag();
         data.putString("Dimension", level.dimension().location().toString()); data.putLong("Pos", worldPosition.asLong());
-        data.putUUID("TerminalId", terminalId); data.putLong("Revision", revision); data.putString("Name", getDockName());
+        data.putUUID("TerminalId", terminalId); data.putLong("Revision", revision); data.putString("Name", getDockName()); data.putString("CustomName", getCustomDockName());
         data.putString("Result", result); data.putString("Town", getTownId());
         var warehouse = TownWarehouseRegistry.get(level, getTownId());
         data.putString("Warehouse", warehouse == null ? "" : warehouse.toShortString());

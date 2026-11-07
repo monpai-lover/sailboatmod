@@ -11,6 +11,7 @@ import com.monpai.sailboatmod.transport.physical.PhysicalVehicleView;
 import net.minecraft.core.BlockPos;
 import net.minecraft.core.Direction;
 import net.minecraft.world.level.block.entity.BlockEntity;
+import net.minecraft.world.entity.Entity;
 import net.minecraft.world.phys.AABB;
 import net.minecraft.world.phys.Vec3;
 import org.joml.Vector3dc;
@@ -34,7 +35,7 @@ final class SableReflectionAccess {
 
     private final Object helper;
     private final Class<?> bodyType;
-    private final Method containing, id, level, removed, pose, lastPose, bounds, massTracker;
+    private final Method containing, passengerTracking, id, level, removed, pose, lastPose, bounds, massTracker;
     private final Method transformPosition, transformNormal, toMojangBounds, getMass;
     private final Field angularVelocity;
     private final OffroadWheelReflectionAccess wheels;
@@ -71,6 +72,10 @@ final class SableReflectionAccess {
         helper = sable.getField("HELPER").get(null);
         if (helper == null) throw new ReflectiveOperationException("Sable.HELPER is unavailable");
         containing = helper.getClass().getMethod("getContaining", BlockEntity.class);
+        Method tracking;
+        try { tracking = helper.getClass().getMethod("getTrackingOrVehicleSubLevel", Entity.class); }
+        catch (NoSuchMethodException unavailable) { tracking = null; }
+        passengerTracking = tracking;
         id = bodyType.getMethod("getUniqueId");
         level = bodyType.getMethod("getLevel");
         removed = bodyType.getMethod("isRemoved");
@@ -97,6 +102,16 @@ final class SableReflectionAccess {
 
     Object levelOf(Object body) throws ReflectiveOperationException {
         return level.invoke(body);
+    }
+
+    UUID passengerPhysicalId(Entity passenger) throws ReflectiveOperationException {
+        if (passengerTracking == null || passenger == null) return null;
+        Object body = passengerTracking.invoke(helper, passenger);
+        if (!isLive(body) || level.invoke(body) != passenger.level()) return null;
+        AABB worldBounds = (AABB) toMojangBounds.invoke(bounds.invoke(body));
+        // A cached tracking reference alone must not permit remote management after leaving a craft.
+        if (!finite(worldBounds) || !worldBounds.inflate(1).contains(passenger.position())) return null;
+        return (UUID) id.invoke(body);
     }
 
     PhysicalVehicleView snapshot(Object body, BlockPos controllerPosition, Direction facing, String dimensionId) throws ReflectiveOperationException {

@@ -110,7 +110,7 @@ import net.neoforged.bus.api.IEventBus;
 import java.util.Optional;
 
 public final class ModNetwork {
-    private static final String PROTOCOL_VERSION = "25"; // 25: explicit rail freight terminal actions and snapshots.
+    private static final String PROTOCOL_VERSION = "26"; // 26: custom facility names and aboard registered-vehicle menu.
     public static final PayloadChannel CHANNEL = new PayloadChannel(PROTOCOL_VERSION);
 
     private static int packetId = 0;
@@ -1056,6 +1056,12 @@ public final class ModNetwork {
                 com.monpai.sailboatmod.network.packet.rail.RailTerminalSnapshotPacket::decode,
                 com.monpai.sailboatmod.network.packet.rail.RailTerminalSnapshotPacket::handle,
                 Optional.of(NetworkDirection.PLAY_TO_CLIENT));
+
+        CHANNEL.registerMessage(packetId++, com.monpai.sailboatmod.network.packet.RequestRegisteredVehicleMenuPacket.class,
+                com.monpai.sailboatmod.network.packet.RequestRegisteredVehicleMenuPacket::encode,
+                com.monpai.sailboatmod.network.packet.RequestRegisteredVehicleMenuPacket::decode,
+                com.monpai.sailboatmod.network.packet.RequestRegisteredVehicleMenuPacket::handle,
+                Optional.of(NetworkDirection.PLAY_TO_SERVER));
 
     }
 

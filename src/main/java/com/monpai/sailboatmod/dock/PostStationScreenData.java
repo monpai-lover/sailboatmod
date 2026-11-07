@@ -19,9 +19,11 @@ public record PostStationScreenData(
         boolean autoUnloadOnDispatch,
         RouteSummary selectedRouteSummary,
         List<Vec3> selectedRouteWaypoints,
-        DockScreenData advancedData
+        DockScreenData advancedData,
+        String customName
 ) {
     public PostStationScreenData {
+        customName = clean(customName);
         stationPos = stationPos == null ? BlockPos.ZERO : stationPos.immutable();
         stationName = clean(stationName);
         townId = clean(townId);
@@ -32,6 +34,14 @@ public record PostStationScreenData(
         selectedVehicleIndex = vehicles.isEmpty() ? 0 : Math.max(0, Math.min(selectedVehicleIndex, vehicles.size() - 1));
         selectedRouteSummary = selectedRouteSummary == null ? RouteSummary.empty() : selectedRouteSummary;
         selectedRouteWaypoints = selectedRouteWaypoints == null ? List.of() : List.copyOf(selectedRouteWaypoints);
+    }
+
+    public PostStationScreenData(BlockPos stationPos, String stationName, String townId, String townName, boolean canManage,
+            List<ReachableTownEntry> reachableTowns, int selectedTownIndex, List<VehicleEntry> vehicles, int selectedVehicleIndex,
+            boolean autoReturnOnDispatch, boolean autoUnloadOnDispatch, RouteSummary selectedRouteSummary,
+            List<Vec3> selectedRouteWaypoints, DockScreenData advancedData) {
+        this(stationPos, stationName, townId, townName, canManage, reachableTowns, selectedTownIndex, vehicles, selectedVehicleIndex,
+                autoReturnOnDispatch, autoUnloadOnDispatch, selectedRouteSummary, selectedRouteWaypoints, advancedData, stationName);
     }
 
     private static String clean(String value) {

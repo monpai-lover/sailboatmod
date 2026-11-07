@@ -18,6 +18,7 @@ import com.monpai.sailboatmod.network.packet.CarriageControlInputPacket;
 import com.monpai.sailboatmod.network.packet.InteractCarriagePacket;
 import com.monpai.sailboatmod.network.packet.OpenNationMenuPacket;
 import com.monpai.sailboatmod.network.packet.OpenSailboatStoragePacket;
+import com.monpai.sailboatmod.network.packet.RequestRegisteredVehicleMenuPacket;
 import com.monpai.sailboatmod.network.packet.SailboatControlInputPacket;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.player.LocalPlayer;
@@ -66,6 +67,8 @@ public final class ClientInputHandler {
                 minecraft.setScreen(new CarriageInfoScreen(carriage));
             } else if (player.getVehicle() instanceof SailboatEntity sailboat) {
                 minecraft.setScreen(new SailboatInfoScreen(sailboat));
+            } else {
+                ModNetwork.CHANNEL.sendToServer(new RequestRegisteredVehicleMenuPacket());
             }
         }
     }

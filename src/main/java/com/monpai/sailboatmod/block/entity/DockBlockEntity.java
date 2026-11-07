@@ -227,8 +227,27 @@ public class DockBlockEntity extends BlockEntity implements MenuProvider {
         return available.stream().map(RouteDefinition::copy).toList();
     }
 
+    private String syncedDefaultTownName = "";
+
+    public String getCustomDockName() { return dockName == null ? "" : dockName; }
+
+    public boolean followsTownName() {
+        return this instanceof PostStationBlockEntity || this instanceof AirportBlockEntity || this instanceof RailFreightTerminalBlockEntity;
+    }
+
+    private String currentDefaultTownName() {
+        if (!followsTownName()) return "";
+        if (level instanceof ServerLevel) {
+            var town = com.monpai.sailboatmod.nation.data.NationSavedData.get(level).getTown(getTownId());
+            return town == null ? "" : town.name();
+        }
+        return syncedDefaultTownName == null ? "" : syncedDefaultTownName;
+    }
+
     public String getDockName() {
         if (dockName == null || dockName.isBlank()) {
+            String townName = currentDefaultTownName();
+            if (!townName.isBlank()) return townName;
             return ownerName != null && !ownerName.isBlank() ? ownerName + defaultFacilityNameSuffix() : defaultFacilityName();
         }
         return dockName;
@@ -335,7 +354,9 @@ public class DockBlockEntity extends BlockEntity implements MenuProvider {
     }
 
     protected boolean acceptsRouteBook(ItemStack stack) {
-        return stack.getItem() instanceof TransportRouteBook;
+        return com.monpai.sailboatmod.route.water.PortDockSnapshot.isPort(this)
+                ? stack.getItem() instanceof RouteBookItem
+                : stack.getItem() instanceof TransportRouteBook;
     }
 
     protected boolean supportsLogisticsCarrier(LogisticsCarrier entity) {
@@ -397,7 +418,9 @@ public class DockBlockEntity extends BlockEntity implements MenuProvider {
     }
 
     public int importRouteBook() {
-        if (routeBook.isEmpty()) {
+        if (routeBook.isEmpty()
+                || (com.monpai.sailboatmod.route.water.PortDockSnapshot.isPort(this)
+                    && !acceptsRouteBook(routeBook))) {
             return 0;
         }
         List<RouteDefinition> imported = RouteBookItem.getRoutes(routeBook);
@@ -419,6 +442,10 @@ public class DockBlockEntity extends BlockEntity implements MenuProvider {
                 selectedRouteIndex = routes.size() - added;
             }
             setChanged();
+            if (level instanceof ServerLevel server) {
+                com.monpai.sailboatmod.route.water.WaterRouteNetworkSavedData.get(server)
+                        .publishImportedBookRoutes(this, List.copyOf(routes.subList(routes.size() - added, routes.size())));
+            }
         }
         return added;
     }
@@ -2320,6 +2347,7 @@ public class DockBlockEntity extends BlockEntity implements MenuProvider {
             tag.put("RouteBook", com.monpai.sailboatmod.compat.ItemStackNbt.save(registries, routeBook, new CompoundTag()));
         }
         tag.putString("DockName", dockName == null ? "" : dockName);
+        tag.putString("TownDefaultName", currentDefaultTownName());
         tag.putBoolean("NonOrderAutoReturn", nonOrderAutoReturnEnabled);
         tag.putBoolean("NonOrderAutoUnload", nonOrderAutoUnloadEnabled);
         tag.putInt("ZoneMinX", zoneMinX);
@@ -2356,6 +2384,7 @@ public class DockBlockEntity extends BlockEntity implements MenuProvider {
         nationId = tag.contains("NationId") ? tag.getString("NationId") : "";
         routeBook = tag.contains("RouteBook") ? com.monpai.sailboatmod.compat.ItemStackNbt.read(registries, tag.getCompound("RouteBook")) : ItemStack.EMPTY;
         dockName = tag.getString("DockName");
+        syncedDefaultTownName = tag.getString("TownDefaultName");
         nonOrderAutoReturnEnabled = tag.getBoolean("NonOrderAutoReturn");
         nonOrderAutoUnloadEnabled = tag.getBoolean("NonOrderAutoUnload");
         zoneMinX = tag.contains("ZoneMinX") ? tag.getInt("ZoneMinX") : -ZONE_HALF_X;

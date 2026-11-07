@@ -3051,7 +3051,24 @@ public final class RegisteredVehicleControllerBlockEntity extends BlockEntity
                 && registration.canManage(
                         player.getUUID(),
                         player.hasPermissions(2),
-                        player.position().distanceToSqr(transportPosition()));
+                        player.position().distanceToSqr(transportPosition()),
+                        AeronauticsVehicleBridge.passengerPhysicalId(player)
+                                .filter(id -> view != null && view.available() && id.equals(view.physicalId()))
+                                .orElse(null));
+    }
+
+    public void openDestinationMenu(ServerPlayer player, UUID physicalId) {
+        updatePhysicalView(AeronauticsVehicleBridge.resolve(this, facing()).orElse(null));
+        if (player == null || player.level() != level || !isTransportAlive()
+                || !Objects.equals(physicalId, registration.physicalId())
+                || !Objects.equals(physicalId, view.physicalId())
+                || !AeronauticsVehicleBridge.passengerPhysicalId(player).filter(physicalId::equals).isPresent()
+                || !canManage(player)) return;
+        ControllerScreenData data = screenData();
+        CompoundTag values = data.values();
+        values.putString("InitialPage", "routes");
+        ModNetwork.CHANNEL.send(player, new OpenRegisteredVehicleControllerPacket(
+                new ControllerScreenData(data.controllerPos(), data.registrationId(), values)));
     }
 
     @Override
@@ -3358,8 +3375,8 @@ public final class RegisteredVehicleControllerBlockEntity extends BlockEntity
                     setRouteCatalog(RouteBookItem.getRoutes(book), 0, sourceTerminal);
                 }
                 case SELECT_ROUTE -> {
-                    if (active) return false;
-                    selectedRoute = Math.max(0, Math.min(index, routeCatalog.size() - 1));
+                    if (active || paused || !manifest.isEmpty() || index < 0 || index >= routeCatalog.size()) return false;
+                    selectedRoute = index;
                 }
                 case START -> {
                     if (!startAutopilotFromRouteStart()) {
@@ -3529,11 +3546,33 @@ public final class RegisteredVehicleControllerBlockEntity extends BlockEntity
         ListTag routes = new ListTag();
         for (RouteDefinition route : routeCatalog) routes.add(StringTag.valueOf(route.name()));
         tag.put("Routes", routes);
+        ListTag destinations = new ListTag();
+        for (RouteDefinition route : routeCatalog) destinations.add(StringTag.valueOf(destinationName(route)));
+        tag.put("Destinations", destinations);
         CompoundTag portTag = new CompoundTag();
         ports.forEach((channel, side) -> portTag.putString(channel.name(), side.name()));
         tag.put("Ports", portTag);
         tag.putInt("ManifestCount", manifest.size());
         return new ControllerScreenData(worldPosition, getTransportUuid(), tag);
+    }
+
+    private String destinationName(RouteDefinition route) {
+        String name = route.endDockName();
+        if (name == null || name.isBlank()) return route.name();
+        if (!(level instanceof ServerLevel server) || route.waypoints().isEmpty()) return name;
+        var end = route.waypoints().getLast();
+        var kind = switch (transportKind()) {
+            case AIR -> com.monpai.sailboatmod.market.terminal.TerminalNetworkSavedData.Kind.AIRPORT;
+            case LAND -> com.monpai.sailboatmod.market.terminal.TerminalNetworkSavedData.Kind.POST_STATION;
+            default -> com.monpai.sailboatmod.market.terminal.TerminalNetworkSavedData.Kind.PORT;
+        };
+        var candidates = com.monpai.sailboatmod.market.terminal.TerminalNetworkSavedData.get(server).all().stream()
+                .filter(t -> t.kind() == kind && t.dimId().equals(dimensionId())
+                        && !BlockPos.of(t.packedPos()).equals(sourceTerminal)
+                        && Math.abs(BlockPos.of(t.packedPos()).getX() - end.x) <= 32
+                        && Math.abs(BlockPos.of(t.packedPos()).getZ() - end.z) <= 32).toList();
+        // Only an unambiguous registered endpoint can supply a current renamed display label.
+        return candidates.size() == 1 ? candidates.getFirst().dockName() : name;
     }
 
     @Override

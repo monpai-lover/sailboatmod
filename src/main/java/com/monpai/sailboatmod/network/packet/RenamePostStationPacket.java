@@ -34,7 +34,10 @@ public class RenamePostStationPacket {
             if (player == null) {
                 return;
             }
-            if (!(player.level().getBlockEntity(packet.stationPos) instanceof PostStationBlockEntity station)) {
+            if (!player.serverLevel().hasChunkAt(packet.stationPos)
+                    || player.distanceToSqr(packet.stationPos.getCenter()) > 64
+                    || !com.monpai.sailboatmod.dock.FacilityNames.validOverride(packet.stationName)
+                    || !(player.level().getBlockEntity(packet.stationPos) instanceof PostStationBlockEntity station)) {
                 return;
             }
             if (station.canManageDock(player)) {

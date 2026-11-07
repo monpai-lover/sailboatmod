@@ -22,8 +22,8 @@ class RouteTaskRecoveryWiringTest {
         assertFalse(p.contains("getChunk"));assertFalse(p.contains(".join("));
     }
     @Test void taskPacketsAreRegisteredAndProtocolIsBumped()throws Exception{
-        String p=src("network/ModNetwork.java");assertTrue(p.contains("PROTOCOL_VERSION = \"25\""));
-        assertEquals(124L,java.util.regex.Pattern.compile("CHANNEL\\.registerMessage\\(\\s*packetId\\+\\+\\s*,\\s*([\\w.]+)\\.class").matcher(p).results().count());
+        String p=src("network/ModNetwork.java");assertTrue(p.contains("PROTOCOL_VERSION = \"26\""));
+        assertEquals(125L,java.util.regex.Pattern.compile("CHANNEL\\.registerMessage\\(\\s*packetId\\+\\+\\s*,\\s*([\\w.]+)\\.class").matcher(p).results().count());
         assertTrue(p.contains("RequestRouteTasksPacket.class"));assertTrue(p.contains("SyncRouteTasksPacket.class"));
     }
 }

@@ -242,7 +242,8 @@ public class PostStationBlockEntity extends DockBlockEntity {
                 autoUnloadOnDispatch,
                 routeSummary,
                 routeWaypoints,
-                advanced
+                advanced,
+                getCustomDockName()
         );
     }
 

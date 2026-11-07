@@ -16,14 +16,21 @@ import java.util.UUID;
 public final class RailFreightTerminalScreen extends ThemedScreen {
     private CompoundTag data;
     private ScrollerView content;
+    private String nameDraft;
+    private boolean pendingRename;
     private static final UUID NONE = new UUID(0, 0);
-    public RailFreightTerminalScreen(CompoundTag data) { super(t("title")); this.data = data.copy(); }
+    public RailFreightTerminalScreen(CompoundTag data) { super(t("title")); this.data = data.copy(); this.nameDraft = data.getString("CustomName"); }
     public static void openOrUpdate(CompoundTag data, boolean open) {
         var mc = Minecraft.getInstance();
         if (mc.level == null || !mc.level.dimension().location().toString().equals(data.getString("Dimension")) || !data.hasUUID("TerminalId")) return;
         if (mc.screen instanceof RailFreightTerminalScreen screen
                 && screen.data.getUUID("TerminalId").equals(data.getUUID("TerminalId")) && screen.data.getLong("Pos") == data.getLong("Pos")) {
-            if (data.getLong("Revision") >= screen.data.getLong("Revision") && !screen.data.equals(data)) { screen.data = data.copy(); screen.renderContent(); }
+            if (data.getLong("Revision") >= screen.data.getLong("Revision") && !screen.data.equals(data)) {
+                if (screen.nameDraft.equals(screen.data.getString("CustomName")) || screen.pendingRename && data.getString("Result").equals("saved"))
+                    screen.nameDraft = data.getString("CustomName");
+                if (!data.getString("Result").isBlank()) screen.pendingRename = false;
+                screen.data = data.copy(); screen.renderContent();
+            }
         } else if (open) mc.setScreen(new RailFreightTerminalScreen(data));
     }
     private static Component t(String key, Object... args) { return Component.translatable("screen.sailboatmod.rail." + key, args); }
@@ -40,10 +47,25 @@ public final class RailFreightTerminalScreen extends ThemedScreen {
         ModNetwork.CHANNEL.sendToServer(new RailTerminalActionPacket(ResourceLocation.parse(data.getString("Dimension")),
                 BlockPos.of(data.getLong("Pos")), data.getUUID("TerminalId"), data.getLong("Revision"), action, station, train));
     }
+    private void rename(String value) {
+        if (pendingRename || !com.monpai.sailboatmod.dock.FacilityNames.validOverride(value)) return;
+        pendingRename = true;
+        ModNetwork.CHANNEL.sendToServer(new RailTerminalActionPacket(ResourceLocation.parse(data.getString("Dimension")),
+                BlockPos.of(data.getLong("Pos")), data.getUUID("TerminalId"), data.getLong("Revision"),
+                RailTerminalActionPacket.Action.RENAME, BlockPos.ZERO, NONE, value));
+    }
     private void line(Component text) { content.addScrollViewChild(Ui.paragraph(text, "sm-muted")); }
     private void renderContent() {
         if (content == null) return;
         content.clearAllScrollViewChildren();
+        line(t("terminal_name", data.getString("Name")));
+        var name = Ui.field(nameDraft, Component.literal(data.getString("Name")), value -> nameDraft = value);
+        content.addScrollViewChild(name);
+        UIElement names = Ui.wrapRow(Ui.GAP_S);
+        var saveName = Ui.button(t("save_name"), Ui.Tone.PRIMARY, () -> rename(nameDraft));
+        var followTown = Ui.button(t("follow_town"), Ui.Tone.SECONDARY, () -> rename(""));
+        saveName.setActive(!pendingRename); followTown.setActive(!pendingRename); names.addChildren(saveName, followTown);
+        content.addScrollViewChild(names); line(t("name_hint")); line(t("native_name_hint"));
         String result = data.getString("Result");
         if (!result.isBlank()) line(t("result." + result));
         line(t("warehouse", data.getString("Warehouse").isBlank() ? t("none") : Component.literal(data.getString("Warehouse"))));

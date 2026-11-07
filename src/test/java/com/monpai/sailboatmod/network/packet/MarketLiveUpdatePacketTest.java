@@ -51,14 +51,15 @@ class MarketLiveUpdatePacketTest {
         List<String> registrations = java.util.regex.Pattern.compile(
                 "CHANNEL\\.registerMessage\\(\\s*packetId\\+\\+\\s*,\\s*([\\w.]+)\\.class")
                 .matcher(network).results().map(match -> match.group(1)).toList();
-        assertEquals(124, registrations.size(), "existing payloads keep their ordinals before rail freight registration");
+        assertEquals(125, registrations.size(), "existing payloads keep their ordinals before the appended aboard menu request");
         assertEquals(List.of(
                 "com.monpai.sailboatmod.network.packet.airport.AirportActionPacket",
                 "com.monpai.sailboatmod.network.packet.airport.AirportSnapshotPacket"), registrations.subList(120, 122));
         assertEquals(List.of(
                 "com.monpai.sailboatmod.network.packet.rail.RailTerminalActionPacket",
                 "com.monpai.sailboatmod.network.packet.rail.RailTerminalSnapshotPacket"), registrations.subList(122, 124));
-        assertTrue(network.contains("PROTOCOL_VERSION = \"25\""), "rail freight registration increments the combined protocol");
+        assertEquals("com.monpai.sailboatmod.network.packet.RequestRegisteredVehicleMenuPacket", registrations.get(124));
+        assertTrue(network.contains("PROTOCOL_VERSION = \"26\""), "custom terminal names and the aboard menu increment the combined protocol");
     }
 
     private static MarketOverviewData overview() {

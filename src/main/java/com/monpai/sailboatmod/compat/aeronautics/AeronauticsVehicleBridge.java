@@ -8,12 +8,14 @@ import com.monpai.sailboatmod.transport.physical.PhysicalVehicleView;
 import net.minecraft.core.Direction;
 import net.minecraft.server.level.ServerLevel;
 import net.minecraft.world.level.block.entity.BlockEntity;
+import net.minecraft.world.entity.Entity;
 import net.neoforged.fml.ModList;
 import org.jetbrains.annotations.Nullable;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import java.util.Optional;
+import java.util.UUID;
 import java.util.concurrent.atomic.AtomicBoolean;
 
 /** All optional names and reflection are loaded on first server use, never during normal mod startup. */
@@ -34,6 +36,20 @@ public final class AeronauticsVehicleBridge {
             if (body == null) return Optional.empty();
             ServerLevel level = (ServerLevel) controller.getLevel();
             return Optional.of(api.snapshot(body, controller.getBlockPos(), facing, level.dimension().location().toString()));
+        } catch (ReflectiveOperationException | RuntimeException | LinkageError failure) {
+            warn(failure);
+            return Optional.empty();
+        }
+    }
+
+    /** Native standing/seated membership, rather than proximity to a nearby vehicle. */
+    public static Optional<UUID> passengerPhysicalId(@Nullable Entity passenger) {
+        if (passenger == null || passenger.isRemoved() || !(passenger.level() instanceof ServerLevel level)
+                || level.getServer() == null || !level.getServer().isSameThread()) return Optional.empty();
+        SableReflectionAccess api = api();
+        if (api == null) return Optional.empty();
+        try {
+            return Optional.ofNullable(api.passengerPhysicalId(passenger));
         } catch (ReflectiveOperationException | RuntimeException | LinkageError failure) {
             warn(failure);
             return Optional.empty();
