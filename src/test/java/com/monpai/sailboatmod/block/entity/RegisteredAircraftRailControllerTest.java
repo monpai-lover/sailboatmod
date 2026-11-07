@@ -38,21 +38,33 @@ class RegisteredAircraftRailControllerTest {
         var t=tag(fixture());t.remove("Forward");assertTrue(RegisteredAircraftRailController.load(t).invalid());
         t=tag(fixture());t.putString("Forward","up");assertTrue(RegisteredAircraftRailController.load(t).invalid());
     }
-    @Test void reloadAlignmentEligibilityDoesNotPersistOrGrantAnUncreditedPendingStep() throws Exception {
-        var eligibility=RegisteredAircraftRailController.class.getDeclaredField("reloadAlignmentAvailable");eligibility.setAccessible(true);
-        assertFalse(eligibility.getBoolean(new RegisteredAircraftRailController()));
-        var mission=fixture();mission.setPaused(true);var saved=tag(mission);saved.putBoolean("ReloadAlignmentAvailable",true);
-        var restored=RegisteredAircraftRailController.load(saved);assertTrue(eligibility.getBoolean(restored));
-        assertEquals(0,restored.mission().distance());assertTrue(restored.mission().paused());assertNull(restored.pendingDistance());
+    @Test void boundedReloadEligibilityDoesNotPersistOrCreditAnUnobservedPendingStep() {
+        assertFalse(new RegisteredAircraftRailController().restoringActiveMotion());
+        var mission=fixture();mission.setPaused(true);
+        var saved=tag(mission);saved.putBoolean("ReloadAlignmentAvailable",true);
+        var restored=RegisteredAircraftRailController.load(saved);
+        assertTrue(restored.restoringActiveMotion());
+        assertTrue(restored.mission().paused());
+        assertEquals(0,restored.mission().distance());
+        assertNull(restored.pendingDistance());
         assertFalse(restored.save().contains("ReloadAlignmentAvailable"));
-        var inFlight=fixture();var pendingSave=tag(inFlight);pendingSave.putBoolean("ReloadAlignmentAvailable",true);
+
+        var inFlight=fixture();var pendingSave=tag(inFlight);
         pendingSave.putDouble("PendingDistance",inFlight.proposeStep(true).targetDistance());
-        var pending=RegisteredAircraftRailController.load(pendingSave);assertFalse(pending.invalid());assertFalse(eligibility.getBoolean(pending));
-        assertEquals(0,pending.mission().distance());assertEquals(.5,pending.pendingDistance());
-        restored.cancel(null);assertFalse(eligibility.getBoolean(restored));
+        var pending=RegisteredAircraftRailController.load(pendingSave);
+        assertFalse(pending.invalid());
+        assertTrue(pending.restoringActiveMotion(), "An in-flight save also needs bounded native alignment");
+        assertEquals(0,pending.mission().distance(), "Loading the checkpoint must not advance the route");
+        assertEquals(.5,pending.pendingDistance());
+        assertFalse(pending.save().contains("ReloadAlignmentAvailable"));
+        pending.cancel(null);
+        assertFalse(pending.restoringActiveMotion());
+        assertEquals(0,pending.mission().distance());
+        assertNull(pending.pendingDistance());
+
         var cancelled=tag(mission);cancelled.putBoolean("Cancelled",true);
-        assertFalse(eligibility.getBoolean(RegisteredAircraftRailController.load(cancelled)));
-        var manuallyReleased=RegisteredAircraftRailController.load(tag(mission));manuallyReleased.manualRelease(null);
-        assertFalse(eligibility.getBoolean(manuallyReleased));
+        assertFalse(RegisteredAircraftRailController.load(cancelled).restoringActiveMotion());
+        restored.manualRelease(null);
+        assertFalse(restored.restoringActiveMotion());
     }
 }

@@ -70,9 +70,10 @@ class ControllerParkingBrakeUiTest {
         assertParkingPacket(packets.getLast());
     }
 
-    @Test void asynchronousParkingStateChangeRefreshesStatusWithoutLosingEditedName() {
+    @Test void asynchronousParkingStateChangeRefreshesStatusWithoutLosingEditedName() throws Exception {
         var screen = new RegisteredVehicleControllerScreen(data("HOLDING", false));
         UIElement body = screen.buildBody();
+        click(button(body, "show_details"));
         fields(body).getFirst().setText("Unsaved aircraft name", true);
 
         screen.update(data("WAITING", false), false);
@@ -93,9 +94,10 @@ class ControllerParkingBrakeUiTest {
         assertNull(optionalButton(body, "parking_brake_release"));
     }
 
-    @Test void periodicUnchangedParkingStatusPreservesTheActualFocusedTextWidget() {
+    @Test void periodicUnchangedParkingStatusPreservesTheActualFocusedTextWidget() throws Exception {
         var screen = new RegisteredVehicleControllerScreen(data("HOLDING", false));
         UIElement body = screen.buildBody();
+        click(button(body, "show_details"));
         TextField field = fields(body).getFirst();
         field.setText("", true);
         screen.update(data("HOLDING", false), false);
@@ -147,7 +149,7 @@ class ControllerParkingBrakeUiTest {
 
     private static ControllerScreenData data(String parking, boolean released) {
         var tag = new CompoundTag();
-        tag.putString("Name", "Aircraft"); tag.putString("Status", "IDLE");
+        tag.putString("Name", "Aircraft"); tag.putString("Status", "IDLE"); tag.putBoolean("Registered", true);
         tag.putString("Kind", "AIR"); tag.putString("AircraftClass", "FIXED_WING");
         tag.putString("ParkingBrake", parking); tag.putBoolean("ParkingBrakeReleased", released);
         tag.putDouble("MaxSpeed", 49); tag.putString("ThrottleTarget", "3 -1 -2");

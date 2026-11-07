@@ -114,25 +114,20 @@ public final class RailFreightTerminalScreen extends ThemedScreen {
             renderStopovers();
             return;
         }
-        var name = Ui.field(nameDraft, Component.literal(data.getString("Name")), value -> nameDraft = value);
-        content.addScrollViewChild(name);
-        UIElement names = Ui.wrapRow(Ui.GAP_S);
-        var saveName = Ui.button(t("save_name"), Ui.Tone.PRIMARY, () -> rename(nameDraft));
-        var followTown = Ui.button(t("follow_town"), Ui.Tone.SECONDARY, () -> rename(""));
-        saveName.setActive(pendingRenameUntil == 0); followTown.setActive(pendingRenameUntil == 0); names.addChildren(saveName, followTown);
-        content.addScrollViewChild(names); line(t("name_hint")); line(t("native_name_hint"));
-        line(t("warehouse", data.getString("Warehouse").isBlank() ? t("none") : Component.literal(data.getString("Warehouse"))));
         line(t("station", data.getString("Station").isBlank() ? t("none") : Component.literal(data.getString("Station"))));
         if (!data.getBoolean("StationValid")) line(t("station_missing"));
         var stations = data.getList("Stations", Tag.TAG_COMPOUND);
         if (stations.isEmpty()) line(t("no_stations"));
         for (Tag tag : stations) {
             var station = (CompoundTag) tag; var pos = BlockPos.of(station.getLong("Pos")); var id = station.getUUID("Id");
-            var button = Ui.button(t("bind_station", pos.toShortString(), id.toString().substring(0, 8)), Ui.Tone.SECONDARY,
+            boolean bound = data.hasUUID("StationId") && data.getUUID("StationId").equals(id);
+            var tone = !data.getBoolean("StationValid") && stations.size() == 1 && !bound ? Ui.Tone.PRIMARY : Ui.Tone.SECONDARY;
+            var button = Ui.button(t("bind_station", pos.toShortString(), id.toString().substring(0, 8)), tone,
                     () -> send(RailTerminalActionPacket.Action.BIND, pos, id));
-            button.setActive(!data.hasUUID("StationId") || !data.getUUID("StationId").equals(id));
+            button.setActive(!bound);
             content.addScrollViewChild(button);
         }
+        line(t("warehouse", data.getString("Warehouse").isBlank() ? t("none") : Component.literal(data.getString("Warehouse"))));
         line(t("custody_hint"));
         var trains = data.getList("Trains", Tag.TAG_COMPOUND);
         if (trains.isEmpty()) line(t("no_trains"));
@@ -159,6 +154,18 @@ public final class RailFreightTerminalScreen extends ThemedScreen {
             if (!train.getBoolean("Owned")) line(t("not_owner"));
             content.addScrollViewChild(actions);
         }
+        content.addScrollViewChild(Ui.divider());
+        var name = Ui.field(nameDraft, Component.literal(data.getString("Name")), value -> nameDraft = value);
+        content.addScrollViewChild(name);
+        UIElement names = Ui.wrapRow(Ui.GAP_S);
+        var saveName = Ui.button(t("save_name"), Ui.Tone.SECONDARY, () -> rename(nameDraft));
+        var followTown = Ui.button(t("follow_town"), Ui.Tone.SECONDARY, () -> rename(""));
+        saveName.setActive(pendingRenameUntil == 0);
+        followTown.setActive(pendingRenameUntil == 0);
+        names.addChildren(saveName, followTown);
+        content.addScrollViewChild(names);
+        line(t("name_hint"));
+        line(t("native_name_hint"));
     }
 
     private void showStopovers(boolean show) {

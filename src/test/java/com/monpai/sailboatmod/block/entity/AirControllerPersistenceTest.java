@@ -183,6 +183,9 @@ class AirControllerPersistenceTest {
         assertFalse(rail.invalid());assertEquals(before.mission().id(),rail.mission().id());assertEquals(before.mission().bodyId(),rail.mission().bodyId());
         assertEquals(before.mission().path().fingerprint(),rail.mission().path().fingerprint());
         assertEquals(0,rail.mission().distance());assertEquals(before.pendingDistance(),rail.pendingDistance());
+        assertTrue(rail.restoringActiveMotion(), "A pending step still needs bounded native startup recovery");
+        assertFalse(new RegisteredAircraftRailController().restoringActiveMotion(),
+                "A fresh controller cannot wait on a startup exception");
         assertTrue((boolean)get(restored,"active"));assertFalse((boolean)get(restored,"flightRecovering"));assertFalse((boolean)get(restored,"recoveryRequired"));
         assertNull(get(restored,"flightTask"));assertNull(get(restored,"flightTerminalOffset"));assertCargoAndRoutePreserved(restored);
     }

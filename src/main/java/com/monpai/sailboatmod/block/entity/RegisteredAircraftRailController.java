@@ -135,7 +135,7 @@ final class RegisteredAircraftRailController {
                 if(!RailAircraftMotionBridge.matchesTarget(c.controller(),lease,current.position(),current.tangent(),current.bankRadians(),.05,.03)){
                     // Sable's first physics tick precedes controller BE tick after a process restart.
                     // Recover only a small downward startup displacement, with actual pose acknowledgment and no distance credit.
-                    if(reloadAlignmentAvailable&&RailReloadAlignment.permits(current.position(),c.view().worldPosition())
+                    if(!paused&&reloadAlignmentAvailable&&RailReloadAlignment.permits(current.position(),c.view().worldPosition())
                             &&RailAircraftMotionBridge.matchesTarget(c.controller(),lease,c.view().worldPosition(),current.tangent(),current.bankRadians(),.001,.03)) {
                         if(!pathClear.test(current)){blocked(c,"rail_path_blocked");return;}
                         reloadAlignmentAvailable=false;
@@ -153,7 +153,8 @@ final class RegisteredAircraftRailController {
                 Vec3 projected=current.position().add(delta.scale(Math.max(0,Math.min(1,fraction))));
                 Vec3 nose=current.tangent().lerp(pending.sample().tangent(),Math.max(0,Math.min(1,fraction))).normalize();
                 double bank=current.bankRadians()+(pending.sample().bankRadians()-current.bankRadians())*Math.max(0,Math.min(1,fraction));
-                if(fraction<-.01||fraction>1.01||actual.distanceTo(projected)>.05
+                boolean smallStartupDrop = reloadAlignmentAvailable && RailReloadAlignment.permits(projected, actual);
+                if((!smallStartupDrop && (fraction<-.01||fraction>1.01||actual.distanceTo(projected)>.05))
                         ||!RailAircraftMotionBridge.matchesTarget(c.controller(),lease,actual,nose,bank,.05,.06)){
                     reason="rail_position_changed";hold(c);return;
                 }
@@ -163,8 +164,8 @@ final class RegisteredAircraftRailController {
                 if(!pathClear.test(pending.sample())){blocked(c,"rail_path_blocked");return;}
                 var moved=RailAircraftMotionBridge.move(c.controller(),lease,pending.sample().position(),pending.sample().tangent(),pending.sample().bankRadians());
                 if(!moved.success()){reason=moved.reason();hold(c);return;}
-                rebindRequired=false;reason="rail_motion_rebinding";return;
-            } else rebindRequired=false;
+                rebindRequired=false;reloadAlignmentAvailable=false;reason="rail_motion_rebinding";return;
+            } else { rebindRequired=false;reloadAlignmentAvailable=false; }
         }
         if(pending!=null) {
             var p=pending.sample();
@@ -204,6 +205,7 @@ final class RegisteredAircraftRailController {
     }
     void park(Context c){if(!manualReleased&&acquire(c))hold(c);}
     boolean hasMission(){return mission!=null;}
+    boolean restoringActiveMotion(){return reloadAlignmentAvailable;}
     boolean matchesAirframe(AircraftClass airframe){return mission==null||mission.path().airframe()==airframe;}
     boolean cancelled(){return cancelled;}
     /** A queued new departure may outlive an old cancellation; full preparation still runs before motion. */
@@ -249,7 +251,7 @@ final class RegisteredAircraftRailController {
                         throw new IllegalArgumentException("rail_pending_progress");
                     c.pending=expected;
                 }
-                c.reloadAlignmentAvailable=c.pending==null&&!c.mission.completed()&&!tag.getBoolean("Cancelled");
+                c.reloadAlignmentAvailable=!c.mission.completed()&&!tag.getBoolean("Cancelled");
             } else if(tag.contains("PendingDistance"))throw new IllegalArgumentException("rail_pending_without_mission");
             c.cancelled=tag.getBoolean("Cancelled");
         }catch(IllegalArgumentException malformed){c.invalid=true;c.invalidState=tag.copy();c.reason="rail_recovery_review";}

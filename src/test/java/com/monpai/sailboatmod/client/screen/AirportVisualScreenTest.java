@@ -27,6 +27,23 @@ import java.util.HashSet;
 import static org.junit.jupiter.api.Assertions.*;
 
 class AirportVisualScreenTest {
+    @Test void airportOpensOnQuickSetupAndKeepsIndividualToolsInPlanning() throws Exception {
+        var screen = new AirportScreen(autoLayoutSnapshot(4, true, ""), packet -> fail("Opening a page cannot edit the airport"));
+        var body = screen.buildBody();
+        var home = translations(body);
+        assertTrue(home.contains("screen.sailboatmod.airport.auto_layout"));
+        assertTrue(home.contains("screen.sailboatmod.airport.tab.planning"));
+        assertFalse(home.contains("screen.sailboatmod.airport.tool.runway"));
+        assertFalse(home.contains("screen.sailboatmod.airport.tool.inbound"));
+        assertFalse(home.contains("screen.sailboatmod.airport.name_default_hint"));
+
+        invoke(screen, "showPlanning");
+        assertTrue(translations(body).contains("screen.sailboatmod.airport.tool.runway"));
+        assertTrue(translations(body).contains("screen.sailboatmod.airport.tool.inbound"));
+        invoke(screen, "showSettings");
+        assertTrue(translations(body).contains("screen.sailboatmod.airport.name_default_hint"));
+        assertFalse(translations(body).contains("screen.sailboatmod.airport.tool.runway"));
+    }
     @Test void asynchronousDeleteReplyRebuildsTheActualInspectorAndObjectList() throws Exception {
         var outgoing = outbound();
         var incoming = inbound();
@@ -68,9 +85,10 @@ class AirportVisualScreenTest {
         assertTrue(texts(body).contains("P " + saved.id()), "A completed asynchronous save must refresh the actual object buttons");
     }
 
-    @Test void sameRevisionValidationCompletionRefreshesOverviewWithoutAPlannerSubmission() {
+    @Test void sameRevisionValidationCompletionRefreshesSettingsWithoutAPlannerSubmission() throws Exception {
         var screen = new AirportScreen(airport(6, List.of(), List.of(), List.of("runway|r|unvalidated"), ""), packet -> {});
         UIElement body = screen.buildBody();
+        invoke(screen, "showSettings");
         screen.update(airport(6, List.of(), List.of(), List.of("runway|r|unvalidated"), "pending"), true);
         assertFalse(screen.planner().awaitingReply(), "Validation uses the pending result rather than a geometry submission");
         assertTrue(translations(body).contains("screen.sailboatmod.airport.state.unvalidated"));
@@ -211,8 +229,9 @@ class AirportVisualScreenTest {
 
     @Test void airportRoutePublishingUsesSnapshotTargetAndRequiresPermissionForReturn() throws Exception {
         var target = new AirportScreenData.RouteTarget(new BlockPos(819, 79, -390), "West airport", 144, false);
+        var pad = new AirportFacility("pad", AirportFacility.Type.HELIPAD, BlockPos.ZERO, BlockPos.ZERO, 12, 16);
         var data = new AirportScreenData(Level.OVERWORLD.location(), BlockPos.ZERO, "Airport", "Town", "Owner", true,
-                7, List.of(), AirportGroundLayout.empty().withRevision(7),
+                7, List.of(pad), AirportGroundLayout.empty().withRevision(7),
                 List.of("feature|route_publication|1"), "", "", List.of(target));
         assertEquals(data, AirportScreenData.load(data.save()));
         var packets = new ArrayList<AirportActionPacket>();

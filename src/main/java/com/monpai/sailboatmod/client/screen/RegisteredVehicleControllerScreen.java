@@ -51,7 +51,7 @@ public final class RegisteredVehicleControllerScreen extends ThemedScreen {
     private final java.util.ArrayList<FuelPropellerLabels> fuelPropellerLabels=new java.util.ArrayList<>();
     private Button fuelStartButton,autoReturnButton;
     private long departureSubmittedTick = -1;
-    private boolean showImportedRoutes;
+    private boolean showImportedRoutes, showVehicleDetails, showManualCargo;
     private Label statusLabel;
     private ScrollerView content;
     private TabBar<String> tabs;
@@ -94,12 +94,7 @@ public final class RegisteredVehicleControllerScreen extends ThemedScreen {
         UIElement root = Ui.column();
         root.layout(l -> l.height(280).flexShrink(1).minHeight(0).gapAll(Ui.GAP_S));
         statusLabel = Ui.paragraph(statusText(), "sm-muted");
-        tabs =
-                TabBar.horizontal(
-                        selected -> {
-                            page = selected;
-                            renderPage();
-                        });
+        tabs = TabBar.horizontal(this::showPage);
         for (String key : new String[] {"status", "cargo", "routes", "power"})
             tabs.add(key, ItemStack.EMPTY, t("tab." + key));
         content = Ui.scroller("sm-pane");
@@ -110,6 +105,7 @@ public final class RegisteredVehicleControllerScreen extends ThemedScreen {
 
     public void update(ControllerScreenData update, boolean repaint) {
         boolean setupChanged = data.values().getBoolean("ChooseRegistrationMode") != update.values().getBoolean("ChooseRegistrationMode")
+                || data.values().getBoolean("Registered") != update.values().getBoolean("Registered")
                 || data.values().getBoolean("RegistrationStructureReady") != update.values().getBoolean("RegistrationStructureReady")
                 || data.values().getBoolean("CanAutoConfigure") != update.values().getBoolean("CanAutoConfigure")
                 || !data.values().getString("SetupStatus").equals(update.values().getString("SetupStatus"))
@@ -123,11 +119,14 @@ public final class RegisteredVehicleControllerScreen extends ThemedScreen {
         boolean fuelRowsChanged=!fuelRows(data.values()).equals(fuelRows(update.values()));
         boolean surfaceEditingChanged=data.values().getBoolean("Active")!=update.values().getBoolean("Active")
                 ||data.values().getBoolean("Paused")!=update.values().getBoolean("Paused");
+        boolean manifestChanged = data.values().getInt("ManifestCount") != update.values().getInt("ManifestCount");
+        boolean cargoChanged = manifestChanged
+                || !data.values().getList("Cargo", Tag.TAG_STRING).equals(update.values().getList("Cargo", Tag.TAG_STRING));
         boolean destinationsChanged = !data.values().getList("Destinations", Tag.TAG_STRING).equals(update.values().getList("Destinations", Tag.TAG_STRING))
                 || !data.values().getList("Routes", Tag.TAG_STRING).equals(update.values().getList("Routes", Tag.TAG_STRING))
                 || !Objects.equals(data.values().get(departureKey(data.values())), update.values().get(departureKey(update.values())))
                 || !departureKey(data.values()).equals(departureKey(update.values()))
-                || surfaceEditingChanged || data.values().getInt("ManifestCount") != update.values().getInt("ManifestCount");
+                || surfaceEditingChanged || manifestChanged;
         data = update;
         if (repaint || data.values().getBoolean("Active")) departureSubmittedTick = -1;
         if (statusLabel != null) {
@@ -135,7 +134,9 @@ public final class RegisteredVehicleControllerScreen extends ThemedScreen {
             if (repaint || setupChanged || parkingChanged && "status".equals(page) || assistScopeChanged && "routes".equals(page)
                     || aircraftModeChanged && ("power".equals(page) || "status".equals(page))
                     || destinationsChanged && "routes".equals(page)
-                    ||(surfacesChanged||surfaceEditingChanged||fuelRowsChanged)&&"power".equals(page)) renderPage();
+                    || cargoChanged && ("status".equals(page) || "cargo".equals(page))
+                    || surfaceEditingChanged && "cargo".equals(page) && showManualCargo
+                    || (surfacesChanged || surfaceEditingChanged || fuelRowsChanged) && "power".equals(page)) renderPage();
             else {
                 refreshTakeoffAssistValues();refreshAirSurfaceValues();refreshFuelValues();
                 if(flightPhaseLabel!=null)flightPhaseLabel.setValue(flightPhaseText(data.values()));
@@ -151,8 +152,9 @@ public final class RegisteredVehicleControllerScreen extends ThemedScreen {
         var title = Component.literal(values.getString("Name") + " · ");
         if (departureSubmittedTick >= 0) return title.append(t(values.getBoolean("AirRail")
                 ? "airport_departure_submitting" : "departure_submitting"));
-        return title.append(t(preflightQueued ? "airport_preflight_queued" : "status." + state))
-                .append("\n")
+        title.append(t(preflightQueued ? "airport_preflight_queued" : "status." + state));
+        if (!preflightQueued && values.getString("Reason").isBlank()) return title;
+        return title.append("\n")
                 .append(I18n.exists(key) ? Component.translatable(key)
                         : t(preflightQueued ? "reason.airport_preflight_queued" : "reason.check_status"));
     }
@@ -186,6 +188,121 @@ public final class RegisteredVehicleControllerScreen extends ThemedScreen {
         content.addScrollViewChild(row);
     }
 
+    private void showPage(String nextPage) {
+        page = nextPage;
+        renderPage();
+    }
+
+    private void renderOverview(CompoundTag values) {
+        boolean registered = values.getBoolean("Registered");
+        if (registered) {
+            int containers = values.getList("Cargo", Tag.TAG_STRING).size();
+            row(t("cargo_containers"), Integer.toString(containers));
+            row(t("manifest"), Integer.toString(values.getInt("ManifestCount")));
+
+            UIElement actions = Ui.wrapRow(Ui.GAP_S);
+            actions.addChildren(
+                    Ui.button(t("view_destinations"), Ui.Tone.PRIMARY, () -> showPage("routes")),
+                    Ui.button(t("manage_cargo"), Ui.Tone.SECONDARY, () -> showPage("cargo")));
+            if (containers == 0 && values.getBoolean("CanAutoConfigure")) actions.addChild(cargoScanButton(values));
+            content.addScrollViewChild(actions);
+
+            String setup = values.getString("SetupStatus");
+            content.addScrollViewChild(Ui.paragraph(t(setup.isBlank() || setup.equals("ready")
+                    ? "registered_setup_hint" : "setup." + setup), "sm-muted"));
+            renderCargoSetupStatus(values);
+        } else {
+            content.addScrollViewChild(Ui.paragraph(t("registration_hint"), "sm-muted"));
+            content.addScrollViewChild(button("register", ControllerAction.REGISTER));
+        }
+
+        if (supportsTakeoffAssist(values)) {
+            String parking = switch (values.getString("ParkingBrake")) {
+                case "HOLDING" -> "holding";
+                case "RELEASED" -> "released";
+                default -> "waiting";
+            };
+            row(t("parking_brake"), t("parking_brake." + parking));
+            content.addScrollViewChild(button(values.getBoolean("ParkingBrakeReleased")
+                    ? "parking_brake_engage" : "parking_brake_release", ControllerAction.TOGGLE_PARKING_BRAKE));
+        }
+
+        content.addScrollViewChild(Ui.button(t(showVehicleDetails ? "hide_details" : "show_details"),
+                Ui.Tone.SECONDARY, () -> {
+                    showVehicleDetails = !showVehicleDetails;
+                    renderPage();
+                }));
+        if (!showVehicleDetails) return;
+
+        row(t("owner"), values.getString("Owner"));
+        row(t("position"), values.getString("Position"));
+        row(t("size"), values.getString("Size"));
+        row(t("mass"), Double.toString(values.getDouble("Mass")));
+        row(t("registration"), data.registrationId().toString());
+        row(t("physical"), values.getString("PhysicalId"));
+
+        var name = Ui.field(nameDraft, t("name"), value -> nameDraft = value);
+        name.layout(l -> l.widthPercent(100));
+        content.addScrollViewChild(name);
+        UIElement management = Ui.wrapRow(Ui.GAP_S);
+        management.addChild(Ui.button(t("rename"), Ui.Tone.SECONDARY,
+                () -> send(ControllerAction.RENAME, nameDraft, 0)));
+        if (registered) management.addChild(button("unregister", ControllerAction.UNREGISTER));
+        management.addChild(button("refresh", ControllerAction.REFRESH));
+        content.addScrollViewChild(management);
+    }
+
+    private void renderCargo(CompoundTag values) {
+        ListTag containers = values.getList("Cargo", Tag.TAG_STRING);
+        row(t("cargo_containers"), Integer.toString(containers.size()));
+        row(t("manifest"), Integer.toString(values.getInt("ManifestCount")));
+        if (values.getBoolean("CanAutoConfigure")) content.addScrollViewChild(cargoScanButton(values));
+        content.addScrollViewChild(Ui.paragraph(t("cargo_hint"), "sm-muted"));
+        renderCargoSetupStatus(values);
+
+        content.addScrollViewChild(Ui.button(t(showManualCargo ? "hide_manual_cargo" : "show_manual_cargo"),
+                Ui.Tone.SECONDARY, () -> {
+                    showManualCargo = !showManualCargo;
+                    renderPage();
+                }));
+        if (!showManualCargo) return;
+
+        content.addScrollViewChild(Ui.paragraph(t("manual_cargo_hint"), "sm-muted"));
+        var offset = Ui.field(offsetDraft, t("offset"), value -> offsetDraft = value);
+        offset.layout(l -> l.widthPercent(100));
+        content.addScrollViewChild(offset);
+        Button add = Ui.button(t("add_cargo"), Ui.Tone.PRIMARY, () -> {
+            if (idleWithoutManifest(data.values())) send(ControllerAction.ADD_CARGO, offsetDraft, 0);
+        });
+        add.setActive(idleWithoutManifest(values));
+        content.addScrollViewChild(add);
+        for (Tag raw : containers) {
+            String position = raw.getAsString();
+            UIElement container = Ui.row();
+            container.layout(l -> l.widthPercent(100).gapAll(Ui.GAP_S));
+            Label label = Ui.text(position);
+            label.layout(l -> l.flexGrow(1));
+            Button remove = Ui.button(t("remove"), Ui.Tone.SECONDARY, () -> {
+                if (idleWithoutManifest(data.values())) send(ControllerAction.REMOVE_CARGO, position, 0);
+            });
+            remove.setActive(idleWithoutManifest(values));
+            container.addChildren(label, remove);
+            content.addScrollViewChild(container);
+        }
+    }
+
+    private Button cargoScanButton(CompoundTag values) {
+        return Ui.button(t(values.getBoolean("NamedRegistration") ? "cargo_auto_configure" : "cargo_auto_configure_only"),
+                Ui.Tone.PRIMARY, () -> {
+                    if (data.values().getBoolean("CanAutoConfigure")) send(ControllerAction.AUTO_CONFIGURE);
+                });
+    }
+
+    private void renderCargoSetupStatus(CompoundTag values) {
+        String status = values.getString("CargoSetupStatus");
+        if (!status.isBlank()) content.addScrollViewChild(Ui.paragraph(t("cargo_setup." + status), "sm-muted"));
+    }
+
     private void renderPage() {
         if (content == null) return;
         tabs.select(page);
@@ -203,72 +320,8 @@ public final class RegisteredVehicleControllerScreen extends ThemedScreen {
             return;
         }
         switch (page) {
-            case "status" -> {
-                row(t("owner"), values.getString("Owner"));
-                row(t("position"), values.getString("Position"));
-                row(t("size"), values.getString("Size"));
-                row(t("mass"), Double.toString(values.getDouble("Mass")));
-                row(t("registration"), data.registrationId().toString());
-                row(t("physical"), values.getString("PhysicalId"));
-                if (!values.getBoolean("AirRail") && "AIR".equals(values.getString("Kind")) && "FIXED_WING".equals(values.getString("AircraftClass"))) {
-                    String parking = switch (values.getString("ParkingBrake")) {
-                        case "HOLDING" -> "holding";
-                        case "RELEASED" -> "released";
-                        default -> "waiting";
-                    };
-                    row(t("parking_brake"), t("parking_brake." + parking));
-                    content.addScrollViewChild(button(values.getBoolean("ParkingBrakeReleased")
-                            ? "parking_brake_engage" : "parking_brake_release", ControllerAction.TOGGLE_PARKING_BRAKE));
-                }
-                var name = Ui.field(nameDraft, t("name"), value -> nameDraft = value);
-                name.layout(l -> l.widthPercent(100));
-                content.addScrollViewChild(name);
-                UIElement actions = Ui.wrapRow(Ui.GAP_S);
-                actions.addChildren(
-                        Ui.button(
-                                t("rename"),
-                                Ui.Tone.SECONDARY,
-                                () -> send(ControllerAction.RENAME, nameDraft, 0)),
-                        button("register", ControllerAction.REGISTER),
-                        button("unregister", ControllerAction.UNREGISTER),
-                        button("refresh", ControllerAction.REFRESH));
-                content.addScrollViewChild(actions);
-                content.addScrollViewChild(Ui.paragraph(t(values.getBoolean("Registered")
-                        ? "registered_setup_hint" : "registration_hint"), "sm-muted"));
-                String setup = values.getString("SetupStatus");
-                if (!setup.isBlank()) content.addScrollViewChild(Ui.paragraph(t("setup." + setup), "sm-muted"));
-                String cargoSetup = values.getString("CargoSetupStatus");
-                if (!cargoSetup.isBlank()) content.addScrollViewChild(Ui.paragraph(t("cargo_setup." + cargoSetup), "sm-muted"));
-                if (values.getBoolean("CanAutoConfigure"))
-                    content.addScrollViewChild(button(values.getBoolean("NamedRegistration")
-                            ? "cargo_auto_configure" : "cargo_auto_configure_only", ControllerAction.AUTO_CONFIGURE));
-            }
-            case "cargo" -> {
-                content.addScrollViewChild(Ui.paragraph(t("cargo_hint"), "sm-muted"));
-                var offset = Ui.field(offsetDraft, t("offset"), value -> offsetDraft = value);
-                offset.layout(l -> l.widthPercent(100));
-                content.addScrollViewChild(offset);
-                content.addScrollViewChild(
-                        Ui.button(
-                                t("add_cargo"),
-                                Ui.Tone.PRIMARY,
-                                () -> send(ControllerAction.ADD_CARGO, offsetDraft, 0)));
-                for (Tag raw : values.getList("Cargo", Tag.TAG_STRING)) {
-                    String item = raw.getAsString();
-                    UIElement itemRow = Ui.row();
-                    itemRow.layout(l -> l.widthPercent(100).gapAll(Ui.GAP_S));
-                    Label label = Ui.text(item);
-                    label.layout(l -> l.flexGrow(1));
-                    itemRow.addChildren(
-                            label,
-                            Ui.button(
-                                    t("remove"),
-                                    Ui.Tone.SECONDARY,
-                                    () -> send(ControllerAction.REMOVE_CARGO, item, 0)));
-                    content.addScrollViewChild(itemRow);
-                }
-                row(t("manifest"), Integer.toString(values.getInt("ManifestCount")));
-            }
+            case "status" -> renderOverview(values);
+            case "cargo" -> renderCargo(values);
             case "routes" -> {
                 String departureKey = departureKey(values);
                 boolean knownDeparture = values.contains(departureKey, Tag.TAG_COMPOUND);
@@ -786,9 +839,9 @@ public final class RegisteredVehicleControllerScreen extends ThemedScreen {
             CompoundTag option = (CompoundTag) raw;
             long target = option.getLong("Pos");
             DestinationPicker.add(content, option.getString("Name"), option.getDouble("Distance"),
-                    Component.empty(), destinationSelectionAllowed(values), () -> {
+                    Component.empty(), idleWithoutManifest(values), () -> {
                 var current = data.values();
-                if (departureSubmittedTick >= 0 || !destinationSelectionAllowed(current)
+                if (departureSubmittedTick >= 0 || !idleWithoutManifest(current)
                         || !departureKey(current).equals(key) || !current.getCompound(key).equals(departure)) return;
                 departureSubmittedTick = ticks();
                 statusLabel.setValue(statusText());
@@ -807,14 +860,14 @@ public final class RegisteredVehicleControllerScreen extends ThemedScreen {
             String label = (index == values.getInt("SelectedRoute") ? "● " : "")
                     + (index < destinations.size() ? destinations.getString(index) : routes.getString(index));
             Button button = Ui.button(Component.literal(label), Ui.Tone.SECONDARY, () -> {
-                if (destinationSelectionAllowed(data.values())) send(ControllerAction.SELECT_ROUTE, "", routeIndex);
+                if (idleWithoutManifest(data.values())) send(ControllerAction.SELECT_ROUTE, "", routeIndex);
             });
-            button.setActive(destinationSelectionAllowed(values));
+            button.setActive(idleWithoutManifest(values));
             content.addScrollViewChild(button);
         }
     }
 
-    private static boolean destinationSelectionAllowed(CompoundTag values) {
+    private static boolean idleWithoutManifest(CompoundTag values) {
         return !values.getBoolean("Active") && !values.getBoolean("Paused") && values.getInt("ManifestCount") == 0;
     }
 

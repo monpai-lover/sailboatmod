@@ -126,7 +126,8 @@ public final class RegisteredVehicleControllerBlockEntity extends BlockEntity
     private RegisteredAircraftFuelController aircraftFuel = new RegisteredAircraftFuelController();
     private String fuelReturnKey="";
     private com.monpai.sailboatmod.transport.air.rail.RailAircraftPath fuelReturnPath;
-    private long fuelHealthTick=Long.MIN_VALUE;
+    private static final long FUEL_RELOAD_GRACE_TICKS = 40;
+    private long fuelHealthTick=Long.MIN_VALUE, reloadFuelWaitSince=Long.MIN_VALUE;
     private boolean returnFlightPending, departureFlightPending, flightRecovering, recoveryRequired;
     private BlockPos returnOrigin, dispatchDestination;
     private UUID airportPreflightAttempt;
@@ -741,6 +742,18 @@ public final class RegisteredVehicleControllerBlockEntity extends BlockEntity
         if(!ownership.success())reason=ownership.reason();
         return ownership.success();
     }
+    private boolean waitingForRestoredFuelNetwork(String problem,long now) {
+        if (!railAircraft.restoringActiveMotion()) return false;
+        switch (problem) {
+            case "fuel_network_unavailable", "fuel_network_unloaded", "fuel_waiting_power", "fuel_propeller_stopped" -> {}
+            default -> { return false; }
+        }
+        // Create reattaches the saved network on its own first ticks. Hold the body while
+        // rechecking the live network, and still fail immediately on an empty or foreign source.
+        if (reloadFuelWaitSince==Long.MIN_VALUE || now<reloadFuelWaitSince) reloadFuelWaitSince=now;
+        return now-reloadFuelWaitSince < FUEL_RELOAD_GRACE_TICKS;
+    }
+
     private void tickRailAircraft(ServerLevel server) {
         var context=railContext(server);
         if(manualTakeover){airSurfaces.neutral(surfaceContext());railAircraft.manualRelease(context);status=ControllerStatus.MANUAL;return;}
@@ -771,10 +784,22 @@ public final class RegisteredVehicleControllerBlockEntity extends BlockEntity
         }
         boolean loaded=loading.update(server,getTransportUuid(),view.physicalId(),view.worldBounds(),view.worldPosition());
         aircraftFuel.poll(fuelContext());
+        long now = server.getGameTime();
         if(active&&!paused&&mission!=null&&!mission.completed()&&!airportPreflightPending()
-                &&(fuelHealthTick==Long.MIN_VALUE||server.getGameTime()<fuelHealthTick||server.getGameTime()-fuelHealthTick>=20)) {
-            fuelHealthTick=server.getGameTime();var health=aircraftFuel.exhausted(fuelContext());
-            if(!health.success()){fuelFailure(server,health.reason());return;}
+                &&(reloadFuelWaitSince!=Long.MIN_VALUE||fuelHealthTick==Long.MIN_VALUE||now<fuelHealthTick||now-fuelHealthTick>=20)) {
+            fuelHealthTick=now;
+            var health=aircraftFuel.exhausted(fuelContext());
+            if(!health.success()) {
+                if (waitingForRestoredFuelNetwork(health.reason(), now)) {
+                    railAircraft.park(context);
+                    status=ControllerStatus.WAITING_TERRAIN;reason=health.reason();
+                    updateTrace(server);recordFlightTelemetry(server);
+                    return;
+                }
+                reloadFuelWaitSince=Long.MIN_VALUE;
+                fuelFailure(server,health.reason());return;
+            }
+            reloadFuelWaitSince=Long.MIN_VALUE;
             // Keep remaining-duration UI current; a reserve shortfall alone does not stop an airborne aircraft.
             checkCurrentAircraftFuel(server);
         }
@@ -4168,7 +4193,7 @@ public final class RegisteredVehicleControllerBlockEntity extends BlockEntity
         railAircraft=tag.contains("RailAircraft",Tag.TAG_COMPOUND)?RegisteredAircraftRailController.load(tag.getCompound("RailAircraft")):
                 RegisteredAircraftRailController.load(new CompoundTag());
         airSurfaces=RegisteredAircraftSurfaces.load(tag.contains("AirSurfaces",Tag.TAG_COMPOUND)?tag.getCompound("AirSurfaces"):new CompoundTag());
-        aircraftFuel=new RegisteredAircraftFuelController();fuelReturnKey="";fuelReturnPath=null;fuelHealthTick=Long.MIN_VALUE;
+        aircraftFuel=new RegisteredAircraftFuelController();fuelReturnKey="";fuelReturnPath=null;fuelHealthTick=reloadFuelWaitSince=Long.MIN_VALUE;
         if(tag.contains("AirSurfaces")&&!tag.contains("AirSurfaces",Tag.TAG_COMPOUND)) {
             var malformed=new CompoundTag();malformed.putBoolean("Invalid",true);malformed.put("Raw",tag.get("AirSurfaces").copy());
             airSurfaces=RegisteredAircraftSurfaces.load(malformed);

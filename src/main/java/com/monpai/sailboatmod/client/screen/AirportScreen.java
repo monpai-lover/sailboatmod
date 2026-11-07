@@ -33,6 +33,8 @@ import java.util.function.Consumer;
 /** Terrain-first airport planner. Draft geometry lives exclusively in the pure planner model. */
 public final class AirportScreen extends ThemedScreen {
     private static final long AUTO_LAYOUT_ACK_TIMEOUT = 100;
+    private enum Section { HOME, PLANNING, SETTINGS }
+    private Section section = Section.HOME;
     private final AirportPlannerModel planner;
     private final Consumer<AirportActionPacket> packetSender;
     private final RoadPlannerMapView camera;
@@ -60,8 +62,9 @@ public final class AirportScreen extends ThemedScreen {
     private long autoLayoutRevision = -1, autoLayoutReplyDeadline = -1;
     private Button autoLayoutTool, autoLayoutSave;
     private Label autoLayoutStatus;
-    private UIElement body, inspectorPane;
+    private UIElement body, inspectorPane, toolbar;
     private Label status;
+    private Label mapHint;
     private ScrollerView inspector;
     private AirportMapElement map;
 
@@ -89,22 +92,9 @@ public final class AirportScreen extends ThemedScreen {
     @Override protected UIElement buildBody() {
         body = Ui.column(); sizeBody();
         status = Ui.paragraph(statusText(), "sm-muted");
-        UIElement toolbar = Ui.wrapRow(Ui.GAP_XS);
+        toolbar = Ui.wrapRow(Ui.GAP_XS);
         toolbar.layout(l -> l.widthPercent(100).flexShrink(0));
-        for (AirportPlannerModel.Tool tool : AirportPlannerModel.Tool.values()) {
-            if (tool.isVerticalFacility() && !data().supportsRoutePublication()) continue;
-            Button button = Ui.button(t("tool." + tool.name().toLowerCase(Locale.ROOT)), Ui.Tone.SECONDARY,
-                    () -> safely(() -> chooseTool(tool)));
-            button.layout(l -> l.paddingHorizontal(Ui.GAP_S));
-            tools.put(tool, button); toolbar.addChild(button);
-        }
-        autoLayoutTool = null;
-        if (data().supportsAutoLayout()) {
-            autoLayoutTool = Ui.button(t("auto_layout"), Ui.Tone.SECONDARY, () -> safely(this::beginAutoLayout));
-            toolbar.addChild(autoLayoutTool);
-        }
-        toolbar.addChildren(button("tab.overview", () -> { autoLayoutMode = false; overview = true; renderInspector(); refreshStatus(); }),
-                button("recenter", this::recenter), button("preview", () -> AirportClientHooks.togglePreview(this)));
+        renderToolbar();
         UIElement main = Ui.row();
         main.layout(l -> l.widthPercent(100).height(0).flexGrow(1).flexShrink(1).minHeight(64).gapAll(Ui.GAP_S));
         map = new AirportMapElement(new AirportMapElement.Host() {
@@ -122,14 +112,65 @@ public final class AirportScreen extends ThemedScreen {
         inspectorPane.layout(l -> l.width(inspectorWidth(width)).heightPercent(100).minWidth(130).flexShrink(0));
         inspector = Ui.scroller(); inspectorPane.addChild(inspector);
         main.addChildren(map, inspectorPane);
-        body.addChildren(status, toolbar, main, Ui.paragraph(t("map_controls"), "sm-muted"));
-        renderInspector(); refreshToolButtons(); return body;
+        mapHint = Ui.paragraph(t("map_controls"), "sm-muted");
+        body.addChildren(status, toolbar, main, mapHint);
+        renderInspector(); refreshStatus(); return body;
+    }
+
+    private void renderToolbar() {
+        if (toolbar == null) return;
+        toolbar.clearAllChildren();
+        tools.clear();
+        autoLayoutTool = null;
+        toolbar.addChildren(sectionButton("tab.home", Section.HOME, this::showHome),
+                sectionButton("tab.planning", Section.PLANNING, this::showPlanning),
+                sectionButton("tab.settings", Section.SETTINGS, this::showSettings));
+        if (data().supportsAutoLayout() && data().canManage()) {
+            autoLayoutTool = Ui.button(t("auto_layout"), Ui.Tone.SECONDARY, () -> safely(this::beginAutoLayout));
+            toolbar.addChild(autoLayoutTool);
+        }
+        if (section == Section.PLANNING && !autoLayoutMode) {
+            UIElement planningTools = Ui.wrapRow(Ui.GAP_XS);
+            planningTools.layout(l -> l.widthPercent(100).flexShrink(0));
+            for (AirportPlannerModel.Tool tool : AirportPlannerModel.Tool.values()) {
+                if (tool.isVerticalFacility() && !data().supportsRoutePublication()) continue;
+                Button button = Ui.button(t("tool." + tool.name().toLowerCase(Locale.ROOT)), Ui.Tone.SECONDARY,
+                        () -> safely(() -> chooseTool(tool)));
+                button.layout(l -> l.paddingHorizontal(Ui.GAP_S));
+                tools.put(tool, button);
+                planningTools.addChild(button);
+            }
+            planningTools.addChildren(button("recenter", this::recenter),
+                    button("preview", () -> AirportClientHooks.togglePreview(this)));
+            toolbar.addChild(planningTools);
+        }
+    }
+
+    private Button sectionButton(String label, Section target, Runnable action) {
+        return Ui.button(t(label), section == target && !autoLayoutMode ? Ui.Tone.PRIMARY : Ui.Tone.SECONDARY,
+                () -> safely(action));
+    }
+    private void showHome() { showSection(Section.HOME); }
+    private void showPlanning() { showSection(Section.PLANNING); }
+    private void showSettings() { showSection(Section.SETTINGS); }
+    private void showSection(Section next) {
+        if (map != null) map.cancelCapture();
+        section = next;
+        autoLayoutMode = false;
+        overview = next != Section.PLANNING || planner.draft().isEmpty();
+        renderToolbar();
+        renderInspector();
+        refreshStatus();
+        AirportClientHooks.updatePreview(this);
     }
     public void update(AirportScreenData update, boolean repaint) {
         if (!data().dimension().equals(update.dimension()) || !airportPos().equals(update.airportPos())) return;
         long previousRevision = data().revision();
         boolean nameChanged = !data().name().equals(update.name());
         boolean targetsChanged = !data().routeTargets().equals(update.routeTargets());
+        boolean toolbarChanged = data().canManage() != update.canManage()
+                || data().supportsAutoLayout() != update.supportsAutoLayout()
+                || data().supportsRoutePublication() != update.supportsRoutePublication();
         boolean wasBusy = busy();
         if (routeReplyDeadline >= 0 && !update.result().isEmpty()) routeReplyDeadline = -1;
         if (pendingNameRevision >= 0 && !update.result().isEmpty() && !"pending".equals(update.result())) {
@@ -151,9 +192,11 @@ public final class AirportScreen extends ThemedScreen {
                 clearAutoLayoutSelection();
                 autoLayoutMode = false;
                 overview = true;
+                toolbarChanged = true;
             }
         }
         if (nameUnedited) { nameDraft = update.customName(); nameRevision = update.revision(); }
+        if (toolbarChanged) renderToolbar();
         refreshStatus();
         if (!update.result().isEmpty() && !"pending".equals(update.result())) toast.show(t("result." + update.result()),
                 "ok".equals(update.result()) || "valid".equals(update.result()), ticks());
@@ -163,10 +206,9 @@ public final class AirportScreen extends ThemedScreen {
     }
     private Component statusText() {
         String state = draftStatus(planner, precisionInvalid);
-        Component text = Component.literal(data().name() + " · " + data().owner() + " · ")
-                .append(t("revision")).append(" " + data().revision()).append(" · ").append(t(state))
-                .append("\n").append(data().canManage() ? t("editable") : t("read_only"))
-                .append(" · ").append(Component.literal(data().town()));
+        var text = Component.literal(data().name() + " · " + data().town());
+        if (section != Section.HOME || autoLayoutMode || !state.equals("draft_saved")) text.append(" · ").append(t(state));
+        if (!data().canManage()) text.append(" · ").append(t("read_only"));
         if (!planner.lastResult().isEmpty() && !List.of("ok", "valid").contains(planner.lastResult()))
             text = text.copy().append(" · ").append(t("result." + planner.lastResult()));
         if (busy()) text = text.copy().append("\n").append(Component.translatable("screen.sailboatmod.airport.validation_progress", planner.validationProgress()));
@@ -185,6 +227,7 @@ public final class AirportScreen extends ThemedScreen {
             || routeReplyDeadline >= 0 || "pending".equals(planner.lastResult()); }
     private void refreshStatus() {
         if (status != null) status.setValue(statusText());
+        if (mapHint != null) mapHint.setDisplay(section == Section.PLANNING && !autoLayoutMode);
         refreshToolButtons();
         precisionFields.values().forEach(field -> field.setActive(data().canManage() && !busy()));
         if (autoLayoutStatus != null) autoLayoutStatus.setValue(t(autoLayoutStatusKey()));
@@ -250,6 +293,7 @@ public final class AirportScreen extends ThemedScreen {
             pickAutoLayoutCorner(corner);
             return true;
         }
+        if (section != Section.PLANNING) return false;
         if (button == 1) { planner.setTool(AirportPlannerModel.Tool.SELECT); refreshStatus(); renderInspector(); return true; }
         if (button != 0 || !applyPrecision()) return false;
         var draft = planner.draft();
@@ -354,8 +398,15 @@ public final class AirportScreen extends ThemedScreen {
         routeSelector = null;
         if (autoLayoutMode) { autoLayoutInspector(); return; }
         if (!Objects.equals(propertyDraft, planner.draft().orElse(null))) synchronizePrecision();
-        if (overview || planner.draft().isEmpty()) overview(); else properties(planner.draft().orElseThrow());
-        objects();
+        if (section == Section.SETTINGS) {
+            settings();
+        } else if (!overview || section == Section.PLANNING) {
+            if (!overview && planner.draft().isPresent()) properties(planner.draft().orElseThrow());
+            else text(t("visual_hint"));
+            objects();
+        } else {
+            overview();
+        }
     }
     private void text(Component value) { inspector.addScrollViewChild(Ui.paragraph(value, "sm-muted")); }
     private void actions(UIElement... values) { UIElement row = Ui.wrapRow(Ui.GAP_XS); row.addChildren(values); inspector.addScrollViewChild(row); }
@@ -375,15 +426,31 @@ public final class AirportScreen extends ThemedScreen {
         inspector.addScrollViewChild(row); return input;
     }
     private void overview() {
-        text(t("visual_hint")); text(Component.literal(data().town() + " · " + data().owner()));
+        if (data().facilities().isEmpty()) {
+            text(t("quick_start_empty"));
+            if (data().supportsRoutePublication() && data().canManage())
+                actions(button("quick_helipad", () -> startFacility(AirportPlannerModel.Tool.HELIPAD)),
+                        button("quick_mooring", () -> startFacility(AirportPlannerModel.Tool.MOORING)));
+        } else {
+            text(Component.translatable("screen.sailboatmod.airport.counts", data().facilities().size(),
+                    data().groundLayout().taxiRoutes().size(), data().groundLayout().stands().size()));
+        }
+        if (data().supportsRoutePublication() && data().canManage() && !data().facilities().isEmpty())
+            routePublicationControls();
+    }
+    private void startFacility(AirportPlannerModel.Tool tool) {
+        if (!editable()) return;
+        showPlanning();
+        chooseTool(tool);
+    }
+    private void settings() {
+        text(Component.literal(data().owner() + " · ").append(t("revision")).append(" " + data().revision()));
         field("name", nameDraft, value -> nameDraft = value);
         text(t("name_default_hint"));
         actions(button("rename", () -> send(AirportActionPacket.Action.RENAME, nameDraft)),
                 button("name_follow_town", () -> { nameDraft = ""; send(AirportActionPacket.Action.RENAME, ""); }),
                 button("refresh", () -> send(AirportActionPacket.Action.REFRESH, "")));
         if (nameRevision != data().revision()) actions(button("review_current", () -> { nameRevision = data().revision(); refreshStatus(); }));
-        if (data().supportsRoutePublication() && data().canManage()) routePublicationControls();
-        text(Component.translatable("screen.sailboatmod.airport.counts", data().facilities().size(), data().groundLayout().taxiRoutes().size(), data().groundLayout().stands().size()));
         for (String line : data().statuses()) {
             String[] parts = line.split("\\|", -1);
             if (parts.length == 3 && !parts[0].equals("editor") && !parts[0].equals("feature"))
@@ -398,7 +465,7 @@ public final class AirportScreen extends ThemedScreen {
         catch (NumberFormatException ignored) { return false; }
     }
     private void routePublicationControls() {
-        text(t("route_publish_hint"));
+        inspector.addScrollViewChild(Ui.paragraph(t("quick_route_title"), "sm-strong"));
         var targets = data().routeTargets();
         if (targets.isEmpty()) { text(t("route_no_targets")); return; }
         var chosen = routeTarget();
@@ -429,10 +496,10 @@ public final class AirportScreen extends ThemedScreen {
             routeCruiseY = value;
             refreshStatus();
         }));
-        publishOneWay = Ui.button(t("route_publish"), Ui.Tone.PRIMARY, () -> safely(() -> publishRoute(false)));
-        publishRoundTrip = Ui.button(t("route_publish_return"), Ui.Tone.SECONDARY, () -> safely(() -> publishRoute(true)));
-        actions(publishOneWay, publishRoundTrip);
-        text(t("route_return_hint"));
+        publishOneWay = Ui.button(t("route_publish"), Ui.Tone.SECONDARY, () -> safely(() -> publishRoute(false)));
+        publishRoundTrip = Ui.button(t("route_publish_return"), Ui.Tone.PRIMARY, () -> safely(() -> publishRoute(true)));
+        actions(publishRoundTrip, publishOneWay);
+        text(t("quick_route_hint"));
         refreshStatus();
     }
     private void publishRoute(boolean returnRoute) {
@@ -449,10 +516,12 @@ public final class AirportScreen extends ThemedScreen {
         if (!data().supportsAutoLayout() || !editable()) return;
         if (map != null) map.cancelCapture();
         autoLayoutMode = true;
+        renderToolbar();
         renderInspector(); refreshStatus(); AirportClientHooks.updatePreview(this);
     }
     private void endAutoLayout() {
         autoLayoutMode = false;
+        renderToolbar();
         renderInspector(); refreshStatus(); AirportClientHooks.updatePreview(this);
     }
     private void clearAutoLayoutSelection() {
@@ -543,9 +612,11 @@ public final class AirportScreen extends ThemedScreen {
         field("map_plane_y", planeY, value -> { planeY = value; if (data().canManage()) applyPrecision(false); refreshStatus(); AirportClientHooks.updatePreview(this); });
         text(t("plane_hint"));
         if (draft.kind().isVerticalFacility()) text(t("vertical_facility_hint"));
-        if (draft.kind().isFacility()) {
+        if (draft.kind() == AirportPlannerModel.Tool.RUNWAY) {
             actions(button("reverse_direction", () -> { if (applyPrecision()) { planner.reverseRunway(); changed(); } }),
                     button("validate", () -> send(AirportActionPacket.Action.VALIDATE_RUNWAY, precision.get("id"))));
+        } else if (draft.kind().isVerticalFacility()) {
+            actions(button("validate_facility", () -> send(AirportActionPacket.Action.VALIDATE_RUNWAY, precision.get("id"))));
         }
         if (draft.kind() == AirportPlannerModel.Tool.OUTBOUND || draft.kind() == AirportPlannerModel.Tool.INBOUND) {
             field("runway", "assigned_runway"); field("stand", "assigned_stand"); field("speed", "speed");
@@ -689,7 +760,7 @@ public final class AirportScreen extends ThemedScreen {
     @Override public boolean mouseReleased(double x, double y, int button) { return map != null && map.release(button) || super.mouseReleased(x, y, button); }
     @Override public boolean keyPressed(int key, int scanCode, int modifiers) {
         if (modularUI() != null && modularUI().getFocusedElement() != null && modularUI().getFocusedElement().isTextInput()) return super.keyPressed(key, scanCode, modifiers);
-        if (autoLayoutMode) return super.keyPressed(key, scanCode, modifiers);
+        if (autoLayoutMode || section != Section.PLANNING) return super.keyPressed(key, scanCode, modifiers);
         if ((modifiers & (GLFW.GLFW_MOD_CONTROL | GLFW.GLFW_MOD_SUPER)) != 0 && key == GLFW.GLFW_KEY_Z) { safely(() -> { planner.undo(); changed(); }); return true; }
         if (key == GLFW.GLFW_KEY_DELETE || key == GLFW.GLFW_KEY_BACKSPACE) { safely(this::removePoint); return true; }
         return super.keyPressed(key, scanCode, modifiers);
@@ -697,7 +768,7 @@ public final class AirportScreen extends ThemedScreen {
     @Override protected void onEscape() {
         if (map != null) map.cancelCapture();
         if (autoLayoutMode) { endAutoLayout(); return; }
-        if (planner.tool() != AirportPlannerModel.Tool.SELECT) { planner.setTool(AirportPlannerModel.Tool.SELECT); refreshStatus(); renderInspector(); }
+        if (section == Section.PLANNING && planner.tool() != AirportPlannerModel.Tool.SELECT) { planner.setTool(AirportPlannerModel.Tool.SELECT); refreshStatus(); renderInspector(); }
         else super.onEscape();
     }
     @Override public void removed() { if (map != null) map.cancelCapture(); super.removed(); }

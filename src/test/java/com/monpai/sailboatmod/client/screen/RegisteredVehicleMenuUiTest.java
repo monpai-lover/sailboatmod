@@ -34,6 +34,47 @@ class RegisteredVehicleMenuUiTest {
         assertNull(button(body, "internal-route-one"));
     }
 
+    @Test void overviewOffersTheNextActionsBeforeOptionalVehicleDetails() throws Exception {
+        var snapshot = overviewData(true, 0);
+        var screen = new RegisteredVehicleControllerScreen(snapshot);
+        var body = screen.buildBody();
+
+        assertTrue(hasTranslatedButton(body, "view_destinations"));
+        assertTrue(hasTranslatedButton(body, "manage_cargo"));
+        assertTrue(hasTranslatedButton(body, "cargo_auto_configure"));
+        assertFalse(hasTranslatedButton(body, "unregister"));
+        assertFalse(hasTranslatedButton(body, "rename"));
+        click(assertNotNullButton(body, "screen.sailboatmod.controller.show_details"));
+        assertTrue(hasTranslatedButton(body, "unregister"));
+        assertTrue(hasTranslatedButton(body, "rename"));
+
+        click(assertNotNullButton(body, "screen.sailboatmod.controller.view_destinations"));
+        assertNotNullButton(body, "Ocean C");
+    }
+
+    @Test void cargoOffersOneClickDetectionAndMakesManualOffsetsOptIn() throws Exception {
+        var sent = new ArrayList<RegisteredVehicleControllerActionPacket>();
+        var screen = new RegisteredVehicleControllerScreen(overviewData(true, 0), sent::add);
+        var body = screen.buildBody();
+        click(assertNotNullButton(body, "screen.sailboatmod.controller.manage_cargo"));
+
+        assertFalse(hasTranslatedButton(body, "add_cargo"));
+        var scan = assertNotNullButton(body, "screen.sailboatmod.controller.cargo_auto_configure");
+        click(scan);
+        assertEquals(List.of(ControllerAction.AUTO_CONFIGURE), sent.stream().map(RegisteredVehicleControllerActionPacket::action).toList());
+
+        screen.update(overviewData(false, 1), false);
+        click(scan);
+        assertEquals(1, sent.size(), "An old button cannot send a scan when the refreshed snapshot disallows it");
+        click(assertNotNullButton(body, "screen.sailboatmod.controller.show_manual_cargo"));
+        click(assertNotNullButton(body, "screen.sailboatmod.controller.add_cargo"));
+        assertEquals(ControllerAction.ADD_CARGO, sent.getLast().action());
+        assertEquals("1 0 0", sent.getLast().value());
+        click(assertNotNullButton(body, "screen.sailboatmod.controller.remove"));
+        assertEquals(ControllerAction.REMOVE_CARGO, sent.getLast().action());
+        assertEquals("2, 0, 0", sent.getLast().value());
+    }
+
     @Test void destinationClickUsesTheOriginalSelectionActionAndServerIndex() throws Exception {
         var sent = new ArrayList<RegisteredVehicleControllerActionPacket>();
         var screen = new RegisteredVehicleControllerScreen(data(false, false), sent::add);
@@ -180,6 +221,19 @@ class RegisteredVehicleMenuUiTest {
         assertNull(button(body, "Ocean B"));
         assertFalse(hasTranslatedButton(body, "start"));
         assertFalse(hasTranslatedButton(body, "fuel_check_start"));
+    }
+
+    private static ControllerScreenData overviewData(boolean canScan, int containers) {
+        var base = data(false, false);
+        var values = base.values();
+        values.remove("InitialPage");
+        values.putBoolean("Registered", true);
+        values.putBoolean("NamedRegistration", true);
+        values.putBoolean("CanAutoConfigure", canScan);
+        var cargo = new ListTag();
+        if (containers > 0) cargo.add(StringTag.valueOf("2, 0, 0"));
+        values.put("Cargo", cargo);
+        return new ControllerScreenData(base.controllerPos(), base.registrationId(), values);
     }
 
     private static ControllerScreenData aircraftData(boolean active, boolean paused, boolean manifest) {
