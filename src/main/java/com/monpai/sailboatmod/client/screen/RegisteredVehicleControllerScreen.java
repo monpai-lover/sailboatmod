@@ -129,12 +129,15 @@ public final class RegisteredVehicleControllerScreen extends ThemedScreen {
     }
 
     private Component statusText() {
-        String state = data.values().getString("Status").toLowerCase(java.util.Locale.ROOT);
-        String key = "screen.sailboatmod.controller.reason." + data.values().getString("Reason");
-        return Component.literal(data.values().getString("Name") + " · ")
-                .append(t("status." + state))
+        var values = data.values();
+        boolean preflightQueued = airportPreflightQueued(values);
+        String state = values.getString("Status").toLowerCase(java.util.Locale.ROOT);
+        String key = "screen.sailboatmod.controller.reason." + values.getString("Reason");
+        return Component.literal(values.getString("Name") + " · ")
+                .append(t(preflightQueued ? "airport_preflight_queued" : "status." + state))
                 .append("\n")
-                .append(I18n.exists(key) ? Component.translatable(key) : t("reason.check_status"));
+                .append(I18n.exists(key) ? Component.translatable(key)
+                        : t(preflightQueued ? "reason.airport_preflight_queued" : "reason.check_status"));
     }
 
     private void send(ControllerAction action) {
@@ -561,12 +564,18 @@ public final class RegisteredVehicleControllerScreen extends ThemedScreen {
         if(autoReturnButton!=null){autoReturnButton.setActive(returnEditingAllowed(values));autoReturnButton.setText(t(values.getBoolean("AutoReturn")?"auto_return_on":"auto_return_off"));}
     }
     private static boolean fuelStartAllowed(CompoundTag values) {
+        if (airportPreflightQueued(values)) return false;
         if(!values.getBoolean("AirRail"))return true;
         var fuel=values.getCompound("AirFuel");
         return !values.getBoolean("Active")&&!values.getBoolean("Paused")&&(!fuel.getBoolean("Evaluated")||fuel.getBoolean("Ready"));
     }
     private static String fuelStartLabel(CompoundTag values) {
+        if (airportPreflightQueued(values)) return "airport_preflight_queued";
         return values.getBoolean("AirRail")&&!values.getCompound("AirFuel").getBoolean("Evaluated")?"fuel_check_start":"start";
+    }
+    private static boolean airportPreflightQueued(CompoundTag values) {
+        return values.getBoolean("Active") && !values.getBoolean("Paused")
+                && (values.getBoolean("DepartureFlightPending") || values.getBoolean("ReturnFlightPending"));
     }
     private static boolean returnEditingAllowed(CompoundTag values){return !values.getBoolean("Active")&&!values.getBoolean("Paused");}
     private static boolean validFuelTicks(CompoundTag values,String key){return values.contains(key,Tag.TAG_LONG)&&values.getLong(key)>=0;}

@@ -43,6 +43,50 @@ class ControllerFuelUiTest {
         click(button(body,"fuel_check_start"));assertEquals(1,sent.size());assertEquals(ControllerAction.START,sent.getFirst().action());
     }
 
+    @Test void departurePreflightAcknowledgesTheStartClickAndCannotSubmitItAgain() throws Exception {
+        var sent = new ArrayList<RegisteredVehicleControllerActionPacket>();
+        var screen = new RegisteredVehicleControllerScreen(data(new CompoundTag(),false,false),sent::add);
+        var body = page(screen,"routes");
+        var start = button(body,"fuel_check_start");
+        click(start);
+        assertEquals(1,sent.size());
+
+        var queued = data(new CompoundTag(),true,false).values();
+        queued.putBoolean("DepartureFlightPending",true);
+        queued.putString("Status","WAITING_TERRAIN");
+        queued.putString("Reason","waiting_airport_terrain");
+        screen.update(new ControllerScreenData(POS,ID,queued),false);
+        assertTrue(translations(body).contains(PREFIX+"airport_preflight_queued"));
+        click(start);
+        click(button(body,"airport_preflight_queued"));
+        assertEquals(1,sent.size());
+
+        queued.putBoolean("DepartureFlightPending",false);
+        queued.putString("Status","RUNNING");
+        queued.putString("Reason","");
+        queued.put("AirFuel",budget(true,true));
+        screen.update(new ControllerScreenData(POS,ID,queued),false);
+        assertFalse(translations(body).contains(PREFIX+"airport_preflight_queued"));
+        assertNotNull(button(body,"start"));
+    }
+
+    @Test void returnPreflightStopsClaimingItIsQueuedWhenPausedByAFailure() throws Exception {
+        var screen = new RegisteredVehicleControllerScreen(data(budget(true,true),true,false));
+        var body = page(screen,"routes");
+        var returning = data(budget(true,true),true,false).values();
+        returning.putBoolean("ReturnFlightPending",true);
+        returning.putString("Status","WAITING_TERRAIN");
+        screen.update(new ControllerScreenData(POS,ID,returning),false);
+        assertNotNull(button(body,"airport_preflight_queued"));
+
+        returning.putBoolean("Paused",true);
+        returning.putString("Status","FAULT");
+        returning.putString("Reason","fuel_insufficient");
+        screen.update(new ControllerScreenData(POS,ID,returning),false);
+        assertFalse(translations(body).contains(PREFIX+"airport_preflight_queued"));
+        assertNotNull(button(body,"start"));
+    }
+
     @Test void aKnownFailedCheckCannotSubmitStartButRefreshCanRecoverIt() throws Exception {
         var sent=new ArrayList<RegisteredVehicleControllerActionPacket>();
         var screen=new RegisteredVehicleControllerScreen(data(budget(true,false),false,false),sent::add);var body=page(screen,"routes");
@@ -116,6 +160,9 @@ class ControllerFuelUiTest {
         var folder=Path.of("src/main/resources/assets/sailboatmod/lang");
         for(String language:List.of("en_us","zh_cn")) {
             var json=JsonParser.parseString(Files.readString(folder.resolve(language+".json"))).getAsJsonObject();
+            for (String key : List.of("airport_preflight_queued", "reason.airport_preflight_queued",
+                    "reason.waiting_airport_metadata", "reason.waiting_airport_terrain"))
+                assertTrue(json.has(PREFIX+key)&&!json.get(PREFIX+key).getAsString().isBlank(),language+":"+key);
             for(String key:List.of("fuel_title","fuel_check_pending","fuel_check_start","fuel_ready","fuel_unknown","fuel_planned","fuel_return","fuel_reserve","fuel_required","fuel_available","fuel_engine","fuel_propeller","fuel_propeller_running","fuel_shortfall","fuel_hint","fuel_time_seconds","fuel_time_minutes","reason.fuel_insufficient","reason.fuel_empty","reason.fuel_engine_missing","reason.fuel_unknown","reason.fuel_power_waiting","reason.fuel_network_unavailable","reason.fuel_network_foreign","reason.fuel_duration_unavailable","reason.fuel_no_engines","reason.fuel_power_not_ready","reason.fuel_budget_invalid","reason.fuel_budget_overflow"))
                 assertTrue(json.has(PREFIX+key)&&!json.get(PREFIX+key).getAsString().isBlank(),language+":"+key);
             var hint=json.get(PREFIX+"fuel_hint").getAsString();assertTrue(hint.contains(language.equals("zh_cn")?"暂停":"paus"));
