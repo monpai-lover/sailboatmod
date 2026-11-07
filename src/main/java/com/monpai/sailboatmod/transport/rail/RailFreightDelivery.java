@@ -145,7 +145,8 @@ final class RailFreightDelivery {
         long now = level.getGameTime();
         var town = TownService.getTownAt(level, job.route().source().stationPos());
         double progress = outboundProgress(job.route(), train);
-        double speed = Double.isFinite(train.speed()) ? Math.abs(train.speed()) * 20 : 0;
+        // Shipping traces carry blocks per tick, the native train speed unit.
+        double speed = Double.isFinite(train.speed()) ? Math.abs(train.speed()) : 0;
         for (ShipmentManifestEntry entry : job.manifest()) {
             ShippingOrder shipment = market.getShippingOrder(entry.shippingOrderId());
             if (!matchesShipment(job, entry, shipment) || "DELIVERED".equals(shipment.status())) continue;

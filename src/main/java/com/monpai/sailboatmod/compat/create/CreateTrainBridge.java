@@ -92,7 +92,7 @@ final class CreateTrainBridge {
         catch (ReflectiveOperationException | RuntimeException | LinkageError unavailable) { return null; }
     }
 
-    private static boolean waitingForSignal(Navigation navigation) {
+    static boolean waitingForSignal(Navigation navigation) {
         if (navigation == null) return false;
         if (WAITING_FOR_SIGNAL == null) return true;
         try { return WAITING_FOR_SIGNAL.get(navigation) != null; }

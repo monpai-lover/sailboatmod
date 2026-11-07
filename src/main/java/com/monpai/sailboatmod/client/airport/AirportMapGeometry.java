@@ -112,7 +112,7 @@ public final class AirportMapGeometry {
     /** Draft handles take priority over its footprint, so edge dragging never selects another facility. */
     public static Optional<Hit> hitDraft(AirportPlannerModel.Draft draft,double x,double y,RoadPlannerMapView view,ClaimMapViewport viewport) {
         if(draft==null||!validPointer(x,y,0,viewport))return Optional.empty();
-        Kind kind=switch(draft.kind()){case RUNWAY->Kind.RUNWAY;case STAND->Kind.STAND;default->Kind.TAXI;};
+        Kind kind=switch(draft.kind()){case RUNWAY,HELIPAD,MOORING->Kind.RUNWAY;case STAND->Kind.STAND;default->Kind.TAXI;};
         return hit(kind,draft.id(),draft.points(),draft.yaw(),draft.length(),draft.width(),x,y,view,viewport,true);
     }
     /** Match visual stacking: parking areas are above paths, and paths are above runways. */
@@ -130,7 +130,8 @@ public final class AirportMapGeometry {
         }
         for(int i=snapshot.facilities().size()-1;i>=0;i--) {
             var runway=snapshot.facilities().get(i);
-            if(runway.type()!=com.monpai.sailboatmod.transport.air.airport.AirportFacility.Type.RUNWAY)continue;
+            if(runway.type()!=com.monpai.sailboatmod.transport.air.airport.AirportFacility.Type.RUNWAY
+                    && !snapshot.supportsRoutePublication()) continue;
             var points=List.of(new Vec3(runway.start().getX()+.5,runway.start().getY(),runway.start().getZ()+.5),
                     new Vec3(runway.end().getX()+.5,runway.end().getY(),runway.end().getZ()+.5));
             var hit=hit(Kind.RUNWAY,runway.id(),points,0,0,runway.width(),x,y,view,viewport,false);

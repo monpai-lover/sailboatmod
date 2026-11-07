@@ -74,6 +74,10 @@ public final class TownVoyageService {
     public void retire(CarrierKey carrier, UUID leg) { if (!closed) index.retire(carrier, leg); }
     public void markUnloaded(CarrierKey carrier) { if (!closed) index.markUnloaded(carrier); }
     public Optional<Key> currentKey(CarrierKey carrier) { return closed ? Optional.empty() : index.currentKey(carrier); }
+    /** Shared read-only ETA for an exact, currently observed destination. */
+    public OptionalLong remainingEta(CarrierKey carrier, String dimension, long pos, long now) {
+        return closed ? OptionalLong.empty() : index.remainingEta(carrier, dimension, pos, now);
+    }
     public void observeEndpoint(Endpoint endpoint, boolean loaded) { if (!closed) index.observeEndpoint(endpoint, loaded); }
     public void markEndpointUnloaded(String dim, long pos) { if (!closed) index.markEndpointUnloaded(dim, pos); }
     public void markEndpointRemoved(String dim, long pos) { if (!closed) index.markEndpointRemoved(dim, pos); }
@@ -181,6 +185,16 @@ public final class TownVoyageService {
             invalidate(current, State.UNLOADED, false, current.observation.observedTick()); changeVersion++;
         }
         public Optional<Key> currentKey(CarrierKey carrier) { Entry current = carriers.get(carrier); return current == null ? Optional.empty() : Optional.of(current.observation.key()); }
+        OptionalLong remainingEta(CarrierKey carrier, String dimension, long pos, long now) {
+            Entry entry = carriers.get(carrier);
+            if (entry == null || !usable(entry, now)) return OptionalLong.empty();
+            Observation observation = entry.observation;
+            Endpoint target = observation.target();
+            if (observation.state() != State.MOVING || !target.dimensionId().equals(dimension) || target.terminalPos() != pos
+                    || observation.etaTicks().isEmpty() || observation.etaObservedTick() < 0
+                    || observation.etaObservedTick() > now) return OptionalLong.empty();
+            return boundedEta(OptionalLong.of(observation.etaTicks().getAsLong() - (now - observation.etaObservedTick())));
+        }
         public void observeEndpoint(Endpoint endpoint, boolean loaded) {
             if (endpoint == null || endpoint.dimensionId().isEmpty()) return;
             Address address = Address.of(endpoint);

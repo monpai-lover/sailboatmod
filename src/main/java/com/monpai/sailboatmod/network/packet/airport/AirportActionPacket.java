@@ -20,7 +20,7 @@ public record AirportActionPacket(ResourceLocation dimension, BlockPos airportPo
         double yaw, double length, double width, int clearance, double speed, int holdPoint) {
     public static final int MAX_POINTS = 64;
     public enum Action { REFRESH, RENAME, UPSERT_RUNWAY, REMOVE_RUNWAY, VALIDATE_RUNWAY,
-        UPSERT_STAND, REMOVE_STAND, UPSERT_TAXI_ROUTE, REMOVE_TAXI_ROUTE, APPLY_AUTO_LAYOUT }
+        UPSERT_STAND, REMOVE_STAND, UPSERT_TAXI_ROUTE, REMOVE_TAXI_ROUTE, APPLY_AUTO_LAYOUT, PUBLISH_ROUTE, UPSERT_LANDING_FACILITY }
     public AirportActionPacket {
         if (dimension == null || dimension.toString().length() > 256) throw new IllegalArgumentException("Invalid dimension");
         airportPos = Objects.requireNonNull(airportPos).immutable();
@@ -40,6 +40,11 @@ public record AirportActionPacket(ResourceLocation dimension, BlockPos airportPo
     }
     public static AirportActionPacket simple(ResourceLocation dimension, BlockPos pos, long revision, Action action, String value) {
         return new AirportActionPacket(dimension, pos, revision, action, value, "", "", List.of(), false, 0, 0, 0, 0, 0, -1);
+    }
+    public static AirportActionPacket publishRoute(ResourceLocation dimension, BlockPos source, long revision,
+                                                   BlockPos target, int cruiseY, boolean returnRoute) {
+        return new AirportActionPacket(dimension, source, revision, Action.PUBLISH_ROUTE, "", "", "",
+                List.of(Vec3.atLowerCornerOf(target)), returnRoute, 0, 0, 0, cruiseY, 0, -1);
     }
     public static void encode(AirportActionPacket packet, FriendlyByteBuf buffer) {
         buffer.writeUtf(packet.dimension.toString(),256).writeBlockPos(packet.airportPos).writeLong(packet.revision); buffer.writeEnum(packet.action);
@@ -69,11 +74,13 @@ public record AirportActionPacket(ResourceLocation dimension, BlockPos airportPo
             case VALIDATE_RUNWAY -> result.putString("Action","validate");
             case REMOVE_STAND -> result.putString("Action","remove_stand");
             case REMOVE_TAXI_ROUTE -> result.putString("Action","remove_taxi_route");
-            case UPSERT_RUNWAY -> {
+            case UPSERT_RUNWAY, UPSERT_LANDING_FACILITY -> {
                 requirePoints(2);
-                if (width != Math.rint(width)) throw new IllegalArgumentException("Runway width must be whole blocks");
+                if (width != Math.rint(width)) throw new IllegalArgumentException("Facility width must be whole blocks");
+                AirportFacility.Type type = action == Action.UPSERT_RUNWAY ? AirportFacility.Type.RUNWAY
+                        : AirportFacility.Type.valueOf(runwayId);
                 result.putString("Action","upsert_facility");
-                result.put("Facility",new AirportFacility(id,AirportFacility.Type.RUNWAY,wholeBlock(points.getFirst()),wholeBlock(points.getLast()),(int)width,clearance).save());
+                result.put("Facility",new AirportFacility(id,type,wholeBlock(points.getFirst()),wholeBlock(points.getLast()),(int)width,clearance).save());
             }
             case UPSERT_STAND -> {
                 requirePoints(1); result.putString("Action","upsert_stand");
@@ -89,6 +96,13 @@ public record AirportActionPacket(ResourceLocation dimension, BlockPos airportPo
                 result.putString("Action", "auto_layout");
                 result.putLong("CornerA", wholeBlock(points.getFirst()).asLong());
                 result.putLong("CornerB", wholeBlock(points.getLast()).asLong());
+            }
+            case PUBLISH_ROUTE -> {
+                requirePoints(1);
+                result.putString("Action", "publish_route");
+                result.putLong("Target", wholeBlock(points.getFirst()).asLong());
+                result.putInt("CruiseY", clearance);
+                result.putBoolean("Return", flag);
             }
         }
         return result;

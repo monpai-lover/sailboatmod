@@ -7304,7 +7304,8 @@ function mountMarketMapIfNeeded() {
     mapApi.mount(root, {
       focusedMarketId,
       locale: state.locale || "zh-CN",
-      apiBase: ""
+      apiBase: "",
+      onSelectMarket: switchMarket
     });
   }
   if (state.pendingShipmentFocus && typeof mapApi.focusShipment === "function") {

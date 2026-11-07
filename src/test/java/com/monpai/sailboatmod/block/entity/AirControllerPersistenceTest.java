@@ -28,6 +28,22 @@ import static org.junit.jupiter.api.Assertions.*;
 class AirControllerPersistenceTest {
     @BeforeAll static void bootstrap() { SharedConstants.tryDetectVersion(); Bootstrap.bootStrap(); }
 
+    @Test void explicitCargoExclusionsAndAutomaticProvenanceSurviveControllerReload() throws Exception {
+        var original = fixture();
+        BlockPos manual = new BlockPos(1, 0, 0);
+        BlockPos automatic = new BlockPos(2, 0, 0);
+        BlockPos removed = new BlockPos(3, 0, 0);
+        set(original, "cargoOffsets", new ArrayList<>(List.of(manual, automatic, manual)));
+        set(original, "manifest", new ArrayList<ShipmentManifestEntry>());
+        set(original, "automaticCargoOffsets", new HashSet<>(Set.of(automatic)));
+        set(original, "excludedCargoOffsets", new HashSet<>(Set.of(removed)));
+
+        var restored = roundTrip(original);
+        assertEquals(List.of(manual, automatic), get(restored, "cargoOffsets"));
+        assertEquals(Set.of(automatic), get(restored, "automaticCargoOffsets"));
+        assertEquals(Set.of(removed), get(restored, "excludedCargoOffsets"));
+    }
+
     @Test void explicitCommunityRudderProfileSurvivesPausedControllerReloadWithoutExecutionState() throws Exception {
         var original=guidedFixture();
         var profile=new com.monpai.sailboatmod.transport.air.surface.AircraftSurfaceProfile(UUID.randomUUID(),Direction.WEST,
@@ -140,6 +156,18 @@ class AirControllerPersistenceTest {
         set(original, "aircraftClass", AircraftClass.FIXED_WING);
         set(original, "departureFacility", "runway-source");
         assertEquals("runway-source", get(roundTrip(original), "departureFacility"));
+    }
+
+    @Test void queuedGuidedRotorcraftRestoresWithoutSwitchingToTheLegacyNativeController() throws Exception {
+        var original=fixture();
+        set(original,"departureFlightPending",true);
+        set(original,"guidedAirportDeparture",true);
+        var restored=roundTrip(original);
+        assertTrue(restored.railAircraftAutomation());
+        assertTrue((boolean)get(restored,"departureFlightPending"));
+        assertFalse((boolean)get(restored,"flightRecovering"));
+        assertFalse((boolean)get(restored,"recoveryRequired"));
+        assertCargoAndRoutePreserved(restored);
     }
 
     @Test void airshipReloadStillRequiresItsNativeReplayGuard() throws Exception {

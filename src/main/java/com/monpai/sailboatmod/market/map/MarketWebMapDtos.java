@@ -40,6 +40,9 @@ public final class MarketWebMapDtos {
                                String townName) {
     }
 
+    public record RailStationMarker(String stationId, String name, String dimensionId,
+                                    int x, int y, int z, String townId, String townName) { }
+
     public record Territory(String nationId,
                             String nationName,
                             String townId,

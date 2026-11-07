@@ -50,6 +50,53 @@ public final class RailAirportSelection {
         return unavailable(evaluated>0?"no_compatible_leg":sourceFound?"rail_destination_unavailable":"rail_source_unavailable");
     }
 
+    public static AirportFacility.Type directType(AircraftClass airframe) {
+        return switch (airframe) {
+            case FIXED_WING -> AirportFacility.Type.RUNWAY;
+            case ROTORCRAFT -> AirportFacility.Type.HELIPAD;
+            case AIRSHIP -> AirportFacility.Type.MOORING;
+        };
+    }
+
+    public static List<Candidate> directCandidates(AircraftClass airframe, AirportGroundLayout layout,
+                                                   List<AirportFacility> facilities, GroundAssignment exact) {
+        if (airframe == AircraftClass.FIXED_WING || layout == null || facilities == null) return List.of();
+        return facilities.stream().filter(facility -> facility != null && facility.type() == directType(airframe)
+                        && facility.validGeometry())
+                .map(facility -> new Candidate(GroundAssignment.direct(layout.revision(),facility),null,facility,null,null))
+                .filter(candidate -> exact == null || exact.equals(candidate.assignment())).toList();
+    }
+
+    public static boolean directParked(Aircraft aircraft, AirportFacility facility,double speed,double angularSpeed) {
+        return validAircraft(aircraft) && facility != null && facility.type() != AirportFacility.Type.RUNWAY
+                && Double.isFinite(angularSpeed) && angularSpeed >= 0 && angularSpeed <= Math.toRadians(2)
+                && facility.isParked(aircraft.hull(),speed);
+    }
+
+    public static Result selectDirect(AircraftClass airframe,Aircraft aircraft, double speed, double angularSpeed,
+                                      AirportGroundLayout source,List<AirportFacility> sourceFacilities,GroundAssignment exactSource,
+                                      AirportGroundLayout target,List<AirportFacility> targetFacilities,GroundAssignment exactTarget,
+                                      Predicate<Selection> admissible) {
+        if (!validAircraft(aircraft)) return unavailable("rail_aircraft_invalid");
+        double diameter = sweepDiameter(aircraft);
+        boolean sourceFound = false;
+        int evaluated = 0;
+        for (Candidate from : directCandidates(airframe,source,sourceFacilities,exactSource)) {
+            if (!directParked(aircraft,from.runway(),speed,angularSpeed)) continue;
+            double height = aircraft.anchor().y - from.runway().start().getY();
+            if (height < 0) continue;
+            sourceFound = true;
+            for (Candidate to : directCandidates(airframe,target,targetFacilities,exactTarget)) {
+                if (to.runway().width() < diameter+2
+                        || height+aircraft.hull().maxY-aircraft.anchor().y > to.runway().clearanceHeight()) continue;
+                if (evaluated++ >= MAX_LEG_EVALUATIONS) return unavailable("rail_candidate_limit");
+                Selection selection = new Selection(from,to,height,diameter);
+                if (admissible.test(selection)) return new Result(Optional.of(selection),"");
+            }
+        }
+        return unavailable(evaluated>0?"no_compatible_leg":sourceFound?"rail_direct_destination_unavailable":"rail_direct_source_unavailable");
+    }
+
     /** Includes every heading around this actual material anchor, which need not be the hull center. */
     public static double sweepDiameter(Aircraft aircraft) {
         if (!validAircraft(aircraft)) return Double.NaN;

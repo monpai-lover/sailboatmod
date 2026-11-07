@@ -189,7 +189,7 @@ class AirportBindingBootstrapTest {
         method.setAccessible(true);
         return (Map<AirportSavedData.AirportSnapshot, RouteDefinition>) method.invoke(controller, source, saved);
     }
-    private boolean bind()throws Exception{Method m=RegisteredVehicleControllerBlockEntity.class.getDeclaredMethod("bindParkedStandAirport",ServerLevel.class);m.setAccessible(true);return(boolean)m.invoke(controller,level);}
+    private boolean bind()throws Exception{Method m=RegisteredVehicleControllerBlockEntity.class.getDeclaredMethod("bindParkedGuidedAirport",ServerLevel.class);m.setAccessible(true);return(boolean)m.invoke(controller,level);}
     private PhysicalVehicleView view(AABB hull,Vec3 speed){return new PhysicalVehicleView(physical,"minecraft:overworld",new Vec3(84.94,83,515.58),new Vec3(-1,0,0),speed,hull,86.75,true);}
     private AirportBlockEntity airport(BlockPos p,boolean stand)throws Exception{
         var airport=allocate(AirportBlockEntity.class);set(BlockEntity.class,airport,"worldPosition",p);airport.setLevel(level);

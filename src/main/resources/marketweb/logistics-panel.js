@@ -152,7 +152,7 @@
    */
   function flightStatsHtml(flight, label) {
     if (!flight) return "";
-    const states = { PREFLIGHT: "flightPreflight", QUIESCING: "flightQuiescing", AWAITING_RECOVERY: "flightRecovery", CANCELLED: "eventFailed", UNKNOWN: "flightUnknown", PARKED: "flightParked", LOADING: "flightLoading", TAXIING: "flightTaxiing", TAKEOFF: "flightTakeoff", TAKING_OFF: "flightTakeoff", CLIMBING: "flightClimbing", CRUISING: "flightCruising", CRUISE: "flightCruising", APPROACH: "flightApproach", APPROACHING: "flightApproach", LANDING: "flightLanding", LANDED: "flightLanded", HOLDING: "flightHolding", BLOCKED: "flightBlocked" };
+    const states = { PREFLIGHT: "flightPreflight", QUIESCING: "flightQuiescing", AWAITING_RECOVERY: "flightRecovery", CANCELLED: "eventFailed", UNKNOWN: "flightUnknown", PARKED: "flightParked", LOADING: "flightLoading", TAXIING: "flightTaxiing", TAKEOFF: "flightTakeoff", TAKING_OFF: "flightTakeoff", VERTICAL_TAKEOFF: "flightTakeoff", CLIMBING: "flightClimbing", CRUISING: "flightCruising", CRUISE: "flightCruising", APPROACH: "flightApproach", APPROACHING: "flightApproach", LANDING: "flightLanding", VERTICAL_LANDING: "flightLanding", LANDED: "flightLanded", HOLDING: "flightHolding", BLOCKED: "flightBlocked" };
     const executions = { QUIESCING: "flightQuiescing", MATERIALIZING: "flightRecovery", PHYSICAL: "executionPhysical", VIRTUAL: "executionVirtual", OFFLINE: "executionVirtual" };
     const height = flight.worldY != null && Number.isFinite(Number(flight.worldY)) ? `${Number(flight.worldY).toFixed(1)} m` : "-";
     return `<div><dt>${escapeHtml(label("worldY"))}</dt><dd>${escapeHtml(height)}</dd></div>`
@@ -186,6 +186,12 @@
     const speed = Number(shipment.currentSpeed) || 0;
     const cargo = Array.isArray(shipment.cargo) ? shipment.cargo : [];
     const following = !!ctx.following;
+    const rail = ctx.history || kind !== "train" ? null : shipment.rail;
+    const nextStopEta = Number(rail?.nextStopEtaSeconds) || 0;
+    const railState = {
+      PREPARING: "railPreparing", WAITING: "railWaiting", DWELLING: "railDwelling",
+      WAITING_ROUTE: "railWaitingRoute", PAUSED: "railPaused"
+    }[rail?.state];
     return `
       <div class="map-detail-card map-shipment-detail" data-kind="${kind}"${stuck ? " data-stuck" : ""} style="--mode:${style.color};--progress:${percent}%">
         <div class="map-shipment-detail-head">
@@ -204,8 +210,11 @@
           <div><dt>${escapeHtml(label("progress"))}</dt><dd>${percent}%</dd></div>
           <div><dt>${escapeHtml(label("eta"))}</dt><dd>${etaSec > 0 ? escapeHtml(formatEta(etaSec)) : "-"}</dd></div>
           <div><dt>${escapeHtml(label("speed"))}</dt><dd>${speed > 0 ? escapeHtml(formatSpeed(speed)) : "-"}</dd></div>
-          <div><dt>${escapeHtml(label("status"))}</dt><dd class="map-shipment-status">${escapeHtml(ctx.history ? label(eventKey(shipment.status, "")) : statusText(shipment, label))}</dd></div>
+          <div><dt>${escapeHtml(label("status"))}</dt><dd class="map-shipment-status">${escapeHtml(ctx.history ? label(eventKey(shipment.status, "")) : railState ? label(railState) : statusText(shipment, label))}</dd></div>
           ${flightStatsHtml(shipment.flight, label)}
+          ${rail?.atStation ? `<div><dt>${escapeHtml(label("railCurrentStop"))}</dt><dd>${escapeHtml(rail.atStation)}</dd></div>` : ""}
+          ${rail?.nextStop ? `<div><dt>${escapeHtml(label("railNextStop"))}</dt><dd>${escapeHtml(rail.nextStop)}</dd></div>` : ""}
+          ${rail?.nextStop && nextStopEta > 0 ? `<div><dt>${escapeHtml(label("railNextStopEta"))}</dt><dd>${escapeHtml(formatEta(nextStopEta))}</dd></div>` : ""}
         </dl>
         ${timelineHtml(shipment.events, Number(ctx.nowGameTime) || 0, ctx)}
         <div class="map-shipment-cargo-list">

@@ -694,6 +694,7 @@ public final class MarketWebServer {
         JsonObject out = callOnServerThread(() -> {
             JsonObject json = success();
             json.add("markets", service.mapMarkets(minecraftServer, identity));
+            json.add("railStations", service.mapRailStations(minecraftServer));
             return json;
         });
         writeJson(exchange, 200, out);

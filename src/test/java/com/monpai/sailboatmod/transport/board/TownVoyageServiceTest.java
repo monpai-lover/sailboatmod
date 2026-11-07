@@ -35,6 +35,21 @@ class TownVoyageServiceTest {
         assertTrue(i.currentKey(k.carrier()).isEmpty());
         assertTrue(rows(i,"town-a",160).isEmpty());
     }
+    @Test void perCarrierEtaRequiresCurrentDestinationAndFreshMotion() {
+        var index = catalogIndex();
+        Key current = key(1);
+        index.publish(observation(current, State.MOVING, 100, 100, "outbound"), 100);
+        assertEquals(485, index.remainingEta(current.carrier(), AWAY.dimensionId(), AWAY.terminalPos(), 115).orElseThrow());
+        assertTrue(index.remainingEta(current.carrier(), HOME.dimensionId(), HOME.terminalPos(), 115).isEmpty());
+        assertTrue(index.remainingEta(current.carrier(), "minecraft:the_nether", AWAY.terminalPos(), 115).isEmpty());
+        assertTrue(index.remainingEta(current.carrier(), AWAY.dimensionId(), AWAY.terminalPos(), 161).isEmpty());
+
+        index.publish(observation(current, State.PAUSED, 120, 100, "outbound"), 120);
+        assertTrue(index.remainingEta(current.carrier(), AWAY.dimensionId(), AWAY.terminalPos(), 120).isEmpty());
+        index.publish(observation(current, State.MOVING, 140, 140, "outbound"), 140);
+        index.clockSuspended(true, 141);
+        assertTrue(index.remainingEta(current.carrier(), AWAY.dimensionId(), AWAY.terminalPos(), 141).isEmpty());
+    }
     @Test void exactTownOrIndexesBothEndsAndLocalOnceWithoutCountryOrVisibility() {
         var i=catalogIndex();
         i.publish(observation(key(1),State.MOVING,100,100,"g"),100);

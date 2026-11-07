@@ -1,6 +1,7 @@
 package com.monpai.sailboatmod.transport.air.rail;
 
 import com.monpai.sailboatmod.road.pathfinding.post.SplineHelper;
+import com.monpai.sailboatmod.transport.air.AircraftClass;
 import java.io.*;
 import java.security.*;
 import java.util.*;
@@ -9,7 +10,7 @@ import net.minecraft.world.phys.Vec3;
 
 /** Immutable visual geometry. No world, native controller, inventory or aircraft dynamics are queried. */
 public final class RailAircraftPath {
-    public enum Phase { TAXI_OUT,HOLD_SHORT,LINE_UP,TAKEOFF,CLIMB,CRUISE,APPROACH,LANDING_ROLL,TAXI_IN,STAND_STABILIZING,COMPLETE }
+    public enum Phase { TAXI_OUT,HOLD_SHORT,LINE_UP,TAKEOFF,CLIMB,CRUISE,APPROACH,LANDING_ROLL,TAXI_IN,STAND_STABILIZING,COMPLETE,VERTICAL_TAKEOFF,VERTICAL_LANDING }
     public record Leg(Phase phase,List<Vec3> points,double speed,double cornerRadius,boolean bankAllowed) {
         public Leg {
             if(phase==null||points==null||points.isEmpty()||points.size()>4096||!finite(speed)||speed<0||speed>100
@@ -22,7 +23,10 @@ public final class RailAircraftPath {
                 if(speed<=0||marker(phase))throw invalid("invalid_moving_leg");
                 for(int i=1;i<points.size();i++) {
                     Vec3 delta=points.get(i).subtract(points.get(i-1));
-                    if(delta.length()<EPS||Math.hypot(delta.x,delta.z)<EPS)throw invalid("zero_or_vertical_segment");
+                    double horizontal=Math.hypot(delta.x,delta.z);
+                    if(delta.length()<EPS||horizontal<EPS&&!vertical(phase))throw invalid("zero_or_vertical_segment");
+                    if(vertical(phase)&&(points.size()!=2||horizontal>=EPS
+                            ||(phase==Phase.VERTICAL_TAKEOFF?delta.y<=0:delta.y>=0)))throw invalid("invalid_vertical_leg");
                     if(ground(phase)&&Math.abs(delta.y)>EPS)throw invalid("sloping_ground_leg");
                     if(i+1<points.size()&&delta.normalize().dot(points.get(i+1).subtract(points.get(i)).normalize())<-.999999)
                         throw invalid("reversing_corner");
@@ -30,7 +34,7 @@ public final class RailAircraftPath {
                         throw invalid("corner_radius_required");
                 }
             }
-            if(bankAllowed&&ground(phase))throw invalid("ground_bank");
+            if(bankAllowed&&(ground(phase)||vertical(phase)))throw invalid("ground_bank");
         }
     }
     /** Tangent is the visual nose direction, including rotation pitch. Bank is right-hand about it: +X toward +Z has positive bank. */
@@ -45,13 +49,26 @@ public final class RailAircraftPath {
     private final List<Leg> legs;
     private final List<Curve> curves;
     private final List<LegRange> ranges;
-    private final double length,finalYawDegrees,rotationRadius;
+    private final double length,finalYawDegrees,rotationRadius,initialYawDegrees;
+    private final AircraftClass verticalAirframe;
     private final String fingerprint;
 
-    private RailAircraftPath(List<Leg> input,double yaw,double radius) {
+    private RailAircraftPath(List<Leg> input,double yaw,double radius,AircraftClass verticalAirframe,double initialYaw) {
         if(input==null||input.isEmpty()||input.size()>MAX_LEGS||!finite(yaw)||Math.abs(yaw)>360_000
-                ||!finite(radius)||radius<0||radius>64)throw invalid("invalid_path");
-        legs=List.copyOf(input);finalYawDegrees=wrap(yaw);rotationRadius=radius;
+                ||!finite(radius)||radius<0||radius>64||!finite(initialYaw)||Math.abs(initialYaw)>360_000)throw invalid("invalid_path");
+        this.verticalAirframe=verticalAirframe;
+        // NBT stores both signs of zero as the same DoubleTag; canonicalize new path coordinates and headings before hashing.
+        legs=verticalAirframe==null?List.copyOf(input):input.stream().map(RailAircraftPath::canonicalLeg).toList();
+        finalYawDegrees=verticalAirframe==null?wrap(yaw):wrap(yaw)+0D;
+        initialYawDegrees=wrap(initialYaw)+0D;
+        rotationRadius=radius;
+        if (verticalAirframe==null) {
+            if (legs.stream().anyMatch(leg -> vertical(leg.phase()))) throw invalid("vertical_airframe_required");
+        } else if (verticalAirframe==AircraftClass.FIXED_WING||radius!=0||legs.size()!=4
+                ||legs.get(0).phase()!=Phase.VERTICAL_TAKEOFF||legs.get(1).phase()!=Phase.CRUISE
+                ||legs.get(2).phase()!=Phase.VERTICAL_LANDING||legs.get(3).phase()!=Phase.STAND_STABILIZING) {
+            throw invalid("invalid_vertical_procedure");
+        }
         int count=0;Vec3 previous=null;
         for(Leg leg:legs) {
             if(leg==null||(count+=leg.points().size())>MAX_TOTAL_POINTS)throw invalid("path_too_large");
@@ -99,8 +116,18 @@ public final class RailAircraftPath {
             for(Vec3 point:curve.control)if(point.y+rotationRadius>2047)throw invalid("flight_outside_height");
         fingerprint=hash();
     }
-    public static RailAircraftPath compile(List<Leg> legs,double finalYawDegrees) { return new RailAircraftPath(legs,finalYawDegrees,0); }
-    public static RailAircraftPath compile(List<Leg> legs,double finalYawDegrees,double rotationRadius) { return new RailAircraftPath(legs,finalYawDegrees,rotationRadius); }
+    public static RailAircraftPath compile(List<Leg> legs,double finalYawDegrees) { return new RailAircraftPath(legs,finalYawDegrees,0,null,0); }
+    public static RailAircraftPath compile(List<Leg> legs,double finalYawDegrees,double rotationRadius) { return new RailAircraftPath(legs,finalYawDegrees,rotationRadius,null,0); }
+    public static RailAircraftPath compileVertical(List<Leg> legs,AircraftClass airframe,double initialYaw,double finalYaw) {
+        if (airframe==null) throw invalid("vertical_airframe_required");
+        return new RailAircraftPath(legs,finalYaw,0,airframe,initialYaw);
+    }
+    public AircraftClass airframe() { return verticalAirframe==null?AircraftClass.FIXED_WING:verticalAirframe; }
+    private static Leg canonicalLeg(Leg leg) {
+        if (leg==null) throw invalid("invalid_leg");
+        return new Leg(leg.phase(),leg.points().stream().map(p->new Vec3(p.x+0D,p.y+0D,p.z+0D)).toList(),
+                leg.speed()+0D,leg.cornerRadius()+0D,leg.bankAllowed());
+    }
     public List<Leg> legs(){return legs;}
     public double length(){return length;}
     public double rotationRadius(){return rotationRadius;}
@@ -121,7 +148,9 @@ public final class RailAircraftPath {
         int other=index+(start?-1:1);boolean hold=false;
         while(other>=0&&other<legs.size()&&legs.get(other).points().size()==1){hold|=legs.get(other).phase()==Phase.HOLD_SHORT;other+=start?-1:1;}
         if(other<0||other>=legs.size())return own;
-        Leg current=legs.get(index),adjacent=legs.get(other);List<Vec3> p=adjacent.points();
+        Leg current=legs.get(index),adjacent=legs.get(other);
+        if (vertical(current.phase())||vertical(adjacent.phase())) return own;
+        List<Vec3> p=adjacent.points();
         Vec3 direction=start?p.getLast().subtract(p.get(p.size()-2)).normalize():p.get(1).subtract(p.getFirst()).normalize();
         if(ground(current.phase())&&!ground(adjacent.phase()))return own;
         if(!ground(current.phase())&&ground(adjacent.phase()))return direction;
@@ -151,6 +180,7 @@ public final class RailAircraftPath {
     public Sample sample(double distance) {
         double s=clamped(distance);Located located=locate(s);Curve curve=located.curve();
         Vec3 position=curve.pointAtLength(located.local()),tangent=tangentAt(s);LegRange range=rangeAt(s);
+        if (verticalAirframe!=null) return verticalSample(s,position,tangent,range);
         if(s>=length) {
             double yaw=Math.toRadians(finalYawDegrees);tangent=new Vec3(-Math.sin(yaw),0,Math.cos(yaw));
         }
@@ -174,8 +204,38 @@ public final class RailAircraftPath {
         double bank=range.leg().bankAllowed()?bankAt(s,range):0;
         return new Sample(position,tangent,bank,range.leg().phase(),speedAt(s,range),pitch);
     }
+    private Sample verticalSample(double distance,Vec3 position,Vec3 tangent,LegRange range) {
+        Phase phase=range.leg().phase();
+        double speed=speedAt(distance,range);
+        if (phase==Phase.VERTICAL_TAKEOFF) {
+            double cruiseStart=range.end();
+            Vec3 heading=tangentAt(cruiseStart);
+            double targetYaw=Math.toDegrees(Math.atan2(-heading.x,heading.z));
+            double blend=smooth((distance-range.start())/(range.end()-range.start()));
+            return new Sample(position,nose(initialYawDegrees+wrap(targetYaw-initialYawDegrees)*blend,0),0,phase,speed,0);
+        }
+        if (phase!=Phase.CRUISE) return new Sample(position,nose(finalYawDegrees,0),0,phase,speed,0);
+        double window=Math.min((range.end()-range.start())/2,Math.max(8,range.leg().speed()));
+        double envelope=smooth((distance-range.start())/window)*smooth((range.end()-distance)/window);
+        boolean rotorcraft=verticalAirframe==AircraftClass.ROTORCRAFT;
+        double geometricPitch=Math.atan2(tangent.y,tangent.horizontalDistance());
+        double pitchLimit=Math.toRadians(rotorcraft?12:6);
+        double pitch=Math.max(-pitchLimit,Math.min(pitchLimit,geometricPitch-(rotorcraft?Math.toRadians(6):0)))*envelope;
+        double bankLimit=Math.toRadians(rotorcraft?18:7);
+        double bank=Math.max(-bankLimit,Math.min(bankLimit,bankAt(distance,range)));
+        return new Sample(position,nose(Math.toDegrees(Math.atan2(-tangent.x,tangent.z)),pitch),bank,phase,speed,pitch);
+    }
+    private static Vec3 nose(double yawDegrees,double pitch) {
+        double yaw=Math.toRadians(yawDegrees);
+        return new Vec3(-Math.sin(yaw)*Math.cos(pitch),Math.sin(pitch),Math.cos(yaw)*Math.cos(pitch));
+    }
     private double speedAt(double s,LegRange range) {
         Leg leg=range.leg();double span=range.end()-range.start();if(span<=EPS)return 0;
+        if (verticalAirframe!=null) {
+            double floor=Math.min(.5,leg.speed());
+            double ramp=Math.min(span/2,leg.speed()*(verticalAirframe==AircraftClass.ROTORCRAFT?2:3));
+            return floor+(leg.speed()-floor)*smooth(Math.min(s-range.start(),range.end()-s)/ramp);
+        }
         double fraction=smooth((s-range.start())/span),taxi=Math.min(3,leg.speed());
         if(leg.phase()==Phase.TAKEOFF)return taxi+(leg.speed()-taxi)*fraction;
         if(leg.phase()==Phase.LANDING_ROLL)return leg.speed()+(taxi-leg.speed())*fraction;
@@ -258,6 +318,7 @@ public final class RailAircraftPath {
 
     public CompoundTag save() {
         CompoundTag t=new CompoundTag();t.putInt("Version",VERSION);t.putDouble("FinalYaw",finalYawDegrees);t.putDouble("RotationRadius",rotationRadius);t.putString("Hash",fingerprint);
+        if(verticalAirframe!=null){t.putString("VerticalAirframe",verticalAirframe.name());t.putDouble("InitialYaw",initialYawDegrees);}
         ListTag list=new ListTag();for(Leg leg:legs){CompoundTag raw=new CompoundTag();raw.putString("Phase",leg.phase().name());raw.putDouble("Speed",leg.speed());raw.putDouble("CornerRadius",leg.cornerRadius());raw.putBoolean("BankAllowed",leg.bankAllowed());
             ListTag points=new ListTag();for(Vec3 p:leg.points()){CompoundTag xyz=new CompoundTag();xyz.putDouble("X",p.x);xyz.putDouble("Y",p.y);xyz.putDouble("Z",p.z);points.add(xyz);}raw.put("Points",points);list.add(raw);}t.put("Legs",list);return t;
     }
@@ -271,13 +332,22 @@ public final class RailAircraftPath {
             ArrayList<Vec3> copied=new ArrayList<>();for(Tag point:points){CompoundTag xyz=(CompoundTag)point;require(xyz,"X",Tag.TAG_DOUBLE);require(xyz,"Y",Tag.TAG_DOUBLE);require(xyz,"Z",Tag.TAG_DOUBLE);copied.add(new Vec3(xyz.getDouble("X"),xyz.getDouble("Y"),xyz.getDouble("Z")));}
             legs.add(new Leg(Phase.valueOf(raw.getString("Phase")),copied,raw.getDouble("Speed"),raw.getDouble("CornerRadius"),raw.getBoolean("BankAllowed")));}
         if(t.contains("RotationRadius"))require(t,"RotationRadius",Tag.TAG_DOUBLE);
-        RailAircraftPath result=compile(legs,t.getDouble("FinalYaw"),t.contains("RotationRadius")?t.getDouble("RotationRadius"):0);
+        RailAircraftPath result;
+        if (t.contains("VerticalAirframe")) {
+            require(t,"VerticalAirframe",Tag.TAG_STRING);require(t,"InitialYaw",Tag.TAG_DOUBLE);
+            if (t.getDouble("RotationRadius")!=0) throw invalid("invalid_vertical_procedure");
+            result=compileVertical(legs,AircraftClass.valueOf(t.getString("VerticalAirframe")),t.getDouble("InitialYaw"),t.getDouble("FinalYaw"));
+        } else {
+            if(t.contains("InitialYaw"))throw invalid("vertical_airframe_required");
+            result=compile(legs,t.getDouble("FinalYaw"),t.contains("RotationRadius")?t.getDouble("RotationRadius"):0);
+        }
         if(!result.fingerprint.equals(t.getString("Hash")))throw invalid("path_shape_changed");return result;
     }
     private String hash() {
         try {ByteArrayOutputStream bytes=new ByteArrayOutputStream();DataOutputStream out=new DataOutputStream(bytes);out.writeInt(VERSION);out.writeDouble(finalYawDegrees);out.writeInt(legs.size());
             for(Leg leg:legs){out.writeUTF(leg.phase().name());out.writeDouble(leg.speed());out.writeDouble(leg.cornerRadius());out.writeBoolean(leg.bankAllowed());out.writeInt(leg.points().size());for(Vec3 p:leg.points()){out.writeDouble(p.x);out.writeDouble(p.y);out.writeDouble(p.z);}}
             if(rotationRadius>0){out.writeUTF("rotation-clearance-v1");out.writeDouble(rotationRadius);}
+            if(verticalAirframe!=null){out.writeUTF("vertical-procedure-v1");out.writeUTF(verticalAirframe.name());out.writeDouble(initialYawDegrees);}
             return HexFormat.of().formatHex(MessageDigest.getInstance("SHA-256").digest(bytes.toByteArray()));
         } catch(IOException|NoSuchAlgorithmException impossible){throw new IllegalStateException(impossible);}
     }
@@ -287,7 +357,8 @@ public final class RailAircraftPath {
     static IllegalArgumentException invalid(String reason){return new IllegalArgumentException(reason);}
     private static boolean marker(Phase p){return p==Phase.HOLD_SHORT||p==Phase.STAND_STABILIZING||p==Phase.COMPLETE;}
     private static boolean rotationPhase(Phase p){return p==Phase.TAKEOFF||p==Phase.CLIMB||p==Phase.APPROACH;}
-    private static boolean ground(Phase p){return p!=Phase.CLIMB&&p!=Phase.CRUISE&&p!=Phase.APPROACH;}
+    private static boolean vertical(Phase p){return p==Phase.VERTICAL_TAKEOFF||p==Phase.VERTICAL_LANDING;}
+    private static boolean ground(Phase p){return !vertical(p)&&p!=Phase.CLIMB&&p!=Phase.CRUISE&&p!=Phase.APPROACH;}
     private static double smooth(double t){t=Math.max(0,Math.min(1,t));return t*t*(3-2*t);}
     private static double wrap(double yaw){double v=yaw%360;return v>180?v-360:v< -180?v+360:v;}
 }

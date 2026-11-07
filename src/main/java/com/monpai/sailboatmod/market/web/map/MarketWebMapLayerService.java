@@ -5,6 +5,7 @@ import com.monpai.sailboatmod.market.map.MarketWebMapDtos;
 import com.monpai.sailboatmod.market.map.MarketWebMapConstants;
 
 import com.monpai.sailboatmod.market.terminal.MarketTerminalSavedData;
+import com.monpai.sailboatmod.market.terminal.TerminalNetworkSavedData;
 import com.monpai.sailboatmod.market.logistics.ShippingTraceService;
 import com.monpai.sailboatmod.market.MarketPlayerIdentity;
 import com.monpai.sailboatmod.market.web.MarketWebService;
@@ -27,16 +28,19 @@ public final class MarketWebMapLayerService {
             new MarketWebMapPublicDataCache<>(2_000_000_000L, System::nanoTime);
 
     private record PublicData(List<MarketWebMapDtos.MarketMarker> markets,
-                              List<MarketWebMapDtos.Territory> territories) {
+                              List<MarketWebMapDtos.Territory> territories,
+                              List<MarketWebMapDtos.RailStationMarker> railStations) {
         private PublicData {
             markets = List.copyOf(markets);
             territories = List.copyOf(territories);
+            railStations = List.copyOf(railStations);
         }
     }
 
     private PublicData publicData(MinecraftServer server) {
-        if (server == null) return new PublicData(List.of(), List.of());
-        return publicDataCache.get(server, () -> new PublicData(loadMarkets(server), loadTerritories(server)));
+        if (server == null) return new PublicData(List.of(), List.of(), List.of());
+        return publicDataCache.get(server, () -> new PublicData(loadMarkets(server), loadTerritories(server),
+                railStations(TerminalNetworkSavedData.get(server.overworld()).all(), NationSavedData.get(server.overworld()))));
     }
 
     public MarketWebMapDtos.Snapshot snapshot(MinecraftServer server, MarketPlayerIdentity identity, String focusedMarketId) {
@@ -55,6 +59,30 @@ public final class MarketWebMapLayerService {
 
     public List<MarketWebMapDtos.MarketMarker> markets(MinecraftServer server) {
         return publicData(server).markets();
+    }
+
+    public List<MarketWebMapDtos.RailStationMarker> railStations(MinecraftServer server) {
+        return publicData(server).railStations();
+    }
+
+    static List<MarketWebMapDtos.RailStationMarker> railStations(List<TerminalNetworkSavedData.TerminalEntry> terminals,
+                                                                NationSavedData nations) {
+        List<MarketWebMapDtos.RailStationMarker> out = new ArrayList<>();
+        for (var terminal : terminals) {
+            if (terminal.kind() != TerminalNetworkSavedData.Kind.RAIL
+                    || !MarketWebMapConstants.OVERWORLD.equals(terminal.dimId()) || terminal.townId().isBlank()) continue;
+            BlockPos pos = terminal.pos();
+            var claim = nations.getClaim(terminal.dimId(), pos.getX() >> 4, pos.getZ() >> 4);
+            if (claim == null || !terminal.townId().equals(claim.townId())) continue;
+            var town = nations.getTown(claim.townId());
+            if (town == null) continue;
+            String name = terminal.dockName().isBlank() ? town.name() : terminal.dockName();
+            out.add(new MarketWebMapDtos.RailStationMarker(MarketWebService.encodeMarketId(terminal.dimId(), pos),
+                    name, terminal.dimId(), pos.getX(), pos.getY(), pos.getZ(), town.townId(), town.name()));
+        }
+        out.sort(Comparator.comparing(MarketWebMapDtos.RailStationMarker::name, String.CASE_INSENSITIVE_ORDER)
+                .thenComparing(MarketWebMapDtos.RailStationMarker::stationId));
+        return out;
     }
 
     private List<MarketWebMapDtos.MarketMarker> loadMarkets(MinecraftServer server) {

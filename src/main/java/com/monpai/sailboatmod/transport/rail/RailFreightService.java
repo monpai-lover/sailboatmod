@@ -3,6 +3,8 @@ package com.monpai.sailboatmod.transport.rail;
 import com.monpai.sailboatmod.block.entity.TownWarehouseBlockEntity;
 import com.monpai.sailboatmod.compat.create.RailFreightNativeBridge;
 import com.monpai.sailboatmod.market.ShipmentManifestEntry;
+import com.monpai.sailboatmod.market.ShippingOrder;
+import com.monpai.sailboatmod.market.logistics.TransportModes;
 import com.monpai.sailboatmod.nation.data.NationSavedData;
 import com.monpai.sailboatmod.nation.model.TownRecord;
 import com.monpai.sailboatmod.nation.service.TownService;
@@ -10,6 +12,9 @@ import com.monpai.sailboatmod.transport.CargoLoadReceipt;
 import com.monpai.sailboatmod.transport.LogisticsCarrier;
 import com.monpai.sailboatmod.transport.SelectedCargoInventory;
 import com.monpai.sailboatmod.transport.TransportRegistry;
+import com.monpai.sailboatmod.transport.board.TownVoyageService;
+import com.monpai.sailboatmod.transport.board.TownVoyageSnapshot.CarrierKey;
+import com.monpai.sailboatmod.transport.rail.RailFreightNative.LegState;
 import com.monpai.sailboatmod.transport.rail.RailFreightNative.TrainView;
 import com.monpai.sailboatmod.transport.rail.RailFreightSavedData.Job;
 import com.monpai.sailboatmod.transport.rail.RailFreightSavedData.Phase;
@@ -47,6 +52,37 @@ public final class RailFreightService {
                                        boolean enabled, String status, int cargoSlots, int cargoUsed,
                                        String purchaseOrderId, @Nullable RailStationRef source,
                                        @Nullable RailStationRef target, int fuelSafeSlots) {}
+
+    public record NextStop(String name, String atStation, LegState state, int etaSeconds, boolean finalStop) { }
+
+    /** Observation only. Callers must authorize access to the shipping order first. */
+    public static Optional<NextStop> nextStop(ServerLevel level, @Nullable ShippingOrder order) {
+        if (!serverThread(level) || order == null || !TransportModes.RAIL.equals(order.transportMode())
+                || !("IN_TRANSIT".equals(order.status()) || "SAILING".equals(order.status()))) return Optional.empty();
+        UUID trainId;
+        try { trainId = UUID.fromString(order.boatUuid()); }
+        catch (IllegalArgumentException malformed) { return Optional.empty(); }
+        RailFreightSavedData data = RailFreightSavedData.get(level);
+        Job job = data.job(trainId);
+        Registration registration = data.registration(trainId);
+        if (job == null || job.phase() != Phase.OUTBOUND || registration == null
+                || !dimension(level).equals(job.route().source().dimensionId())
+                || !job.route().sourceTerminal().equals(order.sourceDockPos()) || !job.route().targetTerminal().equals(order.targetDockPos())
+                || job.manifest().stream().noneMatch(entry -> order.shippingOrderId().equals(entry.shippingOrderId())
+                        && order.purchaseOrderId().equals(entry.purchaseOrderId()))) return Optional.empty();
+        return read(level, Optional.empty(), api -> api.nextStop(level, trainId, registration.ownerId(),
+                job.route().outboundStations(), job.ownedSchedule()).map(next -> {
+                    boolean finalStop = job.route().target().equals(next.station());
+                    if (next.state() != LegState.MOVING || next.station() == null || level.getServer().tickRateManager().isFrozen())
+                        return new NextStop(next.name(), next.atStation(), next.state(), 0, finalStop);
+                    long now = level.getServer().overworld().getGameTime();
+                    long ticks = TownVoyageService.existing(level.getServer())
+                            .map(service -> service.remainingEta(new CarrierKey(PROVIDER_ID, "global", trainId),
+                                    next.station().dimensionId(), next.station().stationPos().asLong(), now).orElse(0))
+                            .orElse(0L);
+                    return new NextStop(next.name(), next.atStation(), next.state(), (int) ((ticks + 19) / 20), finalStop);
+                }));
+    }
 
     public static boolean available() { return nativeApi() != null; }
 
@@ -255,14 +291,21 @@ public final class RailFreightService {
         RailRoute route = job.route();
         RailStationRef destination = job.phase() == Phase.RETURN ? route.source() : route.target();
         List<RailStationRef> visits = job.phase() == Phase.RETURN ? List.of(destination) : route.outboundStations();
-        if (train.manual() || !api.matchesOwnedSchedule(level, train.id(), visits, job.ownedSchedule())) {
-            status(data, job, "schedule_changed");
+        CompoundTag ownedSchedule = job.ownedSchedule();
+        if (train.manual() || !api.matchesOwnedSchedule(level, train.id(), visits, ownedSchedule)) {
+            boolean nativeRetry = !train.manual() && train.legState() == LegState.WAITING_ROUTE
+                    && ownedSchedule.equals(train.managedSchedule());
+            status(data, job, nativeRetry ? "waiting_route" : "schedule_changed");
             return;
         }
         if (train.paused() && !train.completed()) { status(data, job, "native_paused"); return; }
         if (!train.parkedAt(destination) || !train.completed()) {
             if (job.phase() == Phase.OUTBOUND) RailFreightDelivery.recordPosition(level, job, train);
-            status(data, job, job.phase() == Phase.RETURN ? "returning" : "in_transit");
+            status(data, job, switch (train.legState()) {
+                case DWELLING -> "dwelling";
+                case WAITING_ROUTE -> "waiting_route";
+                default -> job.phase() == Phase.RETURN ? "returning" : "in_transit";
+            });
             return;
         }
         BlockPos terminal = job.phase() == Phase.RETURN ? route.sourceTerminal() : route.targetTerminal();

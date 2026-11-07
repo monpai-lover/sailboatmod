@@ -292,3 +292,30 @@ test("aircraftLegacyModeAliasesMatchTheServer", () => {
   assert.equal(render.vehicleKindOf({transportMode:"ROTORCRAFT"}), "helicopter");
   assert.equal(render.vehicleKindOf({transportMode:"AIRPORTER"}), "carriage");
 });
+
+test("rail next-stop time is distinct from the final order ETA", () => {
+  const train = { ...boat, transportMode: "RAIL", etaSeconds: 0,
+    rail: { nextStop: "<Via Station>", nextStopEtaSeconds: 18 } };
+  const html = panel.detailHtml(train, ctx({}));
+  assert.match(html, /<dt>ETA<\/dt><dd>-<\/dd>/);
+  assert.match(html, /<dt>railNextStop<\/dt><dd>&lt;Via Station&gt;<\/dd>/);
+  assert.match(html, /<dt>railNextStopEta<\/dt><dd>18s<\/dd>/);
+  assert.doesNotMatch(panel.detailHtml({ ...train, rail: { nextStop: "Via Station" } }, ctx({})), /railNextStopEta/);
+});
+
+test("rail dwell and native route retry have distinct status and no stale ETA", () => {
+  const train = { ...boat, transportMode: "RAIL", etaSeconds: 0 };
+  const dwell = panel.detailHtml({ ...train, rail: { nextStop: "Final", atStation: "Via", state: "DWELLING" } }, ctx({}));
+  const blocked = panel.detailHtml({ ...train, rail: { nextStop: "Final", atStation: "Via", state: "WAITING_ROUTE" } }, ctx({}));
+  assert.match(dwell, /railDwelling/);
+  assert.match(dwell, /<dt>railCurrentStop<\/dt><dd>Via<\/dd>/);
+  assert.match(blocked, /railWaitingRoute/);
+  assert.doesNotMatch(dwell + blocked, /railNextStopEta/);
+});
+
+test("vertical flight transitions use translated display states", () => {
+  const aircraft = { ...boat, transportMode: "AIR", vehicleKind: "fixed_wing" };
+  const html = (flightState) => panel.detailHtml({ ...aircraft, flight: { flightState } }, ctx({}));
+  assert.match(html("VERTICAL_TAKEOFF"), /<dd>flightTakeoff<\/dd>/);
+  assert.match(html("VERTICAL_LANDING"), /<dd>flightLanding<\/dd>/);
+});

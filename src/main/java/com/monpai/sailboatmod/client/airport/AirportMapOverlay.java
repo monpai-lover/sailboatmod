@@ -26,7 +26,7 @@ public final class AirportMapOverlay {
         try {
             AirportScreenData data=model.snapshot();
             for(AirportFacility runway:data.facilities()) {
-                if(runway.type()!=AirportFacility.Type.RUNWAY)continue;
+                if(runway.type()!=AirportFacility.Type.RUNWAY && !data.supportsRoutePublication()) continue;
                 runway(graphics,font,view,viewport,runway.id(),center(runway.start()),center(runway.end()),runway.width(),
                         stateColor(data,"runway",runway.id()),false,false);
             }
@@ -40,7 +40,7 @@ public final class AirportMapOverlay {
             model.draft().ifPresent(draft -> {
                 int color=model.conflict()?CONFLICT:model.dirty()?DRAFT:SELECTED;
                 switch(draft.kind()) {
-                    case RUNWAY -> {
+                    case RUNWAY, HELIPAD, MOORING -> {
                         if(draft.points().size()==2)runway(graphics,font,view,viewport,draft.id(),draft.points().get(0),draft.points().get(1),draft.width(),color,true,model.dirty());
                         else if(draft.points().size()==1)point(graphics,font,view,viewport,draft.points().getFirst(),"1",color,true);
                     }

@@ -2,6 +2,7 @@ package com.monpai.sailboatmod.transport.air;
 
 import com.monpai.sailboatmod.transport.air.airport.*;
 import com.monpai.sailboatmod.transport.air.rail.RailAircraftPath;
+import com.monpai.sailboatmod.transport.air.rail.RailAirportSelection;
 import com.monpai.sailboatmod.transport.air.rail.RailStandDepartureConnector;
 import java.util.ArrayList;
 import java.util.List;
@@ -116,6 +117,50 @@ public final class RailFlightPlanBuilder {
         legs.add(new RailAircraftPath.Leg(STAND_STABILIZING,List.of(parked),0,0,false));
         return compile(legs,stand.yawDegrees(),sweepDiameter/2);
     }
+    public static RailAircraftPath buildVertical(AircraftClass type,AirportFacility source,AirportFacility target,
+                                                 double anchorAboveSurface,List<Vec3> authored,double speed,
+                                                 Vec3 actualStart,Vec3 actualForward) {
+        if (type==null||type==AircraftClass.FIXED_WING||source==null||target==null
+                ||source.type()!=RailAirportSelection.directType(type)||target.type()!=RailAirportSelection.directType(type)
+                ||!source.validGeometry()||!target.validGeometry()||!finite(anchorAboveSurface,speed)
+                ||anchorAboveSurface<0||anchorAboveSurface>64||speed<1||speed>60||authored==null
+                ||authored.size()<2||authored.size()>58||authored.stream().anyMatch(p->p==null||!finite(p.x,p.y,p.z))
+                ||actualStart==null||actualForward==null
+                ||!finite(actualStart.x,actualStart.y,actualStart.z,actualForward.x,actualForward.y,actualForward.z)
+                ||actualForward.horizontalDistanceSqr()<1e-8
+                ||Math.abs(actualStart.y-source.start().getY()-anchorAboveSurface)>1e-8
+                ||!source.containsHorizontal(actualStart.x,actualStart.z,0)) throw invalid("rail_invalid_airport_geometry");
+        boolean rotorcraft=type==AircraftClass.ROTORCRAFT;
+        Vec3 parked=target.landingPosition().add(0,anchorAboveSurface,0);
+        double minimumHeight=Math.max(actualStart.y,parked.y)+(rotorcraft?14:20);
+        double height=Math.max(minimumHeight,authored.stream().mapToDouble(p->p.y).max().orElseThrow());
+        Vec3 airborne=new Vec3(actualStart.x,height,actualStart.z);
+        Vec3 descent=new Vec3(parked.x,height,parked.z);
+        List<Vec3> cruise=new ArrayList<>();
+        cruise.add(airborne);
+        for (int i=1;i<authored.size()-1;i++) {
+            Vec3 point=authored.get(i);
+            if (point.subtract(authored.getFirst()).horizontalDistanceSqr()<1
+                    ||point.subtract(authored.getLast()).horizontalDistanceSqr()<1
+                    ||point.subtract(cruise.getLast()).horizontalDistanceSqr()<1
+                    ||point.subtract(descent).horizontalDistanceSqr()<1) continue;
+            cruise.add(new Vec3(point.x,Math.max(minimumHeight,point.y),point.z));
+        }
+        cruise.add(descent);
+        double initialYaw=Math.toDegrees(Math.atan2(-actualForward.x,actualForward.z));
+        Vec3 finalHeading=descent.subtract(cruise.get(cruise.size()-2));
+        double finalYaw=Math.toDegrees(Math.atan2(-finalHeading.x,finalHeading.z));
+        double cruiseSpeed=Math.min(speed,rotorcraft?22:12);
+        double riseSpeed=Math.min(speed,rotorcraft?4:2);
+        double descentSpeed=Math.min(speed,rotorcraft?2.5:1.5);
+        double cornerRadius=Math.max(8,cruiseSpeed*(rotorcraft?1.5:2));
+        return RailAircraftPath.compileVertical(List.of(
+                new RailAircraftPath.Leg(VERTICAL_TAKEOFF,List.of(actualStart,airborne),riseSpeed,0,false),
+                new RailAircraftPath.Leg(CRUISE,cruise,cruiseSpeed,cornerRadius,true),
+                new RailAircraftPath.Leg(VERTICAL_LANDING,List.of(descent,parked),descentSpeed,0,false),
+                new RailAircraftPath.Leg(STAND_STABILIZING,List.of(parked),0,0,false)),type,initialYaw,finalYaw);
+    }
+
     private static RailAircraftPath compile(List<RailAircraftPath.Leg> legs,double yaw,double rotationRadius) {
         try {return RailAircraftPath.compile(legs,yaw,rotationRadius);}
         catch(IllegalArgumentException invalid) {

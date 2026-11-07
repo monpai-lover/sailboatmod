@@ -12,6 +12,7 @@ import static com.monpai.sailboatmod.transport.board.TownVoyageSnapshot.*;
 import com.monpai.sailboatmod.transport.air.surface.AircraftSurfaceBinding;
 import com.monpai.sailboatmod.transport.air.surface.AircraftSurfaceController;
 import com.monpai.sailboatmod.transport.air.airport.*;
+import com.monpai.sailboatmod.transport.air.rail.RailAirportSelection;
 import com.monpai.sailboatmod.transport.air.ground.AircraftGroundMission;
 import com.monpai.sailboatmod.transport.air.ground.GroundRunwayReadiness;
 import com.monpai.sailboatmod.transport.air.ground.TaxiRouteGeometry;
@@ -69,9 +70,11 @@ public final class RegisteredVehicleControllerBlockEntity extends BlockEntity
     private ControllerRegistration registration;
     private boolean universalModeChosen;
     private String vehicleName = "", ownerName = "", pendingShipper = "", reason = "";
-    private String setupStatus = "";
+    private String setupStatus = "", cargoSetupStatus = "";
     private ControllerStatus status = ControllerStatus.UNASSEMBLED;
     private final List<BlockPos> cargoOffsets = new ArrayList<>();
+    private Set<BlockPos> automaticCargoOffsets = new HashSet<>();
+    private Set<BlockPos> excludedCargoOffsets = new HashSet<>();
     private final EnumMap<ControlChannel, Direction> ports = new EnumMap<>(ControlChannel.class);
     private final EnumMap<Direction, Integer> signals = new EnumMap<>(Direction.class);
     private BlockPos throttleOffset, steeringOffset, sourceTerminal, destinationTerminal;
@@ -112,6 +115,7 @@ public final class RegisteredVehicleControllerBlockEntity extends BlockEntity
     private boolean cargoFaultReported;
     private Vec3 lastProgressPosition;
     private AircraftClass aircraftClass = AircraftClass.AIRSHIP;
+    private boolean legacyNativeAirJob, guidedAirportDeparture;
     private BlockPos flightTerminalOffset;
     private String flightPhase = "IDLE", flightFingerprint = "", departureFacility = "", arrivalFacility = "";
     private boolean flightPending;
@@ -288,16 +292,41 @@ public final class RegisteredVehicleControllerBlockEntity extends BlockEntity
     }
 
     private boolean canAutoConfigure() {
-        return universalRegistration() && idleKnownDeparture() && view.linearVelocity() != null
+        return idleKnownDeparture() && view.linearVelocity() != null
                 && view.linearVelocity().lengthSqr() <= DEPARTURE_PARKING_SPEED * DEPARTURE_PARKING_SPEED;
     }
 
-    private String autoConfigureEquipment(ServerLevel server) {
-        if (!canAutoConfigure()) return "setup_discovery_unavailable";
+    private void autoConfigureSetup(ServerLevel server) {
+        var equipment = canAutoConfigure()
+                ? AeronauticsVehicleBridge.setupEquipment(this, registration.physicalId()).orElse(null) : null;
+        if (universalRegistration()) setupStatus = autoConfigureEquipment(server, equipment);
+        cargoSetupStatus = equipment == null ? "unavailable" : autoConfigureCargo(equipment.cargoCandidates());
+    }
+
+    private String autoConfigureCargo(List<BlockEntity> candidates) {
+        List<BlockPos> eligible = new ArrayList<>();
+        try {
+            for (BlockEntity candidate : candidates) {
+                BlockPos pos = candidate.getBlockPos();
+                var offset = VehicleRegistrationSetup.relativeOffset(worldPosition, pos).orElse(null);
+                if (offset == null || cargoOffsets.contains(offset) || excludedCargoOffsets.contains(offset)) continue;
+                var handler = PhysicalVehicleBridge.itemHandler(this, candidate, null).orElse(null);
+                if (CargoStorageRecognition.emptyForDiscovery(candidate, handler)) eligible.add(pos);
+            }
+        } catch (RuntimeException | LinkageError unavailable) {
+            return "unavailable";
+        }
+        var found = CargoStorageRecognition.additions(worldPosition, eligible, cargoOffsets, excludedCargoOffsets);
+        if (found.isEmpty()) return "limit";
+        var additions = found.orElseThrow();
+        cargoOffsets.addAll(additions);
+        automaticCargoOffsets.addAll(additions);
+        return additions.isEmpty() ? "no_additions" : "added";
+    }
+
+    private String autoConfigureEquipment(ServerLevel server, AeronauticsVehicleBridge.SetupEquipment equipment) {
         if (controlsReady()) return "ready";
-        if (railAircraftAutomation()) return "setup_discovery_unavailable";
-        var equipment = AeronauticsVehicleBridge.setupEquipment(this, registration.physicalId()).orElse(null);
-        if (equipment == null) return "setup_discovery_unavailable";
+        if (railAircraftAutomation() || equipment == null) return "setup_discovery_unavailable";
         if (transportKind() != Kind.AIR) {
             // Discover native actuator targets, while keeping the player's explicit brake and gear wiring.
             if (throttleOffset == null)
@@ -428,6 +457,11 @@ public final class RegisteredVehicleControllerBlockEntity extends BlockEntity
         registration.register(view.physicalId(), view.mass(), true);
         bindingValid = true;
         TransportRegistry.register(server, this);
+        if (legacyNativeAirJob&&!active&&!paused&&!flightPending&&!flightRecovering&&!recoveryRequired
+                &&!airportPreflightPending()&&manifest.isEmpty()) {
+            legacyNativeAirJob=false;
+            setChanged();
+        }
         if (railAircraftAutomation()) {
             clearGroundNativeLease();
             yieldParkingBrake();
@@ -629,13 +663,15 @@ public final class RegisteredVehicleControllerBlockEntity extends BlockEntity
     }
 
     @Override public boolean railAircraftAutomation() {
-        return transportKind()==Kind.AIR && aircraftClass==AircraftClass.FIXED_WING;
+        return transportKind()==Kind.AIR && !legacyNativeAirJob;
     }
+    private boolean fixedWingRail() { return railAircraftAutomation()&&aircraftClass==AircraftClass.FIXED_WING; }
     private RegisteredAircraftRailController.Context railContext(ServerLevel server) {
-        return new RegisteredAircraftRailController.Context(server,this,this,view,facing());
+        return new RegisteredAircraftRailController.Context(server,this,this,view,facing(),aircraftClass);
     }
     private RegisteredAircraftSurfaces.Context surfaceContext() {
-        return view==null||!view.available()?null:new RegisteredAircraftSurfaces.Context(this,getTransportUuid(),view.physicalId(),facing());
+        return !fixedWingRail()||view==null||!view.available()?null:
+                new RegisteredAircraftSurfaces.Context(this,getTransportUuid(),view.physicalId(),facing());
     }
     private RegisteredAircraftFuelController.Context fuelContext() {
         return view==null||!view.available()?null:new RegisteredAircraftFuelController.Context(this,view.physicalId());
@@ -706,6 +742,9 @@ public final class RegisteredVehicleControllerBlockEntity extends BlockEntity
         var context=railContext(server);
         if(manualTakeover){airSurfaces.neutral(surfaceContext());railAircraft.manualRelease(context);status=ControllerStatus.MANUAL;return;}
         if(railAircraft.invalid()){railAircraft.park(context);paused=true;status=ControllerStatus.FAULT;reason="rail_recovery_review";return;}
+        if(!railAircraft.matchesAirframe(aircraftClass)) {
+            paused=true;recoveryRequired=true;status=ControllerStatus.FAULT;reason="rail_recovery_review";setChanged();return;
+        }
         if(active&&!railNativeControlFree(server)){
             railAircraft.park(context);paused=true;status=ControllerStatus.FAULT;return;
         }
@@ -728,23 +767,23 @@ public final class RegisteredVehicleControllerBlockEntity extends BlockEntity
             loading.setPinnedEndpoints(List.of(mission.source(),mission.target()));
         }
         boolean loaded=loading.update(server,getTransportUuid(),view.physicalId(),view.worldBounds(),view.worldPosition());
-        aircraftFuel.poll(fuelContext());
-        if(active&&!paused&&mission!=null&&!mission.completed()&&!airportPreflightPending()
+        if(fixedWingRail())aircraftFuel.poll(fuelContext());
+        if(fixedWingRail()&&active&&!paused&&mission!=null&&!mission.completed()&&!airportPreflightPending()
                 &&(fuelHealthTick==Long.MIN_VALUE||server.getGameTime()<fuelHealthTick||server.getGameTime()-fuelHealthTick>=20)) {
             fuelHealthTick=server.getGameTime();var health=aircraftFuel.exhausted(fuelContext());
             if(!health.success()){fuelFailure(server,health.reason());return;}
             // Keep remaining-duration UI current; a reserve shortfall alone does not stop an airborne aircraft.
             checkCurrentAircraftFuel(server);
         }
-        if(!airSurfaces.bindings().isEmpty()&&!railAircraft.owns(context))railAircraft.park(context);
+        if(fixedWingRail()&&!airSurfaces.bindings().isEmpty()&&!railAircraft.owns(context))railAircraft.park(context);
         railAircraft.tick(context,active,paused,sample->loaded&&railPathClear(server,sample),sample->{
-            if(sample.phase()==com.monpai.sailboatmod.transport.air.rail.RailAircraftPath.Phase.TAKEOFF
+            if(fixedWingRail()&&sample.phase()==com.monpai.sailboatmod.transport.air.rail.RailAircraftPath.Phase.TAKEOFF
                     &&mission!=null&&mission.phase()!=com.monpai.sailboatmod.transport.air.rail.RailAircraftPath.Phase.TAKEOFF)
                 return checkCurrentAircraftFuel(server);
             return NativeControlResult.applied();
         });
         if(active&&!paused&&!railAircraft.cancelled()&&railAircraft.reason().startsWith("fuel_")){fuelFailure(server,railAircraft.reason());return;}
-        var surfaceResult=tickAirSurfaces(server);
+        var surfaceResult=fixedWingRail()?tickAirSurfaces(server):NativeControlResult.applied();
         if(!surfaceResult.success()) {
             railAircraft.park(context);airSurfaces.pause(surfaceContext());paused=true;reason=surfaceResult.reason();
             status=ControllerStatus.FAULT;flightPhase="PAUSED";setChanged();return;
@@ -783,7 +822,7 @@ public final class RegisteredVehicleControllerBlockEntity extends BlockEntity
     }
 
     /** Initial binding/admission only; it never stands in for a captured arrival or native ground permit. */
-    private boolean idleFixedWingAirportBinding() {
+    private boolean idleGuidedAirportBinding() {
         if(railAircraftAutomation())return level instanceof ServerLevel&&registration.registered()&&bindingValid&&view!=null&&view.available()
                 &&Objects.equals(registration.physicalId(),view.physicalId())&&!active&&!paused&&!manualTakeover&&manifest.isEmpty();
         if (transportKind() != Kind.AIR || aircraftClass != AircraftClass.FIXED_WING
@@ -800,30 +839,37 @@ public final class RegisteredVehicleControllerBlockEntity extends BlockEntity
                 && ("PARKED".equals(mission.phase()) || "CANCELLED".equals(mission.phase()));
     }
 
-    private List<AirportBlockEntity> parkedStandAirports(ServerLevel server) {
+    private List<AirportBlockEntity> parkedGuidedAirports(ServerLevel server) {
+        double angularSpeed=aircraftClass==AircraftClass.FIXED_WING?Double.NaN:
+                RailAircraftMotionBridge.angularSpeed(this).orElse(Double.NaN);
         List<AirportBlockEntity> matches = new ArrayList<>();
         for (BlockPos pos : AirportRegistry.get(server)) {
             if (!server.hasChunkAt(pos) || !(server.getBlockEntity(pos) instanceof AirportBlockEntity airport)
                     || airport.isRemoved() || airport.getLevel() != server) continue;
-            if (airport.groundLayout().stands().stream().anyMatch(stand -> stand.cargoEnabled()
-                    && stand.contains(view.worldBounds(), groundYawDegrees(), view.linearVelocity().length()))) matches.add(airport);
+            if (aircraftClass==AircraftClass.FIXED_WING) {
+                if (airport.groundLayout().stands().stream().anyMatch(stand -> stand.cargoEnabled()
+                        && stand.contains(view.worldBounds(), groundYawDegrees(), view.linearVelocity().length()))) matches.add(airport);
+            } else if (airport.railDepartureGeometry(this,view,groundYawDegrees(),angularSpeed)) {
+                matches.add(airport);
+            }
         }
         return matches;
     }
 
     /** Package-local airport candidate escape from an empty source binding; active delivery stays on its original gate. */
     boolean canBootstrapAtAirport(AirportBlockEntity airport) {
-        if (sourceTerminal != null || !idleFixedWingAirportBinding()) return false;
-        var matches = parkedStandAirports((ServerLevel) level);
+        if (sourceTerminal != null || !idleGuidedAirportBinding()) return false;
+        var matches = parkedGuidedAirports((ServerLevel) level);
         return matches.size() == 1 && matches.getFirst() == airport && (!railAircraftAutomation()
                 ||airport.railDepartureReady(this,view,groundYawDegrees(),RailAircraftMotionBridge.angularSpeed(this).orElse(Double.NaN)));
     }
 
-    private boolean bindParkedStandAirport(ServerLevel server) {
-        if (!idleFixedWingAirportBinding()) { reason = "airport_binding_busy"; return false; }
-        var matches = parkedStandAirports(server);
+    private boolean bindParkedGuidedAirport(ServerLevel server) {
+        if (!idleGuidedAirportBinding()) { reason = "airport_binding_busy"; return false; }
+        var matches = parkedGuidedAirports(server);
         if (matches.size() != 1) {
-            reason = matches.isEmpty() ? "airport_stand_required" : "airport_stand_ambiguous";
+            reason = fixedWingRail() ? (matches.isEmpty()?"airport_stand_required":"airport_stand_ambiguous")
+                    : (matches.isEmpty()?"airport_facility_required":"airport_facility_ambiguous");
             return false;
         }
         sourceTerminal = matches.getFirst().getBlockPos().immutable();
@@ -848,8 +894,10 @@ public final class RegisteredVehicleControllerBlockEntity extends BlockEntity
             if (!startsHere) continue;
             saved.uniqueRouteAirport(dimensionId(), route.endDockName())
                     .filter(target -> !target.pos().equals(origin))
-                    .filter(target -> railAircraftAutomation() || target.facilities().stream()
-                            .anyMatch(facility -> facility.supports(aircraftClass)))
+                    .filter(target -> fixedWingRail() || target.facilities().stream()
+                            .anyMatch(facility -> railAircraftAutomation()
+                                    ? facility.type()==RailAirportSelection.directType(aircraftClass)&&facility.validGeometry()
+                                    : facility.supports(aircraftClass)))
                     .ifPresent(target -> options.putIfAbsent(target, route));
         }
         return options;
@@ -857,12 +905,13 @@ public final class RegisteredVehicleControllerBlockEntity extends BlockEntity
 
     private CompoundTag airportDepartureScreenData(ServerLevel server) {
         CompoundTag departure = new CompoundTag();
-        boolean fixedWing = railAircraftAutomation();
-        if (fixedWing ? !idleFixedWingAirportBinding() : !idleKnownDeparture()) return departure;
-        var matches = fixedWing ? parkedStandAirports(server) : parkedLegacyAirports(server);
+        boolean guided = railAircraftAutomation();
+        if (guided ? !idleGuidedAirportBinding() : !idleKnownDeparture()) return departure;
+        var matches = guided ? parkedGuidedAirports(server) : parkedLegacyAirports(server);
         if (matches.size() != 1) {
-            departure.putString("Reason", fixedWing
-                    ? (matches.isEmpty() ? "airport_departure_park" : "airport_stand_ambiguous")
+            departure.putString("Reason", guided
+                    ? (fixedWingRail() ? (matches.isEmpty()?"airport_departure_park":"airport_stand_ambiguous")
+                        : (matches.isEmpty()?"airport_facility_required":"airport_facility_ambiguous"))
                     : departureParkingReason(matches));
             return departure;
         }
@@ -879,11 +928,11 @@ public final class RegisteredVehicleControllerBlockEntity extends BlockEntity
     }
 
     private boolean startKnownAirportDestination(ServerLevel server, String request) {
-        if (!railAircraftAutomation() || !idleFixedWingAirportBinding()) return false;
+        if (!railAircraftAutomation() || !idleGuidedAirportBinding()) return false;
         var selection = DepartureSelection.parse(request);
         BlockPos origin = selection.origin();
         BlockPos target = selection.target();
-        var matches = parkedStandAirports(server);
+        var matches = parkedGuidedAirports(server);
         if (matches.size() != 1 || !matches.getFirst().getBlockPos().equals(origin)) {
             reason = "airport_departure_changed";
             return false;
@@ -1181,6 +1230,7 @@ public final class RegisteredVehicleControllerBlockEntity extends BlockEntity
     private boolean queueAirportDeparture(ServerLevel server) {
         if (!FlightResumePolicy.waitsForAirport(reason)) { clearAirportPreflight(server); clearAirportLoading(); return false; }
         departureFlightPending = true; flightPending = false; flightPhase = "PREFLIGHT";
+        guidedAirportDeparture=railAircraftAutomation();
         return true;
     }
 
@@ -1243,7 +1293,9 @@ public final class RegisteredVehicleControllerBlockEntity extends BlockEntity
             if(!(resolveDestination(server) instanceof AirportBlockEntity destination)||source==destination){reason="destination_airport_required";return false;}
             boolean prepared=railAircraft.prepare(railContext(server),source,destination,
                     FlightRoutePlanner.cruiseForLeg(selected().waypoints(),returnTrip),Math.max(3,Math.min(60,maxSpeed)),
-                    nextGroundSourceAssignment,nextGroundTargetAssignment,p->checkAircraftFuel(server,p.path(),0,source,destination,p.source(),p.destination()));
+                    nextGroundSourceAssignment,nextGroundTargetAssignment,p->fixedWingRail()
+                            ?checkAircraftFuel(server,p.path(),0,source,destination,p.source(),p.destination())
+                            :NativeControlResult.applied());
             reason=railAircraft.reason();
             if(!prepared)return false;
             nextGroundSourceAssignment=nextGroundTargetAssignment=null;
@@ -2477,10 +2529,13 @@ public final class RegisteredVehicleControllerBlockEntity extends BlockEntity
             BlockEntity target = target(offset);
             if (target == null || !AeronauticsVehicleBridge.sameStructure(this, target))
                 throw new IllegalStateException("Selected cargo is outside the live structure");
+            boolean discovered = automaticCargoOffsets.contains(offset);
+            if (discovered && !CargoStorageRecognition.standaloneStorage(target))
+                throw new IllegalStateException("Discovered cargo no longer has standalone storage");
             IItemHandler handler =
                     server.getCapability(
                             Capabilities.ItemHandler.BLOCK, target.getBlockPos(), null);
-            if (handler == null)
+            if (handler == null || (discovered && !CargoStorageRecognition.localHandler(target, handler)))
                 throw new IllegalStateException("Selected cargo handler unavailable");
             if (seen.add(handler)) handlers.add(handler);
         }
@@ -3210,7 +3265,7 @@ public final class RegisteredVehicleControllerBlockEntity extends BlockEntity
             if(!railAircraft.canResume(airportPreflightPending())){
                 reason="rail_recovery_review";setChanged();return;
             }
-            if(level instanceof ServerLevel server&&railAircraft.mission()!=null&&!railAircraft.mission().completed()&&!airportPreflightPending()) {
+            if(fixedWingRail()&&level instanceof ServerLevel server&&railAircraft.mission()!=null&&!railAircraft.mission().completed()&&!airportPreflightPending()) {
                 var fuel=checkCurrentAircraftFuel(server);if(!fuel.success()){fuelFailure(server,fuel.reason());return;}
             }
             railAircraft.allowResume();manualTakeover=false;active=true;paused=false;recoveryRequired=flightRecovering=false;
@@ -3310,7 +3365,10 @@ public final class RegisteredVehicleControllerBlockEntity extends BlockEntity
         if(railAircraftAutomation()) {
             if(level instanceof ServerLevel server) {
                 airSurfaces.neutral(surfaceContext());
-                if(view!=null){railAircraft.cancel(railContext(server));if(manualTakeover)railAircraft.manualRelease(railContext(server));}
+                if(view!=null&&(fixedWingRail()||railAircraft.hasMission()||active)){
+                    railAircraft.cancel(railContext(server));
+                    if(manualTakeover)railAircraft.manualRelease(railContext(server));
+                }
                 releaseAirportReservation(server);clearAirportPreflight(server);
                 var journal=FlightMissionSavedData.get(server).get(getTransportUuid());
                 if(journal!=null){journal.cancelPhysical();FlightMissionSavedData.get(server).setDirty();}
@@ -3494,7 +3552,7 @@ public final class RegisteredVehicleControllerBlockEntity extends BlockEntity
                     if(!result.success()){reason=result.reason();setChanged();return false;}
                 }
                 case REMOVE_AIR_SURFACE -> {
-                    if(!railAircraftAutomation()||view==null||active&&!paused)return false;
+                    if(!fixedWingRail()||view==null||active&&!paused)return false;
                     var key=AircraftSurfaceActionRequest.key(value,worldPosition);railAircraft.park(railContext(server));
                     var result=airSurfaces.hold(surfaceContext(),key.role(),key.localOffset());
                     if(!result.success()){reason=result.reason();setChanged();return false;}
@@ -3506,9 +3564,13 @@ public final class RegisteredVehicleControllerBlockEntity extends BlockEntity
                     if(!result.success()){reason=result.reason();setChanged();return false;}
                 }
                 case SET_AIRCRAFT_CLASS -> {
-                    if (transportKind() != Kind.AIR || active || !manifest.isEmpty()) return false;
+                    if (transportKind() != Kind.AIR || active || legacyNativeAirJob || !manifest.isEmpty()) return false;
                     var nextClass=AircraftClass.valueOf(value);
-                    if(railAircraftAutomation()&&nextClass!=aircraftClass&&view!=null){airSurfaces.neutral(surfaceContext());railAircraft.permanentRelease(railContext(server));}
+                    if(railAircraftAutomation()&&nextClass!=aircraftClass){
+                        if(view!=null)airSurfaces.neutral(surfaceContext());
+                        railAircraft.permanentRelease(railContext(server));
+                    }
+                    if(nextClass!=aircraftClass)railAircraft.resetPreparation();
                     aircraftClass = nextClass; invalidateGroundCalibration();
                 }
                 case SET_FLIGHT_TERMINAL -> {
@@ -3549,6 +3611,7 @@ public final class RegisteredVehicleControllerBlockEntity extends BlockEntity
                 }
                 case REGISTER -> {
                     boolean universal = universalRegistration();
+                    boolean firstRegistration = !registration.registered();
                     var request = VehicleRegistrationSetup.parse(value);
                     VehicleRegistrationMode mode = request.mode();
                     if (mode != null) {
@@ -3586,14 +3649,14 @@ public final class RegisteredVehicleControllerBlockEntity extends BlockEntity
                     reason = "";
                     if (request.name() != null) {
                         vehicleName = request.name();
-                        setupStatus = autoConfigureEquipment(server);
                     }
+                    if (firstRegistration) autoConfigureSetup(server);
                     TransportRegistry.register(server, this);
                     remember(server);
                 }
                 case AUTO_CONFIGURE -> {
                     if (!canAutoConfigure()) return false;
-                    setupStatus = autoConfigureEquipment(server);
+                    autoConfigureSetup(server);
                 }
                 case UNREGISTER -> {
                     if (active || !manifest.isEmpty() || hasCargo()) return false;
@@ -3609,10 +3672,10 @@ public final class RegisteredVehicleControllerBlockEntity extends BlockEntity
                         vehicleName =
                                 value.strip().substring(0, Math.min(64, value.strip().length()));
                 case ADD_CARGO -> {
-                    if (active || !manifest.isEmpty() || hasCargo()) return false;
+                    if (active || paused || !manifest.isEmpty() || hasCargo()) return false;
                     BlockPos offset = parseOffset(value);
                     BlockEntity target = target(offset);
-                    if (cargoOffsets.size() >= 32
+                    if (cargoOffsets.size() >= CargoStorageRecognition.MAX_BINDINGS
                             || target == null
                             || (view != null
                                     && !AeronauticsVehicleBridge.sameStructure(this, target))
@@ -3622,10 +3685,15 @@ public final class RegisteredVehicleControllerBlockEntity extends BlockEntity
                                             null)
                                     == null) return false;
                     if (!cargoOffsets.contains(offset)) cargoOffsets.add(offset);
+                    excludedCargoOffsets.remove(offset);
                 }
                 case REMOVE_CARGO -> {
-                    if (active || !manifest.isEmpty() || hasCargo()) return false;
-                    cargoOffsets.remove(parseOffset(value));
+                    BlockPos offset = parseOffset(value);
+                    if (active || paused || !manifest.isEmpty() || (!automaticCargoOffsets.contains(offset) && hasCargo())) return false;
+                    if (cargoOffsets.remove(offset)) {
+                        automaticCargoOffsets.remove(offset);
+                        excludedCargoOffsets.add(offset);
+                    }
                 }
                 case SET_THROTTLE_TARGET, SET_STEERING_TARGET -> {
                     if (active) return false;
@@ -3690,8 +3758,8 @@ public final class RegisteredVehicleControllerBlockEntity extends BlockEntity
                 case TOGGLE_REVERSE -> allowReverse = !allowReverse;
                 case BIND_NEAREST_TERMINAL -> {
                     if (active) return false;
-                    if (transportKind() == Kind.AIR && aircraftClass == AircraftClass.FIXED_WING) {
-                        if (!bindParkedStandAirport(server)) return false;
+                    if (railAircraftAutomation()) {
+                        if (!bindParkedGuidedAirport(server)) return false;
                         break;
                     }
                     Collection<BlockPos> terminals =
@@ -3787,7 +3855,7 @@ public final class RegisteredVehicleControllerBlockEntity extends BlockEntity
 
     /** The pick is near the real bearing on the owner's current body, even when the wing is far from the controller. */
     private boolean canPickAirSurface(ServerPlayer player,String value) {
-        if(!railAircraftAutomation()||player==null||player.level()!=level||view==null||!view.available()
+        if(!fixedWingRail()||player==null||player.level()!=level||view==null||!view.available()
                 ||!bindingValid||!registration.registered()||(!isOwnedBy(player)&&!player.hasPermissions(2)))return false;
         try {
             var binding=AircraftSurfaceActionRequest.bind(value,worldPosition);BlockPos pos=worldPosition.offset(binding.localOffset());
@@ -3801,7 +3869,7 @@ public final class RegisteredVehicleControllerBlockEntity extends BlockEntity
         }catch(IllegalArgumentException failure){return false;}
     }
     private boolean railSurfaceClearReady(ServerLevel server) {
-        if(!railAircraftAutomation()||active||paused||!manifest.isEmpty()||view==null||!view.available())return false;
+        if(!fixedWingRail()||active||paused||!manifest.isEmpty()||view==null||!view.available())return false;
         var context=railContext(server);
         for(BlockPos pos:new BlockPos[]{sourceTerminal,destinationTerminal}) {
             var airport=pos==null?null:groundAirport(server,pos);
@@ -3859,6 +3927,7 @@ public final class RegisteredVehicleControllerBlockEntity extends BlockEntity
         tag.putBoolean("NamedRegistration", universalRegistration());
         tag.putBoolean("CanAutoConfigure", canAutoConfigure());
         tag.putString("SetupStatus", currentSetupStatus());
+        if (cargoSetupStatus != null && registration.registered()) tag.putString("CargoSetupStatus", cargoSetupStatus);
         tag.putBoolean("ChooseRegistrationMode", universalRegistration() && !universalModeChosen && !registration.registered());
         tag.putBoolean("RegistrationStructureReady", view != null && view.available()
                 && Double.isFinite(view.mass()) && view.mass() > 0);
@@ -3947,6 +4016,7 @@ public final class RegisteredVehicleControllerBlockEntity extends BlockEntity
         super.saveAdditional(tag, provider);
         townVoyage().writeTo(tag);
         tag.put("RailAircraft",railAircraft.save());
+        if(guidedAirportDeparture&&departureFlightPending)tag.putBoolean("GuidedAirportDeparture",true);
         tag.put("AirSurfaces",airSurfaces.save());
         tag.put("Registration", registration.save());
         if (universalModeChosen) tag.putBoolean("UniversalModeChosen", true);
@@ -4002,6 +4072,10 @@ public final class RegisteredVehicleControllerBlockEntity extends BlockEntity
         if (steeringOffset != null) tag.putLong("SteeringOffset", steeringOffset.asLong());
         tag.putLongArray(
                 "CargoOffsets", cargoOffsets.stream().mapToLong(BlockPos::asLong).toArray());
+        if (automaticCargoOffsets != null && !automaticCargoOffsets.isEmpty())
+            tag.putLongArray("AutomaticCargoOffsets", automaticCargoOffsets.stream().mapToLong(BlockPos::asLong).sorted().toArray());
+        if (excludedCargoOffsets != null && !excludedCargoOffsets.isEmpty())
+            tag.putLongArray("ExcludedCargoOffsets", excludedCargoOffsets.stream().mapToLong(BlockPos::asLong).sorted().toArray());
         CompoundTag portTag = new CompoundTag();
         ports.forEach((channel, side) -> portTag.putString(channel.name(), side.name()));
         tag.put("Ports", portTag);
@@ -4080,6 +4154,12 @@ public final class RegisteredVehicleControllerBlockEntity extends BlockEntity
             var malformed=new CompoundTag();malformed.putBoolean("Invalid",true);malformed.put("Raw",tag.get("AirSurfaces").copy());
             airSurfaces=RegisteredAircraftSurfaces.load(malformed);
         }
+        guidedAirportDeparture=departureFlightPending&&tag.getBoolean("GuidedAirportDeparture");
+        legacyNativeAirJob=transportKind()==Kind.AIR&&aircraftClass!=AircraftClass.FIXED_WING
+                &&!railAircraft.hasMission()&&!railAircraft.invalid()&&!guidedAirportDeparture
+                &&(tag.getBoolean("Active")||tag.getBoolean("Paused")||flightPending||returnFlightPending
+                    ||departureFlightPending||recoveryRequired||groundMission!=null||invalidGroundMission
+                    ||!tag.getList("Manifest",Tag.TAG_COMPOUND).isEmpty());
         flightRecovering = transportKind() == Kind.AIR && !railAircraftAutomation() && !knownGroundIntent() && FlightRecoveryPolicy.needsReloadGuard(
                 tag.getBoolean("Active"), departureFlightPending, returnFlightPending);
         flightTerminalOffset = tag.contains("FlightTerminalOffset") ? BlockPos.of(tag.getLong("FlightTerminalOffset")) : null;
@@ -4117,8 +4197,23 @@ public final class RegisteredVehicleControllerBlockEntity extends BlockEntity
         steeringOffset =
                 tag.contains("SteeringOffset") ? BlockPos.of(tag.getLong("SteeringOffset")) : null;
         cargoOffsets.clear();
-        for (long raw : tag.getLongArray("CargoOffsets"))
-            if (cargoOffsets.size() < 32) cargoOffsets.add(BlockPos.of(raw));
+        for (long raw : tag.getLongArray("CargoOffsets")) {
+            if (cargoOffsets.size() >= CargoStorageRecognition.MAX_BINDINGS) break;
+            BlockPos offset = BlockPos.of(raw);
+            if (!cargoOffsets.contains(offset)) cargoOffsets.add(offset);
+        }
+        automaticCargoOffsets = new HashSet<>();
+        for (long raw : tag.getLongArray("AutomaticCargoOffsets")) {
+            BlockPos offset = BlockPos.of(raw);
+            if (cargoOffsets.contains(offset)) automaticCargoOffsets.add(offset);
+        }
+        excludedCargoOffsets = new HashSet<>();
+        for (long raw : tag.getLongArray("ExcludedCargoOffsets")) {
+            BlockPos offset = BlockPos.of(raw);
+            if (!cargoOffsets.contains(offset))
+                VehicleRegistrationSetup.relativeOffset(BlockPos.ZERO, offset).ifPresent(excludedCargoOffsets::add);
+        }
+        cargoSetupStatus = "";
         CompoundTag portTag = tag.getCompound("Ports");
         ports.clear();
         for (ControlChannel channel : ControlChannel.values())
@@ -4144,7 +4239,8 @@ public final class RegisteredVehicleControllerBlockEntity extends BlockEntity
         }
         if(railAircraftAutomation()) {
             flightRecovering=false;
-            if(railAircraft.invalid()||active&&!railAircraft.hasMission()&&!airportPreflightPending()){
+            if(railAircraft.invalid()||!railAircraft.matchesAirframe(aircraftClass)
+                    ||active&&!railAircraft.hasMission()&&!airportPreflightPending()){
                 paused=true;recoveryRequired=true;status=ControllerStatus.FAULT;reason="rail_recovery_review";
             } else if(railAircraft.hasMission())recoveryRequired=false;
         }

@@ -10,6 +10,29 @@ import java.util.List;
 import static org.junit.jupiter.api.Assertions.*;
 
 class AirportPlannerModelTest {
+    @Test void mapEditorRetainsVerticalFacilityTypesWhenSavingAndReloading() {
+        for (var type : List.of(AirportFacility.Type.HELIPAD, AirportFacility.Type.MOORING)) {
+            var tool = AirportPlannerModel.Tool.valueOf(type.name());
+            assertFalse(new AirportPlannerModel(snapshot(5)).startNew(tool));
+            var source = new AirportScreenData(Level.OVERWORLD.location(), AIRPORT, "Airport", "Town", "Owner", true,
+                    5, List.of(), AirportGroundLayout.empty().withRevision(5),
+                    List.of("feature|route_publication|1"), "");
+            var model = new AirportPlannerModel(source);
+            assertTrue(model.startNew(tool));
+            model.click(new Vec3(20.5, 81, 30.5));
+            model.click(new Vec3(32.5, 81, 30.5));
+            var packet = model.savePacket();
+            var facility = AirportFacility.load(packet.toActionTag().getCompound("Facility"));
+            assertEquals(type, facility.type());
+            model.markSubmitted(packet);
+            model.applySnapshot(new AirportScreenData(Level.OVERWORLD.location(), AIRPORT, "Airport", "Town", "Owner", true,
+                    6, List.of(facility), AirportGroundLayout.empty().withRevision(6), source.statuses(), "ok"));
+            assertFalse(model.dirty());
+            assertTrue(model.selectFacility(facility.id()));
+            assertEquals(tool, model.draft().orElseThrow().kind());
+        }
+    }
+
     @Test void plannerUsesTheSame2048RunwayLengthLimitAsServerGeometry() {
         var model = new AirportPlannerModel(snapshot(5));
         model.startNew(AirportPlannerModel.Tool.RUNWAY);

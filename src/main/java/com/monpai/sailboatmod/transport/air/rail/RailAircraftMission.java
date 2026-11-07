@@ -1,5 +1,6 @@
 package com.monpai.sailboatmod.transport.air.rail;
 
+import com.monpai.sailboatmod.transport.air.AircraftClass;
 import com.monpai.sailboatmod.transport.air.airport.GroundAssignment;
 import java.util.*;
 import net.minecraft.core.BlockPos;
@@ -27,6 +28,10 @@ public final class RailAircraftMission {
         if(missionId==null||bodyId==null||dimension==null||dimension.length()>256||!dimension.matches("[a-z0-9_.-]+:[a-z0-9_/.-]+")
                 ||!validPosition(source)||!validPosition(target)||sourceAssignment==null||targetAssignment==null||path==null)
             throw invalid("invalid_rail_mission_binding");
+        if (path.airframe()==AircraftClass.FIXED_WING ? sourceAssignment.direct()||targetAssignment.direct()
+                : sourceAssignment.directType()!=RailAirportSelection.directType(path.airframe())
+                    ||targetAssignment.directType()!=RailAirportSelection.directType(path.airframe()))
+            throw invalid("invalid_rail_facility_binding");
         this.missionId=missionId;this.bodyId=bodyId;this.dimension=dimension;this.source=source.immutable();this.target=target.immutable();
         this.sourceAssignment=sourceAssignment;this.targetAssignment=targetAssignment;this.path=path;
     }

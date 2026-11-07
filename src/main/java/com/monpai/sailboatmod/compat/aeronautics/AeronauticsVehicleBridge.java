@@ -28,7 +28,8 @@ public final class AeronauticsVehicleBridge {
 
     private AeronauticsVehicleBridge() { }
 
-    public record SetupEquipment(List<BlockPos> throttles, List<BlockPos> steering, List<BlockPos> flightTerminals) { }
+    public record SetupEquipment(List<BlockPos> throttles, List<BlockPos> steering, List<BlockPos> flightTerminals,
+                                 List<BlockEntity> cargoCandidates) { }
 
     /** Find only exact native equipment on one completely observed assembled body. */
     public static Optional<SetupEquipment> setupEquipment(@Nullable BlockEntity controller, UUID expectedBody) {

@@ -15,6 +15,8 @@ import com.monpai.sailboatmod.market.FulfillmentMode;
 import com.monpai.sailboatmod.market.SellerShipQueue;
 import com.monpai.sailboatmod.market.ShippingOrder;
 import com.monpai.sailboatmod.market.TransportTerminalKind;
+import com.monpai.sailboatmod.market.logistics.TransportModes;
+import com.monpai.sailboatmod.transport.rail.RailFreightService;
 import com.monpai.sailboatmod.market.analytics.CommodityCandlePoint;
 import com.monpai.sailboatmod.market.analytics.CommodityCandleSeries;
 import com.monpai.sailboatmod.market.analytics.CommodityImpactSnapshot;
@@ -134,6 +136,10 @@ public final class MarketWebService {
         return MarketWebMapJson.markets(mapLayers.markets(server));
     }
 
+    public JsonArray mapRailStations(MinecraftServer server) {
+        return MarketWebMapJson.railStations(mapLayers.railStations(server));
+    }
+
     public JsonArray mapTerritories(MinecraftServer server, MarketPlayerIdentity identity) {
         return MarketWebMapJson.territories(mapLayers.territories(server));
     }
@@ -148,8 +154,17 @@ public final class MarketWebService {
         JsonArray shipments = MarketWebMapJson.shipments(mapLayers.shipments(server, identity));
         for (com.google.gson.JsonElement element : shipments) {
             JsonObject shipment = element.getAsJsonObject();
+            String shippingOrderId = shipment.get("shippingOrderId").getAsString();
             shipment.add("events", MarketWebMapJson.events(com.monpai.sailboatmod.market.logistics.ShippingTraceService.eventsFor(
-                    server, shipment.get("shippingOrderId").getAsString())));
+                    server, shippingOrderId)));
+            if (TransportModes.RAIL.equals(shipment.get("transportMode").getAsString())) {
+                var level = server.overworld();
+                ShippingOrder order = MarketSavedData.get(level).getShippingOrder(shippingOrderId);
+                if (order != null) {
+                    shipment.addProperty("etaSeconds", 0);
+                    RailFreightService.nextStop(level, order).ifPresent(stop -> MarketWebMapJson.addRailStop(shipment, stop));
+                }
+            }
         }
         return shipments;
     }

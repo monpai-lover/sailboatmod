@@ -209,6 +209,26 @@ class AirportVisualScreenTest {
         assertEquals(81, screen.planner().groundY());
     }
 
+    @Test void airportRoutePublishingUsesSnapshotTargetAndRequiresPermissionForReturn() throws Exception {
+        var target = new AirportScreenData.RouteTarget(new BlockPos(819, 79, -390), "West airport", 144, false);
+        var data = new AirportScreenData(Level.OVERWORLD.location(), BlockPos.ZERO, "Airport", "Town", "Owner", true,
+                7, List.of(), AirportGroundLayout.empty().withRevision(7),
+                List.of("feature|route_publication|1"), "", "", List.of(target));
+        assertEquals(data, AirportScreenData.load(data.save()));
+        var packets = new ArrayList<AirportActionPacket>();
+        var screen = new AirportScreen(data, packets::add);
+        assertTrue(translations(screen.buildBody()).contains("screen.sailboatmod.airport.route_publish"));
+        precisionFields(screen).get("routeCruiseY").setText("147", true);
+        var publish = AirportScreen.class.getDeclaredMethod("publishRoute", boolean.class);
+        publish.setAccessible(true);
+        publish.invoke(screen, true);
+        assertTrue(packets.isEmpty());
+        publish.invoke(screen, false);
+        publish.invoke(screen, false);
+        assertEquals(List.of(AirportActionPacket.publishRoute(Level.OVERWORLD.location(), BlockPos.ZERO, 7,
+                target.pos(), 147, false)), packets);
+    }
+
     @Test void automaticRegionPreviewsBeforeSendingAndRejectsAnUnreviewedRevision() throws Exception {
         var packets = new ArrayList<AirportActionPacket>();
         var screen = new AirportScreen(autoLayoutSnapshot(4, true, ""), packets::add);

@@ -117,6 +117,11 @@ public final class AirportBlockEntity extends DockBlockEntity {
         }
         return true;
     }
+    /** Called after both route endpoints have been checked on the server tick. */
+    public void publishRoutesFromEditor(List<com.monpai.sailboatmod.route.RouteDefinition> routes) {
+        editorRevision = editorRevision() + 1;
+        setRoutes(routes, routes.size() - 1);
+    }
     private void updateGroundLayout(AirportGroundLayout layout) {
         editorRevision = editorRevision() + 1;
         groundLayout = layout;
@@ -245,8 +250,10 @@ public final class AirportBlockEntity extends DockBlockEntity {
         var ready=AirportGroundPreparation.Status.READY;var waiting=AirportGroundPreparation.Status.WAITING;var blocked=AirportGroundPreparation.Status.BLOCKED;
         if(!(level instanceof ServerLevel server)||attemptId==null||aircraftId==null||!currentAssignment(assignment))
             return new AirportGroundPreparation.Check(blocked,"ground_binding_changed");
-        var references=AirportGroundValidation.references(groundLayout(),facilities());
-        if(references!=AirportGroundValidation.Result.VALID)return new AirportGroundPreparation.Check(blocked,references.name().toLowerCase(Locale.ROOT));
+        if (!assignment.direct()) {
+            var references=AirportGroundValidation.references(groundLayout(),facilities());
+            if(references!=AirportGroundValidation.Result.VALID)return new AirportGroundPreparation.Check(blocked,references.name().toLowerCase(Locale.ROOT));
+        }
         // Selection never weakens the existing whole-airport exclusive occupancy/lease rule.
         if(!groundAvailable(aircraftId)||groundOccupiedByOther(aircraftId))return new AirportGroundPreparation.Check(waiting,"airport_reserved");
         long now=server.getGameTime();groundPreflights.values().removeIf(p->now<p.startedAt||now-p.startedAt>=PREFLIGHT_MAX_TICKS);
@@ -254,6 +261,7 @@ public final class AirportBlockEntity extends DockBlockEntity {
         if(facility!=AirportValidation.Result.VALID)return new AirportGroundPreparation.Check(
                 facility==AirportValidation.Result.WAITING||facility==AirportValidation.Result.UNLOADED?waiting:blocked,
                 facility.name().toLowerCase(Locale.ROOT));
+        if (assignment.direct()) return new AirportGroundPreparation.Check(ready,"");
         GroundPreparation prepared=groundPreflights.get(attemptId);
         if(prepared==null||!prepared.aircraftId.equals(aircraftId)||!prepared.assignment.equals(assignment)){
             if(prepared==null&&groundPreflights.size()>=MAX_PREFLIGHTS)return new AirportGroundPreparation.Check(waiting,"airport_unavailable");
@@ -283,6 +291,7 @@ public final class AirportBlockEntity extends DockBlockEntity {
     }
     private boolean groundAssignmentLoaded(ServerLevel server,GroundAssignment assignment){
         if(!currentAssignment(assignment))return false;
+        if(assignment.direct())return chunksPresent(server,facilities.get(assignment.runwayId()));
         var selected=selectedGroundLayout(groundLayout(),assignment);
         for(var stand:selected.stands())if(!loadedBounds(server,stand.bounds()))return false;
         for(var route:selected.taxiRoutes())if(!loadedBounds(server,route.bounds()))return false;return true;
@@ -290,8 +299,9 @@ public final class AirportBlockEntity extends DockBlockEntity {
     public boolean reserveGroundAssignment(UUID attemptId,GroundAssignment assignment,UUID aircraftId,long ttlTicks){
         if(!(level instanceof ServerLevel server)||!currentAssignment(assignment)||!groundAvailable(aircraftId)||groundOccupiedByOther(aircraftId))return false;
         var prepared=groundPreflights.get(attemptId);long now=server.getGameTime();
-        if(prepared==null||!prepared.aircraftId.equals(aircraftId)||!prepared.assignment.equals(assignment)||prepared.result!=AirportGroundValidation.Result.VALID
-                ||now<prepared.startedAt||now-prepared.startedAt>=PREFLIGHT_MAX_TICKS||!groundAssignmentLoaded(server,assignment))return false;
+        if(!assignment.direct()&&(prepared==null||!prepared.aircraftId.equals(aircraftId)||!prepared.assignment.equals(assignment)
+                ||prepared.result!=AirportGroundValidation.Result.VALID||now<prepared.startedAt||now-prepared.startedAt>=PREFLIGHT_MAX_TICKS
+                ||!groundAssignmentLoaded(server,assignment)))return false;
         GroundReservation existing=groundReservations.get(aircraftId);
         if(existing!=null&&!existing.assignment().equals(assignment))return false;
         if(!reservePreparedFacility(attemptId,assignment.runwayId(),aircraftId,ttlTicks))return false;
@@ -331,6 +341,9 @@ public final class AirportBlockEntity extends DockBlockEntity {
     public boolean railDepartureGeometry(LogisticsCarrier carrier,PhysicalVehicleView actual,double yaw,double angularSpeed){
         if(!railViewMatches(carrier,actual==null?null:actual.physicalId(),actual,yaw))return false;
         var aircraft=new RailAirportSelection.Aircraft(actual.physicalId(),actual.worldBounds(),actual.worldPosition(),yaw);
+        var airframe=((AirportApproachState)carrier).aircraftClass();
+        if (airframe!=AircraftClass.FIXED_WING) return RailAirportSelection.directCandidates(airframe,groundLayout(),facilities(),null).stream()
+                .anyMatch(candidate -> RailAirportSelection.directParked(aircraft,candidate.runway(),actual.linearVelocity().length(),angularSpeed));
         return RailAirportSelection.select(aircraft,groundLayout(),facilities(),null,groundLayout(),facilities(),null,
                 selection->RailAirportSelection.parked(aircraft,selection.source().stand(),actual.linearVelocity().length(),angularSpeed))
                 .selection().isPresent();
@@ -339,15 +352,23 @@ public final class AirportBlockEntity extends DockBlockEntity {
     public boolean railDepartureReady(LogisticsCarrier carrier,PhysicalVehicleView actual,double yaw,double angularSpeed){
         if(!railViewMatches(carrier,actual==null?null:actual.physicalId(),actual,yaw))return false;
         var aircraft=new RailAirportSelection.Aircraft(actual.physicalId(),actual.worldBounds(),actual.worldPosition(),yaw);
+        var airframe=((AirportApproachState)carrier).aircraftClass();
+        if (airframe!=AircraftClass.FIXED_WING) return RailAirportSelection.directCandidates(airframe,groundLayout(),facilities(),null).stream()
+                .filter(candidate -> RailAirportSelection.directParked(aircraft,candidate.runway(),actual.linearVelocity().length(),angularSpeed))
+                .anyMatch(candidate -> railDeparturePreparation(carrier,actual,candidate.assignment()));
         Map<GroundAssignment,Boolean> observed=new HashMap<>();
         return RailAirportSelection.select(aircraft,groundLayout(),facilities(),null,groundLayout(),facilities(),null,selection->{
             GroundAssignment assignment=selection.source().assignment();
             return observed.computeIfAbsent(assignment,key->{
                 if(!RailAirportSelection.parked(aircraft,selection.source().stand(),actual.linearVelocity().length(),angularSpeed))return false;
-                UUID attempt=UUID.nameUUIDFromBytes(("rail-stand:"+carrier.getTransportUuid()+":"+actual.physicalId()+":"+key).getBytes(StandardCharsets.UTF_8));
-                return prepareGroundCandidate(attempt,carrier.getTransportUuid(),key).status()==AirportGroundPreparation.Status.READY;
+                return railDeparturePreparation(carrier,actual,key);
             });
         }).selection().isPresent();
+    }
+    private boolean railDeparturePreparation(LogisticsCarrier carrier,PhysicalVehicleView actual,GroundAssignment assignment) {
+        UUID attempt=UUID.nameUUIDFromBytes(("rail-stand:"+carrier.getTransportUuid()+":"+actual.physicalId()+":"+assignment)
+                .getBytes(StandardCharsets.UTF_8));
+        return prepareGroundCandidate(attempt,carrier.getTransportUuid(),assignment).status()==AirportGroundPreparation.Status.READY;
     }
     /** A fresh geometric observation for the caller's consecutive-tick dwell counter; never asks it for arrival proof. */
     public boolean railStandContains(GroundAssignment assignment,LogisticsCarrier carrier,UUID expectedBody,
@@ -360,10 +381,14 @@ public final class AirportBlockEntity extends DockBlockEntity {
         boolean currentClaim=groundReservations().stream().anyMatch(r->r.aircraftId().equals(owner)&&r.assignment().equals(assignment)&&r.expiresAtTick()>now);
         boolean currentRunway=reservations.active(now).stream().anyMatch(r->r.aircraftId().equals(owner)&&r.facilityId().equals(assignment.runwayId())&&r.expiresAtTick()>now);
         if(!currentClaim||!currentRunway)return false;
+        var aircraft=new RailAirportSelection.Aircraft(expectedBody,actual.worldBounds(),actual.worldPosition(),yaw);
+        var airframe=((AirportApproachState)carrier).aircraftClass();
+        if (assignment.direct()) return airframe!=AircraftClass.FIXED_WING&&assignment.directType()==RailAirportSelection.directType(airframe)
+                &&RailAirportSelection.directParked(aircraft,facilities.get(assignment.runwayId()),actual.linearVelocity().length(),angularSpeed);
+        if (airframe!=AircraftClass.FIXED_WING) return false;
         var stand=groundLayout().stand(assignment.standId()).orElse(null);
         return stand!=null&&AirportGroundLayout.angleDifference(yaw,stand.yawDegrees())<=5
-                &&RailAirportSelection.parked(new RailAirportSelection.Aircraft(expectedBody,actual.worldBounds(),actual.worldPosition(),yaw),
-                    stand,actual.linearVelocity().length(),angularSpeed);
+                &&RailAirportSelection.parked(aircraft,stand,actual.linearVelocity().length(),angularSpeed);
     }
     /** The counter must represent advancing actual observations, persisted/reset by the rail mission owner. */
     public boolean railAssignedStandArrival(GroundAssignment assignment,LogisticsCarrier carrier,UUID expectedBody,
@@ -373,7 +398,7 @@ public final class AirportBlockEntity extends DockBlockEntity {
     private boolean railViewMatches(LogisticsCarrier carrier,UUID expectedBody,PhysicalVehicleView actual,double yaw){
         if(!(level instanceof ServerLevel)||carrier==null||!supportsLogisticsCarrier(carrier)||!carrier.isTransportAlive()
                 ||!(carrier instanceof AirportApproachState state)||!state.railAircraftAutomation()
-                ||state.aircraftClass()!=AircraftClass.FIXED_WING||expectedBody==null||actual==null||!actual.available()
+                ||state.aircraftClass()==null||expectedBody==null||actual==null||!actual.available()
                 ||!expectedBody.equals(actual.physicalId())||!level.dimension().location().toString().equals(actual.dimensionId())
                 ||!actual.dimensionId().equals(carrier.dimensionId())||actual.linearVelocity()==null||actual.worldForward()==null
                 ||!Double.isFinite(actual.mass())||actual.mass()<=0||!Double.isFinite(yaw))return false;
@@ -392,7 +417,8 @@ public final class AirportBlockEntity extends DockBlockEntity {
         return groundCarrierBound(assignment,carrier)&&groundAssignmentLoaded((ServerLevel)level,assignment);
     }
     private boolean groundCarrierBound(GroundAssignment assignment,LogisticsCarrier carrier){
-        return level instanceof ServerLevel&&currentAssignment(assignment)&&supportsLogisticsCarrier(carrier)&&carrier.isTransportAlive()
+        return level instanceof ServerLevel&&assignment!=null&&!assignment.direct()&&currentAssignment(assignment)
+                &&supportsLogisticsCarrier(carrier)&&carrier.isTransportAlive()
                 &&level.dimension().location().toString().equals(carrier.dimensionId())&&carrier instanceof AirportApproachState approach
                 &&approach.aircraftClass()==AircraftClass.FIXED_WING&&approach.groundArrivalReady()&&holdsGroundAssignment(assignment,carrier.getTransportUuid())
                 &&!groundOccupiedByOther(carrier.getTransportUuid());
@@ -592,6 +618,20 @@ public final class AirportBlockEntity extends DockBlockEntity {
         if (!(carrier instanceof AirportApproachState state) || !state.physicalArrivalReady() || state.velocityMetersPerSecond() == null) {
             if (carrier != null) arrivalChecks.remove(carrier.getTransportUuid());
             return false;
+        }
+        if (state.railAircraftAutomation()&&state.aircraftClass()!=null&&state.aircraftClass()!=AircraftClass.FIXED_WING) {
+            if (carrier instanceof RegisteredVehicleControllerBlockEntity controller&&controller.canBootstrapAtAirport(this)) return true;
+            if (!(level instanceof ServerLevel server)||!state.groundAssignedArrivalReady(worldPosition)) return false;
+            double speed=state.velocityMetersPerSecond().length();
+            var claim=groundReservations.get(carrier.getTransportUuid());
+            if (claim!=null) {
+                var assignment=claim.assignment();
+                var facility=facilities.get(assignment.runwayId());
+                return claim.expiresAtTick()>server.getGameTime()&&assignment.directType()==RailAirportSelection.directType(state.aircraftClass())
+                        &&groundAssignmentLoaded(server,assignment)&&facility.isParked(carrier.transportBounds(),speed);
+            }
+            return facilities.values().stream().anyMatch(facility->facility.type()==RailAirportSelection.directType(state.aircraftClass())
+                    &&facility.isParked(carrier.transportBounds(),speed));
         }
         if(state.aircraftClass()==AircraftClass.FIXED_WING&&(!groundLayout().stands().isEmpty()||!groundLayout().taxiRoutes().isEmpty())) {
             if(carrier instanceof RegisteredVehicleControllerBlockEntity controller && controller.canBootstrapAtAirport(this))return true;

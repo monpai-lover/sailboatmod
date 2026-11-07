@@ -4,6 +4,7 @@ import com.lowdragmc.lowdraglib2.gui.ui.UIElement;
 import com.lowdragmc.lowdraglib2.gui.ui.elements.Button;
 import com.lowdragmc.lowdraglib2.gui.ui.elements.Label;
 import com.lowdragmc.lowdraglib2.gui.ui.elements.ScrollerView;
+import com.lowdragmc.lowdraglib2.gui.ui.elements.Selector;
 import com.lowdragmc.lowdraglib2.gui.ui.elements.TextField;
 import com.monpai.sailboatmod.client.AirportClientHooks;
 import com.monpai.sailboatmod.client.airport.AirportMapGeometry;
@@ -43,6 +44,11 @@ public final class AirportScreen extends ThemedScreen {
     private long nameRevision;
     private String pendingName;
     private long pendingNameRevision = -1;
+    private long routeReplyDeadline = -1;
+    private BlockPos routeTargetPos;
+    private String routeCruiseY = "";
+    private Button publishOneWay, publishRoundTrip;
+    private Selector<AirportScreenData.RouteTarget> routeSelector;
     private String planeY;
     private int selectedPoint;
     private AirportMapGeometry.Hit dragHandle;
@@ -86,6 +92,7 @@ public final class AirportScreen extends ThemedScreen {
         UIElement toolbar = Ui.wrapRow(Ui.GAP_XS);
         toolbar.layout(l -> l.widthPercent(100).flexShrink(0));
         for (AirportPlannerModel.Tool tool : AirportPlannerModel.Tool.values()) {
+            if (tool.isVerticalFacility() && !data().supportsRoutePublication()) continue;
             Button button = Ui.button(t("tool." + tool.name().toLowerCase(Locale.ROOT)), Ui.Tone.SECONDARY,
                     () -> safely(() -> chooseTool(tool)));
             button.layout(l -> l.paddingHorizontal(Ui.GAP_S));
@@ -122,7 +129,9 @@ public final class AirportScreen extends ThemedScreen {
         if (!data().dimension().equals(update.dimension()) || !airportPos().equals(update.airportPos())) return;
         long previousRevision = data().revision();
         boolean nameChanged = !data().name().equals(update.name());
+        boolean targetsChanged = !data().routeTargets().equals(update.routeTargets());
         boolean wasBusy = busy();
+        if (routeReplyDeadline >= 0 && !update.result().isEmpty()) routeReplyDeadline = -1;
         if (pendingNameRevision >= 0 && !update.result().isEmpty() && !"pending".equals(update.result())) {
             if ("ok".equals(update.result()) && update.customName().equals(pendingName.trim())) {
                 nameRevision = update.revision(); nameDraft = update.customName();
@@ -149,7 +158,7 @@ public final class AirportScreen extends ThemedScreen {
         if (!update.result().isEmpty() && !"pending".equals(update.result())) toast.show(t("result." + update.result()),
                 "ok".equals(update.result()) || "valid".equals(update.result()), ticks());
         // Async replies must refresh existing controls without reopening a closed screen.
-        if (repaint || nameChanged || previousRevision != data().revision() || (wasBusy && !busy())) renderInspector();
+        if (repaint || nameChanged || targetsChanged || previousRevision != data().revision() || (wasBusy && !busy())) renderInspector();
         AirportClientHooks.updatePreview(this);
     }
     private Component statusText() {
@@ -172,13 +181,20 @@ public final class AirportScreen extends ThemedScreen {
         if (validation.equals("invalid_geometry")) return "draft_invalid";
         return model.dirty() ? "draft_dirty" : "draft_saved";
     }
-    private boolean busy() { return planner.awaitingReply() || autoLayoutPending || pendingNameRevision >= 0 || "pending".equals(planner.lastResult()); }
+    private boolean busy() { return planner.awaitingReply() || autoLayoutPending || pendingNameRevision >= 0
+            || routeReplyDeadline >= 0 || "pending".equals(planner.lastResult()); }
     private void refreshStatus() {
         if (status != null) status.setValue(statusText());
         refreshToolButtons();
         precisionFields.values().forEach(field -> field.setActive(data().canManage() && !busy()));
         if (autoLayoutStatus != null) autoLayoutStatus.setValue(t(autoLayoutStatusKey()));
         if (autoLayoutSave != null) autoLayoutSave.setActive(canSaveAutoLayout());
+        var target = routeTarget();
+        boolean canPublish = target != null && data().canManage() && !busy() && !hasManualAirportDraft()
+                && validCruiseY();
+        if (publishOneWay != null) publishOneWay.setActive(canPublish);
+        if (publishRoundTrip != null) publishRoundTrip.setActive(canPublish && target.canPublishReturn());
+        if (routeSelector != null) routeSelector.setActive(data().canManage() && !busy());
     }
     private void refreshToolButtons() {
         tools.forEach((tool, button) -> { Ui.setClass(button, "sm-primary", !autoLayoutMode && planner.tool() == tool); button.setActive(!busy() && (tool == AirportPlannerModel.Tool.SELECT || data().canManage())); });
@@ -254,7 +270,7 @@ public final class AirportScreen extends ThemedScreen {
             var saved = AirportMapGeometry.hitSaved(data(), x, y, camera, box);
             if (saved.isEmpty()) return false;
             boolean selected = switch (saved.get().kind()) {
-                case RUNWAY -> planner.selectRunway(saved.get().id());
+                case RUNWAY -> planner.selectFacility(saved.get().id());
                 case TAXI -> planner.selectTaxi(saved.get().id());
                 case STAND -> planner.selectStand(saved.get().id());
             };
@@ -334,6 +350,8 @@ public final class AirportScreen extends ThemedScreen {
         if (inspector == null) return;
         inspector.clearAllScrollViewChildren(); precisionFields.clear();
         autoLayoutStatus = null; autoLayoutSave = null;
+        publishOneWay = null; publishRoundTrip = null;
+        routeSelector = null;
         if (autoLayoutMode) { autoLayoutInspector(); return; }
         if (!Objects.equals(propertyDraft, planner.draft().orElse(null))) synchronizePrecision();
         if (overview || planner.draft().isEmpty()) overview(); else properties(planner.draft().orElseThrow());
@@ -364,12 +382,68 @@ public final class AirportScreen extends ThemedScreen {
                 button("name_follow_town", () -> { nameDraft = ""; send(AirportActionPacket.Action.RENAME, ""); }),
                 button("refresh", () -> send(AirportActionPacket.Action.REFRESH, "")));
         if (nameRevision != data().revision()) actions(button("review_current", () -> { nameRevision = data().revision(); refreshStatus(); }));
+        if (data().supportsRoutePublication() && data().canManage()) routePublicationControls();
         text(Component.translatable("screen.sailboatmod.airport.counts", data().facilities().size(), data().groundLayout().taxiRoutes().size(), data().groundLayout().stands().size()));
         for (String line : data().statuses()) {
             String[] parts = line.split("\\|", -1);
             if (parts.length == 3 && !parts[0].equals("editor") && !parts[0].equals("feature"))
                 text(Component.literal(parts[1] + " · ").append(t("state." + parts[2])));
         }
+    }
+    private AirportScreenData.RouteTarget routeTarget() {
+        return data().routeTargets().stream().filter(target -> target.pos().equals(routeTargetPos)).findFirst().orElse(null);
+    }
+    private boolean validCruiseY() {
+        try { Integer.parseInt(routeCruiseY.trim()); return true; }
+        catch (NumberFormatException ignored) { return false; }
+    }
+    private void routePublicationControls() {
+        text(t("route_publish_hint"));
+        var targets = data().routeTargets();
+        if (targets.isEmpty()) { text(t("route_no_targets")); return; }
+        var chosen = routeTarget();
+        if (chosen == null) {
+            chosen = targets.getFirst();
+            routeTargetPos = chosen.pos();
+            routeCruiseY = Integer.toString(chosen.suggestedCruiseY());
+        }
+        var selector = new Selector<AirportScreenData.RouteTarget>();
+        routeSelector = selector;
+        Scrollbars.install(selector.scrollerView);
+        selector.setCandidates(targets);
+        selector.setSelected(chosen, false);
+        selector.setCandidateUIProvider(target -> Ui.clippedText(target == null ? Component.empty()
+                : Component.literal(target.name() + " · " + target.pos().toShortString())));
+        selector.setOnValueChanged(target -> {
+            if (target == null || target.pos().equals(routeTargetPos)) return;
+            routeTargetPos = target.pos();
+            routeCruiseY = Integer.toString(target.suggestedCruiseY());
+            var height = precisionFields.get("routeCruiseY");
+            if (height != null) height.setText(routeCruiseY, false);
+            refreshStatus();
+        });
+        selector.layout(layout -> layout.widthPercent(100).height(Ui.CONTROL_HEIGHT).flexShrink(0));
+        selector.setActive(!busy());
+        inspector.addScrollViewChild(selector);
+        precisionFields.put("routeCruiseY", field("route_cruise_y", routeCruiseY, value -> {
+            routeCruiseY = value;
+            refreshStatus();
+        }));
+        publishOneWay = Ui.button(t("route_publish"), Ui.Tone.PRIMARY, () -> safely(() -> publishRoute(false)));
+        publishRoundTrip = Ui.button(t("route_publish_return"), Ui.Tone.SECONDARY, () -> safely(() -> publishRoute(true)));
+        actions(publishOneWay, publishRoundTrip);
+        text(t("route_return_hint"));
+        refreshStatus();
+    }
+    private void publishRoute(boolean returnRoute) {
+        var target = routeTarget();
+        if (target == null || !editable() || !validCruiseY() || hasManualAirportDraft()
+                || returnRoute && !target.canPublishReturn()) return;
+        var packet = AirportActionPacket.publishRoute(data().dimension(), airportPos(), data().revision(), target.pos(),
+                Integer.parseInt(routeCruiseY.trim()), returnRoute);
+        routeReplyDeadline = ticks() + AUTO_LAYOUT_ACK_TIMEOUT;
+        send(packet);
+        refreshStatus();
     }
     private void beginAutoLayout() {
         if (!data().supportsAutoLayout() || !editable()) return;
@@ -468,7 +542,8 @@ public final class AirportScreen extends ThemedScreen {
         field("id", "id");
         field("map_plane_y", planeY, value -> { planeY = value; if (data().canManage()) applyPrecision(false); refreshStatus(); AirportClientHooks.updatePreview(this); });
         text(t("plane_hint"));
-        if (draft.kind() == AirportPlannerModel.Tool.RUNWAY) {
+        if (draft.kind().isVerticalFacility()) text(t("vertical_facility_hint"));
+        if (draft.kind().isFacility()) {
             actions(button("reverse_direction", () -> { if (applyPrecision()) { planner.reverseRunway(); changed(); } }),
                     button("validate", () -> send(AirportActionPacket.Action.VALIDATE_RUNWAY, precision.get("id"))));
         }
@@ -504,8 +579,10 @@ public final class AirportScreen extends ThemedScreen {
     }
     private void objects() {
         text(t("objects"));
-        for (AirportFacility runway : data().facilities()) if (runway.type() == AirportFacility.Type.RUNWAY)
-            objectButton("▰ " + runway.id(), () -> planner.selectRunway(runway.id()));
+        for (AirportFacility facility : data().facilities()) {
+            if (facility.type() == AirportFacility.Type.RUNWAY || data().supportsRoutePublication())
+                objectButton("▰ " + facility.id(), () -> planner.selectFacility(facility.id()));
+        }
         for (AirportTaxiRoute taxi : data().groundLayout().taxiRoutes()) objectButton((taxi.direction() == AirportTaxiRoute.Direction.INBOUND ? "← " : "→ ") + taxi.id(), () -> planner.selectTaxi(taxi.id()));
         for (AirportParkingStand stand : data().groundLayout().stands()) objectButton("P " + stand.id(), () -> planner.selectStand(stand.id()));
     }
@@ -595,6 +672,12 @@ public final class AirportScreen extends ThemedScreen {
     private static String pointLabel(Vec3 value) { return labelNumber(value.x) + " " + labelNumber(value.y) + " " + labelNumber(value.z); }
     private static String labelNumber(double value) { return BigDecimal.valueOf(value).setScale(2, RoundingMode.HALF_UP).stripTrailingZeros().toPlainString(); }
     @Override protected void onUiTick() {
+        if (routeReplyDeadline >= 0 && ticks() >= routeReplyDeadline) {
+            routeReplyDeadline = -1;
+            toast.show(t("route_no_reply"), false, ticks());
+            renderInspector();
+            refreshStatus();
+        }
         if (autoLayoutPending && autoLayoutReplyDeadline >= 0 && ticks() >= autoLayoutReplyDeadline) {
             autoLayoutPending = false; autoLayoutReplyDeadline = -1;
             toast.show(t("auto_layout_no_reply"), false, ticks());

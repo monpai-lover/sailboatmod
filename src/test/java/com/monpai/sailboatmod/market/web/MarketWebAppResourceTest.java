@@ -114,8 +114,14 @@ class MarketWebAppResourceTest {
 
         assertFalse(methodBody(source, "handleMapSnapshot", "handleMapMarkets").contains("requireIdentity("),
                 "map snapshot should be public so guest users can center the tile map");
-        assertFalse(methodBody(source, "handleMapMarkets", "handleMapTerritories").contains("requireIdentity("),
-                "market markers should be public map metadata");
+        String publicMarkets = methodBody(source, "handleMapMarkets", "handleMapAirports");
+        assertFalse(publicMarkets.contains("requireIdentity("), "facility markers should be public map metadata");
+        assertTrue(publicMarkets.contains("service.mapRailStations("));
+        assertFalse(publicMarkets.contains("service.mapShipments("), "public rail markers may not publish shipments");
+        String privateShipments = methodBody(source, "handleMapShipments", "handleMapTile");
+        assertTrue(privateShipments.indexOf("requireIdentity(") >= 0
+                && privateShipments.indexOf("requireIdentity(") < privateShipments.indexOf("service.mapShipments("),
+                "shipping observations retain the authenticated shipment endpoint");
         assertFalse(methodBody(source, "handleMapTerritories", "handleMapShipments").contains("requireIdentity("),
                 "territory overlays should be public map metadata");
         assertFalse(methodBody(source, "handleMapFlag", "handleStatic").contains("requireIdentity("),

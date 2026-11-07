@@ -54,4 +54,16 @@ class RailRouteStopoverTest {
     private static RailStationRef station(int id, int x) {
         return new RailStationRef("minecraft:overworld", new BlockPos(x, 64, 0), new UUID(0, id));
     }
+
+    @Test
+    void stoppedLegDistinguishesScheduledDwellFromAnObservedNativeRetry() {
+        var dwell = RailFreightNative.LegState.observe(false, false, false, true, false);
+        assertEquals(RailFreightNative.LegState.DWELLING, dwell);
+        var retry = RailFreightNative.LegState.observe(false, false, false, false, true);
+        assertEquals(RailFreightNative.LegState.WAITING_ROUTE, retry);
+        var readying = RailFreightNative.LegState.observe(false, false, false, false, false);
+        assertEquals(RailFreightNative.LegState.PREPARING, readying);
+        var paused = RailFreightNative.LegState.observe(true, false, false, true, false);
+        assertEquals(RailFreightNative.LegState.PAUSED, paused);
+    }
 }

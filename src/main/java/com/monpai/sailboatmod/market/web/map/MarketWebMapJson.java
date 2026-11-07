@@ -1,6 +1,8 @@
 package com.monpai.sailboatmod.market.web.map;
 
 import com.monpai.sailboatmod.market.map.MarketWebMapDtos;
+import com.monpai.sailboatmod.transport.rail.RailFreightNative.LegState;
+import com.monpai.sailboatmod.transport.rail.RailFreightService.NextStop;
 
 import com.google.gson.JsonArray;
 import com.google.gson.JsonObject;
@@ -74,6 +76,34 @@ public final class MarketWebMapJson {
             out.add(market(marker));
         }
         return out;
+    }
+
+    public static JsonArray railStations(List<MarketWebMapDtos.RailStationMarker> stations) {
+        JsonArray out = new JsonArray();
+        for (var station : stations) {
+            JsonObject marker = new JsonObject();
+            marker.addProperty("stationId", station.stationId());
+            marker.addProperty("name", station.name());
+            marker.addProperty("dimensionId", station.dimensionId());
+            marker.addProperty("x", station.x());
+            marker.addProperty("y", station.y());
+            marker.addProperty("z", station.z());
+            marker.addProperty("townId", station.townId());
+            marker.addProperty("townName", station.townName());
+            out.add(marker);
+        }
+        return out;
+    }
+
+    public static void addRailStop(JsonObject shipment, NextStop stop) {
+        JsonObject rail = new JsonObject();
+        rail.addProperty("state", stop.state().name());
+        if (!stop.name().isBlank()) rail.addProperty("nextStop", stop.name());
+        if (!stop.atStation().isBlank()) rail.addProperty("atStation", stop.atStation());
+        int eta = stop.state() == LegState.MOVING ? Math.max(0, stop.etaSeconds()) : 0;
+        if (eta > 0) rail.addProperty("nextStopEtaSeconds", eta);
+        shipment.add("rail", rail);
+        shipment.addProperty("etaSeconds", stop.finalStop() ? eta : 0);
     }
 
     public static JsonObject territory(MarketWebMapDtos.Territory territory) {

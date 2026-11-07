@@ -1,5 +1,7 @@
 package com.monpai.sailboatmod.compat.aeronautics;
 
+import com.monpai.sailboatmod.transport.control.CargoStorageRecognition;
+
 import com.monpai.sailboatmod.transport.physical.NativeControlResult;
 import com.monpai.sailboatmod.transport.physical.NativeGroundObservation;
 import com.monpai.sailboatmod.transport.physical.GroundSurfaceObservation;
@@ -117,6 +119,7 @@ final class SableReflectionAccess {
         List<BlockPos> throttles = new ArrayList<>();
         List<BlockPos> steering = new ArrayList<>();
         List<BlockPos> flightTerminals = new ArrayList<>();
+        List<BlockEntity> cargoCandidates = new ArrayList<>();
         for (BlockEntity entity : loaded.orElseThrow()) {
             if (containing(entity) != body) return Optional.empty();
             Class<?> type = entity.getClass();
@@ -124,10 +127,11 @@ final class SableReflectionAccess {
             if (actuators != null && type == actuators.steeringType()) steering.add(entity.getBlockPos().immutable());
             if ("ace.flight.block.NavigationTerminalBlockEntity".equals(type.getName()))
                 flightTerminals.add(entity.getBlockPos().immutable());
+            if (entity != controller && CargoStorageRecognition.standaloneStorage(entity)) cargoCandidates.add(entity);
         }
         if (containing(controller) != body || !expectedId.equals(id.invoke(body))) return Optional.empty();
         return Optional.of(new AeronauticsVehicleBridge.SetupEquipment(
-                List.copyOf(throttles), List.copyOf(steering), List.copyOf(flightTerminals)));
+                List.copyOf(throttles), List.copyOf(steering), List.copyOf(flightTerminals), List.copyOf(cargoCandidates)));
     }
 
     UUID passengerPhysicalId(Entity passenger) throws ReflectiveOperationException {

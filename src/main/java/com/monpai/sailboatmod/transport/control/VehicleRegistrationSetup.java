@@ -27,7 +27,10 @@ public final class VehicleRegistrationSetup {
 
     public static Optional<BlockPos> uniqueOffset(BlockPos origin, List<BlockPos> matches) {
         if (matches.size() != 1) return Optional.empty();
-        BlockPos candidate = matches.getFirst();
+        return relativeOffset(origin, matches.getFirst());
+    }
+
+    public static Optional<BlockPos> relativeOffset(BlockPos origin, BlockPos candidate) {
         long dx = (long) candidate.getX() - origin.getX();
         long dy = (long) candidate.getY() - origin.getY();
         long dz = (long) candidate.getZ() - origin.getZ();

@@ -8,7 +8,18 @@ import java.util.*;
 
 /** Pure map editor state. Its draft never becomes authoritative airport configuration. */
 public final class AirportPlannerModel {
-    public enum Tool { SELECT, RUNWAY, OUTBOUND, INBOUND, STAND }
+    public enum Tool {
+        SELECT(null), RUNWAY(AirportFacility.Type.RUNWAY), OUTBOUND(null), INBOUND(null), STAND(null),
+        HELIPAD(AirportFacility.Type.HELIPAD), MOORING(AirportFacility.Type.MOORING);
+
+        private final AirportFacility.Type facilityType;
+        Tool(AirportFacility.Type facilityType) { this.facilityType = facilityType; }
+        public boolean isFacility() { return facilityType != null; }
+        public boolean isVerticalFacility() { return isFacility() && this != RUNWAY; }
+        static Tool forFacility(AirportFacility.Type type) {
+            return switch (type) { case RUNWAY -> RUNWAY; case HELIPAD -> HELIPAD; case MOORING -> MOORING; };
+        }
+    }
     public static final int MAX_UNDO = 64;
 
     /** Runway points are display centers (block X/Z + .5); other points retain exact world coordinates. */
@@ -20,7 +31,7 @@ public final class AirportPlannerModel {
             if(kind == Tool.SELECT || id.length()>64 || runwayId.length()>64 || standId.length()>64)
                 throw new IllegalArgumentException("Invalid draft identity");
             points=List.copyOf(points);
-            int limit=kind==Tool.RUNWAY?2:kind==Tool.STAND?1:AirportActionPacket.MAX_POINTS;
+            int limit=kind.isFacility()?2:kind==Tool.STAND?1:AirportActionPacket.MAX_POINTS;
             if(points.size()>limit || !Double.isFinite(yaw) || !Double.isFinite(length) || !Double.isFinite(width) || !Double.isFinite(speed))
                 throw new IllegalArgumentException("Invalid draft values");
             for(Vec3 point:points) if(!finitePoint(point))throw new IllegalArgumentException("Invalid draft point");
@@ -79,16 +90,21 @@ public final class AirportPlannerModel {
     public boolean startNew(Tool value) {
         Objects.requireNonNull(value);
         if(value==Tool.SELECT)return setTool(value);
-        if(pending!=null||!snapshot.canManage()||dirty())return false;
+        if(pending!=null||!snapshot.canManage()||dirty()||value.isVerticalFacility()&&!snapshot.supportsRoutePublication())return false;
         String runway=snapshot.facilities().stream().filter(f->f.type()==AirportFacility.Type.RUNWAY).map(AirportFacility::id).findFirst().orElse("");
         String stand=snapshot.groundLayout().stands().stream().map(AirportParkingStand::id).findFirst().orElse("");
-        String prefix=switch(value){case RUNWAY->"runway";case OUTBOUND->"taxi-out";case INBOUND->"taxi-in";case STAND->"stand";default->throw new IllegalArgumentException();};
+        String prefix=switch(value){case RUNWAY,HELIPAD,MOORING->value.name().toLowerCase(Locale.ROOT);case OUTBOUND->"taxi-out";case INBOUND->"taxi-in";case STAND->"stand";default->throw new IllegalArgumentException();};
         Draft created=new Draft(value,uniqueId(value,prefix),runway,stand,List.of(),0,24,value==Tool.RUNWAY?9:24,16,2,-1,true);
         select(created,null);return true;
     }
     public boolean selectRunway(String id) {
         var value=snapshot.facilities().stream().filter(f->f.type()==AirportFacility.Type.RUNWAY&&f.id().equals(id)).findFirst();
         return value.isPresent()&&selectSaved(from(value.get()),id);
+    }
+    public boolean selectFacility(String id) {
+        var value = snapshot.facilities().stream().filter(facility -> facility.id().equals(id))
+                .filter(facility -> facility.type() == AirportFacility.Type.RUNWAY || snapshot.supportsRoutePublication()).findFirst();
+        return value.isPresent() && selectSaved(from(value.get()), id);
     }
     public boolean selectTaxi(String id) {
         var value=snapshot.groundLayout().taxiRoutes().stream().filter(r->r.id().equals(id)).findFirst();
@@ -110,7 +126,7 @@ public final class AirportPlannerModel {
     }
     private String uniqueId(Tool kind,String prefix) {
         Set<String> ids=new HashSet<>();
-        if(kind==Tool.RUNWAY)snapshot.facilities().forEach(f->ids.add(f.id()));
+        if(kind.isFacility())snapshot.facilities().forEach(f->ids.add(f.id()));
         else if(kind==Tool.STAND)snapshot.groundLayout().stands().forEach(s->ids.add(s.id()));
         else snapshot.groundLayout().taxiRoutes().forEach(r->ids.add(r.id()));
         String value=prefix;for(int i=2;ids.contains(value);i++)value=prefix+"_"+i;return value;
@@ -120,7 +136,7 @@ public final class AirportPlannerModel {
         if(tool==Tool.SELECT)return;
         if(tool!=draft.kind())throw new IllegalStateException("Tool does not match draft");
         List<Vec3> points=new ArrayList<>(draft.points());
-        if(draft.kind()==Tool.RUNWAY&&points.size()==2)return;
+        if(draft.kind().isFacility()&&points.size()==2)return;
         if(draft.kind()==Tool.STAND){if(points.isEmpty())points.add(onPlane(world));else points.set(0,onPlane(world));}
         else {if(points.size()>=AirportActionPacket.MAX_POINTS)throw new IllegalArgumentException("Too many points");points.add(onPlane(world));}
         change(draft.withPoints(points),groundY);
@@ -160,7 +176,7 @@ public final class AirportPlannerModel {
     public void updateProperties(Draft value) {
         editable();Objects.requireNonNull(value);if(value.kind()!=draft.kind())throw new IllegalArgumentException("Cannot change facility kind");
         List<Vec3> points=value.points();
-        if(value.kind()==Tool.RUNWAY)points=points.stream().map(AirportPlannerModel::runwayCenter).toList();
+        if(value.kind().isFacility())points=points.stream().map(AirportPlannerModel::runwayCenter).toList();
         double plane=points.isEmpty()?groundY:points.getFirst().y;
         change(value.withPoints(points),plane);
     }
@@ -168,7 +184,7 @@ public final class AirportPlannerModel {
     public void retainUnsavedInput(){editable();unsavedInput=true;inputVersion++;}
     public void clearUnsavedInput(){if(pending==null&&unsavedInput){unsavedInput=false;inputVersion++;}}
     public void reverseRunway() {
-        editable();if(draft.kind()!=Tool.RUNWAY)throw new IllegalArgumentException("Not a runway");
+        editable();if(!draft.kind().isFacility())throw new IllegalArgumentException("Not a landing facility");
         List<Vec3> points=new ArrayList<>(draft.points());Collections.reverse(points);change(draft.withPoints(points),groundY);
     }
     public void beginEdit(){editable();if(editStart==null)editStart=new EditState(draft,groundY);}
@@ -186,7 +202,7 @@ public final class AirportPlannerModel {
     private void push(EditState value){if(history.size()==MAX_UNDO)history.removeFirst();history.addLast(value);}
     private void editable(){if(pending!=null)throw new IllegalStateException("Awaiting server validation");if(!snapshot.canManage())throw new IllegalStateException("Read-only airport");if(draft==null)throw new IllegalStateException("No selected facility");}
     private void taxiOnly(){if(draft.kind()!=Tool.OUTBOUND&&draft.kind()!=Tool.INBOUND)throw new IllegalArgumentException("Not a taxi route");}
-    private Vec3 onPlane(Vec3 point){if(!finitePoint(point))throw new IllegalArgumentException("Invalid point");Vec3 value=new Vec3(point.x,groundY,point.z);return draft.kind()==Tool.RUNWAY?runwayCenter(value):value;}
+    private Vec3 onPlane(Vec3 point){if(!finitePoint(point))throw new IllegalArgumentException("Invalid point");Vec3 value=new Vec3(point.x,groundY,point.z);return draft.kind().isFacility()?runwayCenter(value):value;}
     private static Vec3 runwayCenter(Vec3 value){return new Vec3(Math.floor(value.x)+.5,value.y,Math.floor(value.z)+.5);}
     private static boolean finitePoint(Vec3 point){return point!=null&&Double.isFinite(point.x)&&Double.isFinite(point.y)&&Double.isFinite(point.z)&&Math.abs(point.x)<=30_000_000&&Math.abs(point.z)<=30_000_000&&point.y>= -2048&&point.y<=2047;}
 
@@ -197,7 +213,7 @@ public final class AirportPlannerModel {
         try {
             var packet=packet(draft,draftRevision);var tag=packet.toActionTag();
             boolean valid=switch(draft.kind()) {
-                case RUNWAY -> AirportFacility.load(tag.getCompound("Facility")).validGeometry();
+                case RUNWAY, HELIPAD, MOORING -> AirportFacility.load(tag.getCompound("Facility")).validGeometry();
                 case STAND -> AirportParkingStand.load(tag.getCompound("Stand")).validGeometry();
                 case OUTBOUND,INBOUND -> AirportTaxiRoute.load(tag.getCompound("TaxiRoute")).validGeometry();
                 default -> false;
@@ -216,14 +232,17 @@ public final class AirportPlannerModel {
     public boolean canSave(){return validationError().isEmpty();}
     public AirportActionPacket savePacket(){if(pending!=null)throw new IllegalStateException("Awaiting server reply");String error=validationError();if(!error.isEmpty())throw new IllegalArgumentException(error);return packet(draft,draftRevision);}
     private AirportActionPacket packet(Draft value,long revision) {
-        List<Vec3> points=value.kind()==Tool.RUNWAY?value.points().stream().map(p->new Vec3(Math.floor(p.x),p.y,Math.floor(p.z))).toList():value.points();
-        var action=switch(value.kind()){case RUNWAY->AirportActionPacket.Action.UPSERT_RUNWAY;case STAND->AirportActionPacket.Action.UPSERT_STAND;case OUTBOUND,INBOUND->AirportActionPacket.Action.UPSERT_TAXI_ROUTE;default->throw new IllegalArgumentException();};
-        return new AirportActionPacket(snapshot.dimension(),snapshot.airportPos(),revision,action,value.id(),value.runwayId(),value.standId(),points,
+        List<Vec3> points=value.kind().isFacility()?value.points().stream().map(p->new Vec3(Math.floor(p.x),p.y,Math.floor(p.z))).toList():value.points();
+        var action=switch(value.kind()){case RUNWAY->AirportActionPacket.Action.UPSERT_RUNWAY;
+            case HELIPAD,MOORING->AirportActionPacket.Action.UPSERT_LANDING_FACILITY;
+            case STAND->AirportActionPacket.Action.UPSERT_STAND;case OUTBOUND,INBOUND->AirportActionPacket.Action.UPSERT_TAXI_ROUTE;default->throw new IllegalArgumentException();};
+        String facility = value.kind().isVerticalFacility() ? value.kind().facilityType.name() : value.runwayId();
+        return new AirportActionPacket(snapshot.dimension(),snapshot.airportPos(),revision,action,value.id(),facility,value.standId(),points,
                 value.kind()==Tool.STAND?value.cargoEnabled():value.kind()==Tool.INBOUND,value.yaw(),value.length(),value.width(),value.clearance(),value.speed(),value.holdPoint());
     }
     public AirportActionPacket removePacket() {
         editable();if(pending!=null)throw new IllegalStateException("Awaiting server reply");if(selectedSavedId==null)throw new IllegalStateException("Unsaved facility");
-        var action=switch(selectedSavedKind){case RUNWAY->AirportActionPacket.Action.REMOVE_RUNWAY;case STAND->AirportActionPacket.Action.REMOVE_STAND;case OUTBOUND,INBOUND->AirportActionPacket.Action.REMOVE_TAXI_ROUTE;default->throw new IllegalArgumentException();};
+        var action=switch(selectedSavedKind){case RUNWAY,HELIPAD,MOORING->AirportActionPacket.Action.REMOVE_RUNWAY;case STAND->AirportActionPacket.Action.REMOVE_STAND;case OUTBOUND,INBOUND->AirportActionPacket.Action.REMOVE_TAXI_ROUTE;default->throw new IllegalArgumentException();};
         return AirportActionPacket.simple(snapshot.dimension(),snapshot.airportPos(),draftRevision,action,selectedSavedId);
     }
     public void markSubmitted(AirportActionPacket packet) {
@@ -263,7 +282,7 @@ public final class AirportPlannerModel {
         if(update.revision()!=packet.revision()+1)return false;
         var tag=packet.toActionTag();
         return switch(packet.action()) {
-            case UPSERT_RUNWAY -> update.facilities().contains(AirportFacility.load(tag.getCompound("Facility")));
+            case UPSERT_RUNWAY, UPSERT_LANDING_FACILITY -> update.facilities().contains(AirportFacility.load(tag.getCompound("Facility")));
             case UPSERT_STAND -> update.groundLayout().stands().contains(AirportParkingStand.load(tag.getCompound("Stand")));
             case UPSERT_TAXI_ROUTE -> update.groundLayout().taxiRoutes().contains(AirportTaxiRoute.load(tag.getCompound("TaxiRoute")));
             case REMOVE_RUNWAY -> update.facilities().stream().noneMatch(f->f.id().equals(packet.id()));
@@ -289,7 +308,7 @@ public final class AirportPlannerModel {
     }
     private Draft savedDraft(Tool kind,String id) {
         return switch(kind){
-            case RUNWAY -> snapshot.facilities().stream().filter(f->f.type()==AirportFacility.Type.RUNWAY&&f.id().equals(id)).map(AirportPlannerModel::from).findFirst().orElse(null);
+            case RUNWAY, HELIPAD, MOORING -> snapshot.facilities().stream().filter(f->f.type()==kind.facilityType&&f.id().equals(id)).map(AirportPlannerModel::from).findFirst().orElse(null);
             case STAND -> snapshot.groundLayout().stand(id).map(AirportPlannerModel::from).orElse(null);
             case OUTBOUND,INBOUND -> snapshot.groundLayout().taxiRoutes().stream().filter(r->r.id().equals(id)).map(AirportPlannerModel::from).findFirst().orElse(null);
             default -> null;
@@ -297,7 +316,7 @@ public final class AirportPlannerModel {
     }
     public List<AirportFacility> previewRunways() {
         List<AirportFacility> values=new ArrayList<>(snapshot.facilities());
-        if(draft!=null&&draft.kind()==Tool.RUNWAY)try{var value=AirportFacility.load(packet(draft,draftRevision).toActionTag().getCompound("Facility"));values.removeIf(f->f.id().equals(value.id()));values.add(value);}catch(IllegalArgumentException ignored){}
+        if(draft!=null&&draft.kind().isFacility())try{var value=AirportFacility.load(packet(draft,draftRevision).toActionTag().getCompound("Facility"));values.removeIf(f->f.id().equals(value.id()));values.add(value);}catch(IllegalArgumentException ignored){}
         return List.copyOf(values);
     }
     public List<AirportParkingStand> previewStands() {
@@ -310,7 +329,7 @@ public final class AirportPlannerModel {
         if(draft!=null&&(draft.kind()==Tool.OUTBOUND||draft.kind()==Tool.INBOUND))try{var value=AirportTaxiRoute.load(packet(draft,draftRevision).toActionTag().getCompound("TaxiRoute"));values.removeIf(r->r.id().equals(value.id()));values.add(value);}catch(IllegalArgumentException ignored){}
         return List.copyOf(values);
     }
-    private static Draft from(AirportFacility value){return new Draft(Tool.RUNWAY,value.id(),"","",List.of(new Vec3(value.start().getX()+.5,value.start().getY(),value.start().getZ()+.5),new Vec3(value.end().getX()+.5,value.end().getY(),value.end().getZ()+.5)),0,value.length(),value.width(),value.clearanceHeight(),2,-1,true);}
+    private static Draft from(AirportFacility value){return new Draft(Tool.forFacility(value.type()),value.id(),"","",List.of(new Vec3(value.start().getX()+.5,value.start().getY(),value.start().getZ()+.5),new Vec3(value.end().getX()+.5,value.end().getY(),value.end().getZ()+.5)),0,value.length(),value.width(),value.clearanceHeight(),2,-1,true);}
     private static Draft from(AirportParkingStand value){return new Draft(Tool.STAND,value.id(),"","",List.of(value.position()),value.yawDegrees(),value.length(),value.width(),value.clearanceHeight(),2,-1,value.cargoEnabled());}
     private static Draft from(AirportTaxiRoute value){return new Draft(value.direction()==AirportTaxiRoute.Direction.INBOUND?Tool.INBOUND:Tool.OUTBOUND,value.id(),value.runwayId(),value.standId(),value.points(),0,24,value.width(),value.clearanceHeight(),value.speedLimitMetersPerSecond(),value.holdPointIndex(),true);}
 }

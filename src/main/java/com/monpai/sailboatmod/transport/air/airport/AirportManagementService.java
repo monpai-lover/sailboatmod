@@ -29,9 +29,13 @@ public final class AirportManagementService {
         requests.put(player,now);return true;
     }
     public static boolean canManage(ServerPlayer player,AirportBlockEntity airport){
+        if (player == null || airport == null) return false;
+        double distance = player.distanceToSqr(airport.getBlockPos().getCenter());
+        return Double.isFinite(distance) && distance <= 64 && canManageSite(player, airport);
+    }
+    static boolean canManageSite(ServerPlayer player, AirportBlockEntity airport) {
         if(player==null||player instanceof FakePlayer||airport==null||airport.isRemoved()||airport.getLevel()!=player.serverLevel()
-                ||!player.serverLevel().hasChunkAt(airport.getBlockPos())||!Double.isFinite(player.distanceToSqr(airport.getBlockPos().getCenter()))
-                ||player.distanceToSqr(airport.getBlockPos().getCenter())>64||!airport.canManageDock(player))return false;
+                ||!player.serverLevel().hasChunkAt(airport.getBlockPos())||!airport.canManageDock(player))return false;
         var town=TownService.getManagedTownAt(player,airport.getBlockPos());return town!=null&&town.townId().equals(airport.getTownId());
     }
     static String rejection(boolean realPlayer,boolean sameLevel,boolean owner,boolean sameTown,double distanceSquared,long expected,long current,boolean occupied){
@@ -72,6 +76,13 @@ public final class AirportManagementService {
                     airport.facilities(), airport.groundLayout());
             return proposal.isPresent() ? validateAndQueue(player, airport, revision, proposal.orElseThrow())
                     : new Result(false, "invalid_geometry", revision);
+        }
+        if (kind.equals("publish_route")) {
+            if (!action.contains("Target", Tag.TAG_LONG) || !action.contains("CruiseY", Tag.TAG_INT))
+                return new Result(false, "invalid_geometry", revision);
+            String result = AirportRoutePublication.publish(player, airport, BlockPos.of(action.getLong("Target")),
+                    action.getInt("CruiseY"), action.getBoolean("Return"));
+            return new Result(result.equals("ok"), result, airport.editorRevision());
         }
         List<AirportFacility> facilities=new ArrayList<>(airport.facilities());
         List<AirportParkingStand> stands=new ArrayList<>(airport.groundLayout().stands());

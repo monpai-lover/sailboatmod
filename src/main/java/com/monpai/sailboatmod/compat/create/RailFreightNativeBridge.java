@@ -11,6 +11,7 @@ import com.simibubi.create.content.trains.graph.EdgePointType;
 import com.simibubi.create.content.trains.graph.TrackGraph;
 import com.simibubi.create.content.trains.schedule.Schedule;
 import com.simibubi.create.content.trains.schedule.ScheduleEntry;
+import com.simibubi.create.content.trains.schedule.ScheduleRuntime;
 import com.simibubi.create.content.trains.schedule.condition.ScheduledDelay;
 import com.simibubi.create.content.trains.schedule.condition.TimedWaitCondition;
 import com.simibubi.create.content.trains.schedule.destination.DestinationInstruction;
@@ -225,10 +226,8 @@ public final class RailFreightNativeBridge implements RailFreightNative {
     @Override
     public boolean matchesOwnedSchedule(ServerLevel level, UUID trainId, List<RailStationRef> visits, CompoundTag expected) {
         Train train = nativeTrain(trainId);
-        if (!valid(train) || train.runtime.getSchedule() == null || !train.runtime.isAutoSchedule) return false;
+        if (!ownsSchedule(level, train, visits, expected)) return false;
         Schedule schedule = train.runtime.getSchedule();
-        if (visits.isEmpty() || visits.size() > RailRoute.MAX_STOPOVERS + 1 || schedule.cyclic
-                || schedule.entries.size() != visits.size() || !expected.equals(schedule.write(level.registryAccess()))) return false;
         int current = train.runtime.currentEntry;
         if (current < 0 || current > visits.size()) return false;
         // Create resets currentEntry to zero once a non-cyclic schedule completes.
@@ -241,6 +240,47 @@ public final class RailFreightNativeBridge implements RailFreightNative {
                     || train.navigation.destination != null && train.navigation.destination != station)) return false;
         }
         return true;
+    }
+
+    @Override
+    public Optional<NextStop> nextStop(ServerLevel level, UUID trainId, UUID owner, List<RailStationRef> visits, CompoundTag schedule) {
+        Train train = ownedTrain(trainId, owner);
+        if (!valid(train) || train.runtime.completed || train.manualTick || train.countPlayerPassengers() != 0) return Optional.empty();
+        GlobalStation navigatingTo = train.navigation.destination;
+        if (navigatingTo != null ? !matchesOwnedSchedule(level, trainId, visits, schedule)
+                : !ownsSchedule(level, train, visits, schedule)) return Optional.empty();
+        int entry = train.runtime.currentEntry;
+        if (entry < 0 || entry >= visits.size()) return Optional.empty();
+        GlobalStation current = train.getCurrentStation();
+        String at = parked(train, current) ? current.name : "";
+        boolean dwelling = atScheduledStop(train) && visits.get(entry).equals(ref(current));
+        LegState state = legState(train);
+        int next = dwelling ? entry + 1 : entry;
+        if (next >= visits.size()) return Optional.of(new NextStop(null, "", at, state));
+        if (!(train.runtime.getSchedule().entries.get(next).instruction instanceof DestinationInstruction instruction))
+            return Optional.empty();
+        return Optional.of(new NextStop(visits.get(next), instruction.getData().getString("Text"), at, state));
+    }
+
+    private static boolean ownsSchedule(ServerLevel level, Train train, List<RailStationRef> visits, CompoundTag expected) {
+        if (!valid(train) || !train.runtime.isAutoSchedule || visits.isEmpty() || visits.size() > RailRoute.MAX_STOPOVERS + 1)
+            return false;
+        Schedule schedule = train.runtime.getSchedule();
+        return schedule != null && !schedule.cyclic && schedule.entries.size() == visits.size()
+                && expected.equals(schedule.write(level.registryAccess()));
+    }
+
+    private static boolean atScheduledStop(Train train) {
+        return train.runtime.state == ScheduleRuntime.State.POST_TRANSIT && parked(train, train.getCurrentStation());
+    }
+
+    private static LegState legState(Train train) {
+        boolean navigating = train.navigation.destination != null;
+        boolean moving = navigating && train.carriageWaitingForChunks == -1
+                && !CreateTrainBridge.waitingForSignal(train.navigation) && Double.isFinite(train.speed) && Math.abs(train.speed) > 0;
+        // Create sets navigation only after a real destination/path failure and then starts its retry cooldown.
+        boolean routeFailed = train.runtime.state == ScheduleRuntime.State.PRE_TRANSIT && train.status.navigation;
+        return LegState.observe(train.runtime.paused, navigating, moving, atScheduledStop(train), routeFailed);
     }
 
     @Override
@@ -281,7 +321,7 @@ public final class RailFreightNativeBridge implements RailFreightNative {
                 valid && drivers(train), valid && (train.manualTick || train.countPlayerPassengers() != 0),
                 valid && train.runtime.paused, valid && train.runtime.completed, schedule != null,
                 schedule != null && train.runtime.isAutoSchedule ? schedule.write(level.registryAccess()) : null,
-                slots, occupied, fuelSafeSlots);
+                slots, occupied, fuelSafeSlots, valid ? legState(train) : LegState.PREPARING);
     }
 
     private static boolean readyToMove(@Nullable Train train, @Nullable GlobalStation source) {

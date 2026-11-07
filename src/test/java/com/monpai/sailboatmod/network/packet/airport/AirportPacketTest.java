@@ -11,6 +11,23 @@ import java.util.List;
 import static org.junit.jupiter.api.Assertions.*;
 
 class AirportPacketTest {
+    @Test void routePublicationRoundTripCarriesOnlyTargetAltitudeAndReturnChoice() {
+        var target = new BlockPos(700, 81, -360);
+        var packet = new AirportActionPacket(net.minecraft.world.level.Level.OVERWORLD.location(),BlockPos.ZERO,17,
+                AirportActionPacket.Action.valueOf("PUBLISH_ROUTE"), "", "", "", List.of(Vec3.atLowerCornerOf(target)),
+                true,0,0,0,144,0,-1);
+        var buffer = new FriendlyByteBuf(Unpooled.buffer());
+        try {
+            AirportActionPacket.encode(packet, buffer);
+            var decoded = AirportActionPacket.decode(buffer);
+            assertEquals(packet, decoded);
+            var command = decoded.toActionTag();
+            assertEquals("publish_route", command.getString("Action"));
+            assertEquals(target, BlockPos.of(command.getLong("Target")));
+            assertEquals(144, command.getInt("CruiseY"));
+            assertTrue(command.getBoolean("Return"));
+        } finally { buffer.release(); }
+    }
     @Test void actionRoundTripRetainsDirectedPathOrderAndRevision() {
         var packet = new AirportActionPacket(net.minecraft.world.level.Level.OVERWORLD.location(),BlockPos.ZERO, 17, AirportActionPacket.Action.UPSERT_TAXI_ROUTE,
                 "taxi-out", "runway", "stand", List.of(new Vec3(1,64,2), new Vec3(10,64,2), new Vec3(20,64,2)),

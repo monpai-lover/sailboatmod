@@ -17,7 +17,8 @@ public final class TownVoyageSnapshot {
     public enum Relation { INBOUND, OUTBOUND, LOCAL }
     public enum Filter { ALL, WATER, LAND, AIR }
     private static final Set<String> PUBLIC_PHASES = Set.of("UNKNOWN", "MOVING", "PAUSED", "SAILING", "DRIVING",
-            "TAXI_OUT", "HOLD_SHORT", "LINE_UP", "TAKEOFF", "CLIMB", "CRUISE", "APPROACH", "LANDING_ROLL", "TAXI_IN", "STAND_STABILIZING");
+            "TAXI_OUT", "HOLD_SHORT", "LINE_UP", "TAKEOFF", "CLIMB", "CRUISE", "APPROACH", "LANDING_ROLL", "TAXI_IN", "STAND_STABILIZING",
+            "VERTICAL_TAKEOFF", "VERTICAL_LANDING");
     public record CarrierKey(String providerId, String scopeId, UUID carrierId) {
         public CarrierKey {
             providerId = identity(providerId, 64, false);

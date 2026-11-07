@@ -2,6 +2,7 @@ package com.monpai.sailboatmod.block.entity;
 
 import com.monpai.sailboatmod.compat.aeronautics.RailAircraftMotionBridge;
 import com.monpai.sailboatmod.transport.LogisticsCarrier;
+import com.monpai.sailboatmod.transport.air.AircraftClass;
 import com.monpai.sailboatmod.transport.air.RailFlightPlanBuilder;
 import com.monpai.sailboatmod.transport.air.airport.*;
 import com.monpai.sailboatmod.transport.air.rail.*;
@@ -20,7 +21,7 @@ import net.minecraft.world.phys.Vec3;
 final class RegisteredAircraftRailController {
     record AdmissionPlan(RailAircraftPath path,GroundAssignment source,GroundAssignment destination) { }
     record Context(ServerLevel server, BlockEntity controller, LogisticsCarrier carrier,
-                   PhysicalVehicleView view, Direction localForward) {
+                   PhysicalVehicleView view, Direction localForward, AircraftClass airframe) {
         UUID owner() { return carrier.getTransportUuid(); }
         double yaw() { return Math.toDegrees(Math.atan2(-view.worldForward().x,view.worldForward().z)); }
         double angularSpeed() { return RailAircraftMotionBridge.angularSpeed(controller).orElse(Double.NaN); }
@@ -52,15 +53,26 @@ final class RegisteredAircraftRailController {
             if(selected==null) {
                 var aircraft=new RailAirportSelection.Aircraft(c.view().physicalId(),c.view().worldBounds(),c.view().worldPosition(),c.yaw());
                 Map<RailAirportSelection.Selection,RailAircraftPath> paths=new HashMap<>();
-                var search=RailAirportSelection.select(aircraft,source.groundLayout(),source.facilities(),exactSource,
-                        target.groundLayout(),target.facilities(),exactTarget,s->{
-                            if(blockedSources.contains(s.source().assignment())||blockedTargets.contains(s.destination().assignment()))return false;
-                            try {
-                                paths.put(s,RailFlightPlanBuilder.build(s.source().runway(),s.destination().runway(),s.source().outbound(),s.destination().inbound(),
-                                        s.destination().stand(),s.anchorAboveSurface(),s.sweepDiameter(),cruise,speed,
-                                        s.source().stand(),c.view().worldPosition(),c.view().worldForward()));return true;
-                            } catch(IllegalArgumentException badPath){return false;}
-                        });
+                Predicate<RailAirportSelection.Selection> build = candidate -> {
+                    if(blockedSources.contains(candidate.source().assignment())||blockedTargets.contains(candidate.destination().assignment()))return false;
+                    try {
+                        var from=candidate.source();
+                        var to=candidate.destination();
+                        var path=c.airframe()==AircraftClass.FIXED_WING
+                                ? RailFlightPlanBuilder.build(from.runway(),to.runway(),from.outbound(),to.inbound(),to.stand(),
+                                    candidate.anchorAboveSurface(),candidate.sweepDiameter(),cruise,speed,from.stand(),
+                                    c.view().worldPosition(),c.view().worldForward())
+                                : RailFlightPlanBuilder.buildVertical(c.airframe(),from.runway(),to.runway(),
+                                    candidate.anchorAboveSurface(),cruise,speed,c.view().worldPosition(),c.view().worldForward());
+                        paths.put(candidate,path);
+                        return true;
+                    } catch(IllegalArgumentException badPath){return false;}
+                };
+                var search=c.airframe()==AircraftClass.FIXED_WING
+                        ? RailAirportSelection.select(aircraft,source.groundLayout(),source.facilities(),exactSource,
+                            target.groundLayout(),target.facilities(),exactTarget,build)
+                        : RailAirportSelection.selectDirect(c.airframe(),aircraft,c.view().linearVelocity().length(),c.angularSpeed(),
+                            source.groundLayout(),source.facilities(),exactSource,target.groundLayout(),target.facilities(),exactTarget,build);
                 if(search.selection().isEmpty()){retryAt=now+20;return waitFor(search.reason());}
                 selected=search.selection().orElseThrow();selectedPath=paths.get(selected);
                 if(selectedPath==null)return waitFor("rail_path_invalid");
@@ -92,7 +104,8 @@ final class RegisteredAircraftRailController {
         if(manualReleased){reason="manual_control";return;}
         if(invalid){reason="rail_recovery_review";hold(c);return;}
         if(mission==null)return;
-        if(!mission.bodyId().equals(c.view().physicalId())||!mission.dimension().equals(c.carrier().dimensionId())){
+        if(mission.path().airframe()!=c.airframe()||!mission.bodyId().equals(c.view().physicalId())
+                ||!mission.dimension().equals(c.carrier().dimensionId())){
             reason="rail_body_changed";hold(c);return;
         }
         if(!acquire(c))return;
@@ -191,6 +204,7 @@ final class RegisteredAircraftRailController {
     }
     void park(Context c){if(!manualReleased&&acquire(c))hold(c);}
     boolean hasMission(){return mission!=null;}
+    boolean matchesAirframe(AircraftClass airframe){return mission==null||mission.path().airframe()==airframe;}
     boolean cancelled(){return cancelled;}
     /** A queued new departure may outlive an old cancellation; full preparation still runs before motion. */
     boolean canResume(boolean preflightPending) {

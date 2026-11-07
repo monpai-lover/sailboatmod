@@ -25,6 +25,15 @@
   const LABELS = {
     "en-US": {
       "airports": "Airports",
+      railStations: "Rail freight stations",
+      railNextStop: "Next rail stop",
+      railNextStopEta: "Next stop ETA",
+      railCurrentStop: "At rail station",
+      railPreparing: "Preparing to depart",
+      railWaiting: "Waiting on the line",
+      railDwelling: "Dwelling at station",
+      railWaitingRoute: "Waiting to retry rail routing",
+      railPaused: "Train schedule paused",
       "flightPreflight": "Preflight checks",
       "flightQuiescing": "Preparing offline cruise",
       "flightRecovery": "Restoring physical flight",
@@ -119,6 +128,15 @@
     },
     "zh-CN": {
       "airports": "机场",
+      railStations: "铁路货运站",
+      railNextStop: "下一铁路站",
+      railNextStopEta: "下一站预计到达",
+      railCurrentStop: "当前停靠站",
+      railPreparing: "准备发车",
+      railWaiting: "线路等待",
+      railDwelling: "停站等待",
+      railWaitingRoute: "等待重新寻路",
+      railPaused: "列车时刻表已暂停",
       "flightPreflight": "起飞检查",
       "flightQuiescing": "准备离线巡航",
       "flightRecovery": "恢复实体飞行中",
@@ -235,6 +253,10 @@
     focusedMarketId: "",
     snapshot: null,
     markets: [],
+    railStations: [],
+    railStationRevision: 0,
+    railStationSignature: "",
+    onSelectMarket: null,
     airports: [],
     airportRevision: 0,
     airportSignature: "",
@@ -245,6 +267,7 @@
       territories: true,
       markets: true,
       airports: true,
+      railStations: true,
       shipments: true
     },
     center: { x: 0, z: 0 },
@@ -1313,6 +1336,7 @@
       ["territories", label("territories")],
       ["markets", label("markets")],
       ["airports", label("airports")],
+      ["railStations", label("railStations")],
       ["shipments", label("shipments")]
     ];
     state.layerPanel.innerHTML = rows.map(([key, text]) => `
@@ -1334,29 +1358,45 @@
     if (!state.marketList) {
       return;
     }
-    if (!state.markets.length) {
-      state.marketList.innerHTML = `<div class="map-empty-note">${escapeHtml(label("loadFailed"))}</div>`;
-      return;
-    }
+    const markets = state.markets.map((market) => `
+      <button type="button" class="map-market-row" data-market-id="${escapeHtml(market.marketId)}">
+        <span>${escapeHtml(market.marketName || market.marketId || "-")}</span>
+        <small>${escapeHtml(market.townName || market.ownerName || "-")}</small>
+      </button>`).join("");
+    const stations = state.railStations.map((station) => `
+      <button type="button" class="map-market-row" data-market-rail="${escapeHtml(station.stationId)}">
+        <span>${escapeHtml(station.name)}</span><small>${escapeHtml(station.townName || "-")}</small>
+      </button>`).join("");
     state.marketList.innerHTML = `
       <div class="map-list-heading">${escapeHtml(label("markets"))}</div>
-      ${state.markets.map((market) => `
-        <button type="button" class="map-market-row" data-market-id="${escapeHtml(market.marketId || "")}">
-          <span>${escapeHtml(market.marketName || market.marketId || "-")}</span>
-          <small>${escapeHtml(market.townName || market.ownerName || "-")}</small>
-        </button>
-      `).join("")}
+      ${markets || `<div class="map-empty-note">-</div>`}
+      ${stations ? `<div class="map-list-heading">${escapeHtml(label("railStations"))}</div>${stations}` : ""}
     `;
     state.marketList.querySelectorAll("[data-market-id]").forEach((button) => {
       button.addEventListener("click", () => {
         const marker = state.markets.find((market) => market.marketId === button.getAttribute("data-market-id"));
-        if (marker) {
-          state.selected = { type: "market", data: marker };
-          centerOn({ x: marker.x, z: marker.z }, Math.max(state.zoom, 1.35));
-          renderSelection();
-        }
+        if (marker) selectFacility("market", marker);
       });
     });
+    bindRailStationLinks(state.marketList);
+  }
+
+  function selectFacility(type, marker) {
+    state.selected = { type, data: marker };
+    centerOn({ x: marker.x, z: marker.z }, Math.max(state.zoom, 1.35));
+  }
+
+  function bindRailStationLinks(panel) {
+    panel.querySelectorAll("[data-market-rail]").forEach((button) => {
+      button.addEventListener("click", () => {
+        const marker = state.railStations.find((station) => station.stationId === button.getAttribute("data-market-rail"));
+        if (marker) selectFacility("railStation", marker);
+      });
+    });
+  }
+
+  function sameFacilityTown(a, b) {
+    return !!a.townId && a.townId === b.townId && a.dimensionId === b.dimensionId;
   }
 
   function logistics() {
@@ -1551,8 +1591,36 @@
       state.detailPanel.innerHTML = logisticsPanel()?.airportHtml(item.data, { label }) || "";
       return;
     }
+    if (item.type === "railStation") {
+      const station = item.data;
+      const markets = state.markets.filter((market) => sameFacilityTown(station, market));
+      state.detailPanel.innerHTML = `
+        <div class="map-detail-card">
+          <p class="section-kicker">${escapeHtml(label("railStations"))}</p>
+          <h3>${escapeHtml(station.name)}</h3>
+          <dl>
+            <dt>${escapeHtml(label("town"))}</dt><dd>${escapeHtml(station.townName || "-")}</dd>
+            <dt>X/Y/Z</dt><dd>${Number(station.x)}, ${Number(station.y)}, ${Number(station.z)}</dd>
+          </dl>
+          ${markets.length ? `<div class="map-list-heading">${escapeHtml(label("markets"))}</div>` : ""}
+          ${markets.map((market) => `<button type="button" class="map-market-row" data-rail-market="${escapeHtml(market.marketId)}">
+            <span>${escapeHtml(market.marketName || market.marketId)}</span></button>`).join("")}
+        </div>
+      `;
+      state.detailPanel.querySelectorAll("[data-rail-market]").forEach((button) => {
+        button.addEventListener("click", () => {
+          const market = markets.find((entry) => entry.marketId === button.getAttribute("data-rail-market"));
+          if (market) {
+            if (state.onSelectMarket) state.onSelectMarket(market.marketId);
+            else selectFacility("market", market);
+          }
+        });
+      });
+      return;
+    }
     if (item.type === "market") {
       const market = item.data;
+      const stations = state.railStations.filter((station) => sameFacilityTown(market, station));
       state.detailPanel.innerHTML = `
         <div class="map-detail-card">
           <p class="section-kicker">${escapeHtml(label("selectedMarket"))}</p>
@@ -1562,8 +1630,12 @@
             <dt>${escapeHtml(label("town"))}</dt><dd>${escapeHtml(market.townName || "-")}</dd>
             <dt>X/Z</dt><dd>${Math.round(Number(market.x) || 0)}, ${Math.round(Number(market.z) || 0)}</dd>
           </dl>
+          ${stations.length ? `<div class="map-list-heading">${escapeHtml(label("railStations"))}</div>` : ""}
+          ${stations.map((station) => `<button type="button" class="map-market-row" data-market-rail="${escapeHtml(station.stationId)}">
+            <span>${escapeHtml(station.name)}</span></button>`).join("")}
         </div>
       `;
+      bindRailStationLinks(state.detailPanel);
       return;
     }
     if (item.type === "territory") {
@@ -2095,6 +2167,30 @@
     }
   }
 
+  function drawRailStations(ctx, padding) {
+    if (!state.layers.railStations) return;
+    for (const station of state.railStations) {
+      const screen = worldToScreen(station);
+      if (screen.x < -padding - 16 || screen.y < -padding - 16
+        || screen.x > state.canvas.width + padding + 16 || screen.y > state.canvas.height + padding + 16) continue;
+      const selected = state.selected?.type === "railStation" && state.selected.data.stationId === station.stationId;
+      ctx.save();
+      ctx.translate(screen.x, screen.y);
+      ctx.fillStyle = selected ? "#a46300" : "#633ab4";
+      ctx.strokeStyle = "#ffffff";
+      ctx.lineWidth = 2;
+      ctx.fillRect(-9, -9, 18, 18);
+      ctx.strokeRect(-9, -9, 18, 18);
+      ctx.beginPath();
+      ctx.moveTo(-3, -5); ctx.lineTo(-3, 5);
+      ctx.moveTo(3, -5); ctx.lineTo(3, 5);
+      ctx.moveTo(-5, -2); ctx.lineTo(5, -2);
+      ctx.moveTo(-5, 2); ctx.lineTo(5, 2);
+      ctx.stroke();
+      ctx.restore();
+    }
+  }
+
   function drawMarkets(ctx, padding = 0) {
     if (!state.layers.markets) {
       return;
@@ -2155,13 +2251,16 @@
       snapshot.territoryRevision || 0,
       snapshot.marketRevision || 0,
       state.airportRevision || 0,
+      state.railStationRevision,
+      state.selected?.type === "railStation" ? state.selected.data.stationId : "",
       state.selected?.type === "airport" ? state.selected.data?.airportId : "",
       state.localTileRevision || 0,
       state.leafletMap ? 1 : 0,
       state.layers.terrain ? 1 : 0,
       state.layers.territories ? 1 : 0,
       state.layers.markets ? 1 : 0,
-      state.layers.airports ? 1 : 0
+      state.layers.airports ? 1 : 0,
+      state.layers.railStations ? 1 : 0
     ].join("|");
   }
 
@@ -2208,6 +2307,7 @@
     drawTerritories(octx, STATIC_LAYER_PAD);
     drawAirports(octx, STATIC_LAYER_PAD);
     drawMarkets(octx, STATIC_LAYER_PAD);
+    drawRailStations(octx, STATIC_LAYER_PAD);
     state.staticKey = key;
     return off;
   }
@@ -2364,6 +2464,14 @@
     const x = (clientX - rect.left) * (state.canvas.width / rect.width);
     const y = (clientY - rect.top) * (state.canvas.height / rect.height);
     const world = screenToWorld(x, y);
+    if (state.layers.railStations) {
+      for (const station of state.railStations) {
+        const screen = worldToScreen(station);
+        if (Math.hypot(screen.x - x, screen.y - y) <= 12) {
+          return { type: "railStation", data: station, screen: { x, y } };
+        }
+      }
+    }
     if (state.layers.markets) {
       for (const marker of state.markets || []) {
         const screen = worldToScreen({ x: Number(marker.x) || 0, z: Number(marker.z) || 0 });
@@ -2451,6 +2559,8 @@
         <span>${escapeHtml(label("town"))}: ${escapeHtml(marker.townName || "-")}</span>
         <span>X/Z ${Math.round(Number(marker.x) || 0)}, ${Math.round(Number(marker.z) || 0)}</span>
       `;
+    } else if (item.type === "railStation") {
+      html = `<strong>${escapeHtml(item.data.name)}</strong><span>${escapeHtml(label("railStations"))} · ${escapeHtml(item.data.townName || "-")}</span>`;
     } else if (item.type === "airport") {
       html = `<strong>${escapeHtml(item.data.name || item.data.airportId || "-")}</strong><span>${escapeHtml(label("airports"))} · Y ${Math.round(Number(item.data.y) || 0)}</span>`;
     } else if (item.type === "territory") {
@@ -2584,6 +2694,19 @@
     }, { passive: false });
   }
 
+  function applyRailStations(stations) {
+    const list = Array.isArray(stations) ? stations : [];
+    const signature = JSON.stringify(list);
+    if (signature === state.railStationSignature) return;
+    state.railStations = list;
+    state.railStationSignature = signature;
+    state.railStationRevision++;
+    if (state.selected?.type === "railStation") {
+      const fresh = list.find((station) => station.stationId === state.selected.data.stationId);
+      state.selected = fresh ? { type: "railStation", data: fresh } : null;
+    }
+  }
+
   function applyAirports(airports) {
     const list = Array.isArray(airports) ? airports : [];
     const signature = JSON.stringify(list);
@@ -2624,6 +2747,7 @@
     state.snapshot = snapshot;
     applyWorldInfo(world);
     state.markets = markets.markets || [];
+    applyRailStations(markets.railStations);
     state.territories = territories.territories || [];
     state.shipments = applyShipmentInterpolation(shipments.shipments || []);
     applySnapshotFocus();
@@ -2685,9 +2809,27 @@
     if (!next || !requestContextCurrent(context)) {
       return;
     }
-    const airports = await fetchOptionalJson("/api/map/airports", { airports: state.airports });
+    const [airports, markets] = await Promise.all([
+      fetchOptionalJson("/api/map/airports", { airports: state.airports }),
+      fetchOptionalJson("/api/map/markets", { markets: state.markets, railStations: state.railStations })
+    ]);
     if (!requestContextCurrent(context)) return;
     applyAirports(airports.airports);
+    const marketChanged = JSON.stringify(state.markets) !== JSON.stringify(markets.markets || []);
+    const railRevision = state.railStationRevision;
+    if (marketChanged) {
+      state.markets = markets.markets || [];
+      state.staticKey = "";
+      if (state.selected?.type === "market") {
+        const market = state.markets.find((entry) => entry.marketId === state.selected.data.marketId);
+        state.selected = market ? { type: "market", data: market } : null;
+      }
+    }
+    applyRailStations(markets.railStations);
+    if (marketChanged || railRevision !== state.railStationRevision) {
+      renderMarketList();
+      renderSelection();
+    }
     scheduleRender();
     const prev = state.snapshot || {};
     const predictionChanged = (next.tellusRenderVersion || 0) !== (prev.tellusRenderVersion || 0);
@@ -2705,6 +2847,7 @@
   function mount(root, options = {}) {
     captureRequestContext();
     if (state.root === root) {
+      state.onSelectMarket = options.onSelectMarket || null;
       state.locale = options.locale || state.locale;
       state.focusedMarketId = options.focusedMarketId || state.focusedMarketId;
       renderToolbar();
@@ -2718,6 +2861,7 @@
     }
     unmount();
     state.root = root;
+    state.onSelectMarket = options.onSelectMarket || null;
     state.locale = options.locale || "zh-CN";
     state.apiBase = options.apiBase || "";
     state.focusedMarketId = options.focusedMarketId || root.getAttribute("data-focused-market") || "";
@@ -2805,6 +2949,7 @@
       state.resizeObserver = null;
     }
     state.root = null;
+    state.onSelectMarket = null;
     state.mapElement = null;
     state.canvas = null;
     state.canvasScaleX = 1;

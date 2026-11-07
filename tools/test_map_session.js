@@ -10,7 +10,7 @@ const basemap = require("../src/main/resources/marketweb/tellus-basemap.js");
 function mapHarness() {
   const filename = path.join(__dirname, "../src/main/resources/marketweb/map.js");
   const source = fs.readFileSync(filename, "utf8");
-  const instrumented = source.replace(/\}\)\(\);\s*$/, "window.__mapTest = { state, loadAll, loadShipmentHistory, loadShipments, createBasemapLayer, drawBasemapTile, renderBasemapAttribution, setBasemapSource };})();");
+  const instrumented = source.replace(/\}\)\(\);\s*$/, "window.__mapTest = { state, loadAll, loadShipmentHistory, loadShipments, createBasemapLayer, drawBasemapTile, renderBasemapAttribution, setBasemapSource, renderSelection };})();");
   assert.notEqual(instrumented, source, "the test observer must attach to the map closure");
   let sessionToken = "session-A";
   const requests = [];
@@ -42,7 +42,7 @@ function mapHarness() {
     }
   };
   vm.runInNewContext(instrumented, context, { filename });
-  const { state, loadAll, loadShipmentHistory, loadShipments, createBasemapLayer, drawBasemapTile, renderBasemapAttribution, setBasemapSource } = context.window.__mapTest;
+  const { state, loadAll, loadShipmentHistory, loadShipments, createBasemapLayer, drawBasemapTile, renderBasemapAttribution, setBasemapSource, renderSelection } = context.window.__mapTest;
   const root = { getAttribute: () => "", querySelector: () => null, classList: { contains: () => false } };
   state.root = root;
   state.mountedToken = 1;
@@ -54,6 +54,7 @@ function mapHarness() {
     createBasemapLayer,
     drawBasemapTile,
     renderBasemapAttribution,
+    renderSelection,
     setBasemapSource,
     setLeaflet(api) { context.window.L = api; },
     loadAll: () => loadAll(state.mountedToken),
@@ -446,4 +447,34 @@ test("initialLoadFailureForTheCurrentSessionIsStillReported", async () => {
   map.respond(5, { airports: [] });
 
   await assert.rejects(pending, /Current request failed/);
+});
+
+test("station and market details link only facilities of the same town and dimension", () => {
+  const map = mapHarness();
+  const dimensionId = "minecraft:overworld";
+  const market = { marketId: "town-market", marketName: "<Local Market>", townId: "town-a", dimensionId };
+  const station = { stationId: "rail-a", name: "Freight A", townId: "town-a", dimensionId, x: 10, y: 64, z: 20 };
+  map.state.markets = [market, { ...market, marketId: "other-market", townId: "town-b" },
+    { ...market, marketId: "nether-market", dimensionId: "minecraft:the_nether" }];
+  map.state.railStations = [station, { ...station, stationId: "other-station", townId: "town-b" }];
+  let marketClick;
+  let openedMarket;
+  map.state.onSelectMarket = (id) => { openedMarket = id; };
+  map.state.detailPanel = { innerHTML: "", querySelectorAll: (selector) => selector === "[data-rail-market]" ? [{
+    addEventListener: (event, callback) => { if (event === "click") marketClick = callback; },
+    getAttribute: () => market.marketId
+  }] : [] };
+  map.state.selected = { type: "railStation", data: station };
+  map.renderSelection();
+  assert.match(map.state.detailPanel.innerHTML, /Freight A/);
+  assert.match(map.state.detailPanel.innerHTML, /data-rail-market="town-market"/);
+  assert.match(map.state.detailPanel.innerHTML, /&lt;Local Market&gt;/);
+  assert.doesNotMatch(map.state.detailPanel.innerHTML, /other-market|nether-market/);
+  marketClick();
+  assert.equal(openedMarket, "town-market");
+
+  map.state.selected = { type: "market", data: market };
+  map.renderSelection();
+  assert.match(map.state.detailPanel.innerHTML, /data-market-rail="rail-a"/);
+  assert.doesNotMatch(map.state.detailPanel.innerHTML, /other-station/);
 });

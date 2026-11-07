@@ -3,14 +3,22 @@ package com.monpai.sailboatmod.market.web.map;
 import com.monpai.sailboatmod.market.map.MarketWebMapDtos;
 
 import com.google.gson.JsonObject;
+import com.monpai.sailboatmod.market.terminal.TerminalNetworkSavedData;
+import com.monpai.sailboatmod.nation.data.NationSavedData;
 import com.monpai.sailboatmod.nation.model.NationClaimRecord;
 import com.monpai.sailboatmod.nation.model.NationRecord;
 import com.monpai.sailboatmod.nation.model.TownRecord;
+import com.monpai.sailboatmod.transport.rail.RailFreightNative.LegState;
+import com.monpai.sailboatmod.transport.rail.RailFreightService.NextStop;
 import org.junit.jupiter.api.Test;
 
+import java.util.List;
+import java.util.Set;
 import java.util.UUID;
+import net.minecraft.core.BlockPos;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class MarketWebMapJsonTest {
@@ -137,4 +145,53 @@ class MarketWebMapJsonTest {
         assertEquals("not_checked", runway.get("availability").getAsString());
     }
 
+
+    @Test
+    void publicRailLayerPublishesOnlyVerifiedOverworldTownStations() {
+        String overworld = "minecraft:overworld";
+        String townId = "rail-town";
+        var nation = new NationSavedData();
+        nation.putTown(new TownRecord(townId, "nation", "Rail Town", UUID.randomUUID(), 1L,
+                overworld, 0L, "", "european"));
+        nation.putClaim(new NationClaimRecord(overworld, 1, -1, "nation", townId,
+                "member", "member", "member", "member", "member", "member", "member", 100L, NationClaimRecord.SOURCE_MANUAL));
+        var station = terminal(overworld, new BlockPos(18, 65, -10), TerminalNetworkSavedData.Kind.RAIL, townId);
+        var entries = List.of(station,
+                terminal(overworld, new BlockPos(25, 64, -8), TerminalNetworkSavedData.Kind.PORT, townId),
+                terminal(overworld, new BlockPos(24, 64, -8), TerminalNetworkSavedData.Kind.RAIL, "old-town"),
+                terminal("minecraft:the_nether", station.pos(), TerminalNetworkSavedData.Kind.RAIL, townId));
+
+        var json = MarketWebMapJson.railStations(MarketWebMapLayerService.railStations(entries, nation));
+        assertEquals(1, json.size());
+        var marker = json.get(0).getAsJsonObject();
+        assertEquals("Freight Terminal", marker.get("name").getAsString());
+        assertEquals("Rail Town", marker.get("townName").getAsString());
+        assertEquals(townId, marker.get("townId").getAsString());
+        assertEquals(-10, marker.get("z").getAsInt());
+        assertEquals(Set.of("stationId", "name", "dimensionId", "x", "y", "z", "townId", "townName"), marker.keySet());
+    }
+
+    @Test
+    void railShipmentEtaUsesOnlyTheObservedFinalLeg() {
+        var shipment = new JsonObject();
+        MarketWebMapJson.addRailStop(shipment, new NextStop("Via", "", LegState.MOVING, 17, false));
+        assertEquals(17, shipment.getAsJsonObject("rail").get("nextStopEtaSeconds").getAsInt());
+        assertEquals(0, shipment.get("etaSeconds").getAsInt());
+
+        MarketWebMapJson.addRailStop(shipment, new NextStop("Final", "Via", LegState.WAITING_ROUTE, 17, true));
+        var waiting = shipment.getAsJsonObject("rail");
+        assertEquals("WAITING_ROUTE", waiting.get("state").getAsString());
+        assertEquals("Via", waiting.get("atStation").getAsString());
+        assertFalse(waiting.has("nextStopEtaSeconds"));
+        assertEquals(0, shipment.get("etaSeconds").getAsInt());
+
+        MarketWebMapJson.addRailStop(shipment, new NextStop("Final", "", LegState.MOVING, 12, true));
+        assertEquals(12, shipment.get("etaSeconds").getAsInt());
+    }
+
+    private static TerminalNetworkSavedData.TerminalEntry terminal(String dimension, BlockPos pos,
+            TerminalNetworkSavedData.Kind kind, String townId) {
+        return new TerminalNetworkSavedData.TerminalEntry(dimension, pos.asLong(), kind,
+                "Freight Terminal", townId, "nation", List.of(), Set.of());
+    }
 }

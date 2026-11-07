@@ -29,7 +29,22 @@ public interface RailFreightNative {
     boolean clearOwnedSchedule(ServerLevel level, UUID trainId, UUID owner, RailStationRef station,
                                CompoundTag ownedSchedule, boolean requireCompleted);
     boolean matchesOwnedSchedule(ServerLevel level, UUID trainId, List<RailStationRef> visits, CompoundTag ownedSchedule);
+    Optional<NextStop> nextStop(ServerLevel level, UUID trainId, UUID owner, List<RailStationRef> visits, CompoundTag ownedSchedule);
     void markDirty();
+
+    enum LegState {
+        PREPARING, MOVING, WAITING, DWELLING, WAITING_ROUTE, PAUSED;
+
+        public static LegState observe(boolean paused, boolean navigating, boolean moving,
+                                       boolean atScheduledStop, boolean nativeRouteFailed) {
+            if (paused) return PAUSED;
+            if (navigating) return moving ? MOVING : WAITING;
+            if (atScheduledStop) return DWELLING;
+            return nativeRouteFailed ? WAITING_ROUTE : PREPARING;
+        }
+    }
+
+    record NextStop(@Nullable RailStationRef station, String name, String atStation, LegState state) { }
 
     record Path(int distanceMeters, String sourceName, String targetName) {}
 
@@ -37,7 +52,7 @@ public interface RailFreightNative {
                      @Nullable RailStationRef destination, @Nullable Vec3 position, @Nullable AABB bounds,
                      double speed, double remaining, double legDistance, boolean usable, boolean canDriveBothWays, boolean manual,
                      boolean paused, boolean completed, boolean hasSchedule, @Nullable CompoundTag managedSchedule,
-                     int cargoSlots, int cargoUsed, int fuelSafeSlots) {
+                     int cargoSlots, int cargoUsed, int fuelSafeSlots, LegState legState) {
         public boolean parkedAt(RailStationRef expected) {
             return usable && !manual && expected.equals(station) && destination == null
                     && Double.isFinite(speed) && Math.abs(speed) < 1e-6;

@@ -1,6 +1,7 @@
 package com.monpai.sailboatmod.block.entity;
 
 import com.monpai.sailboatmod.transport.LogisticsCarrier;
+import com.monpai.sailboatmod.transport.air.AircraftClass;
 import com.monpai.sailboatmod.transport.air.airport.*;
 import com.monpai.sailboatmod.transport.physical.PhysicalVehicleView;
 import java.lang.reflect.*;
@@ -22,6 +23,7 @@ class RailAirportAdmissionTest {
     Vec3 velocity=Vec3.ZERO;
     Vec3 positionOverride;
     boolean rail=true;
+    AircraftClass airframe=AircraftClass.FIXED_WING;
     boolean allowCarrierProof,carrierArrivalReady;
     @BeforeAll static void bootstrap(){AirportGroundOperationsTest.bootstrap();}
     @BeforeEach void setup()throws Exception{
@@ -32,6 +34,7 @@ class RailAirportAdmissionTest {
         AirportGroundOperationsTest.set(AirportBlockEntity.class,fixture.airport,"groundLayout",new AirportGroundLayout(2,layout.stands(),List.of(layout.taxiRoutes().getFirst(),inbound)));
         carrier=(LogisticsCarrier)Proxy.newProxyInstance(LogisticsCarrier.class.getClassLoader(),new Class<?>[]{LogisticsCarrier.class,AirportApproachState.class},(p,m,args)->{
             if(m.getName().equals("railAircraftAutomation"))return rail;
+            if(m.getName().equals("aircraftClass"))return airframe;
             if(m.getName().equals("hasCargo"))return true;
             if(m.getName().equals("transportPosition")&&positionOverride!=null)return positionOverride;
             if(m.getName().equals("groundArrivalReady")||m.getName().equals("groundAssignedArrivalReady")){
@@ -59,6 +62,35 @@ class RailAirportAdmissionTest {
         for(int i=0;i<250;i++,fixture.level.time+=5){check=fixture.airport.prepareGroundCandidate(fixture.attempt,fixture.aircraft.id,assignment());if(check.status()!=AirportGroundPreparation.Status.WAITING)break;}
         assertEquals(AirportGroundPreparation.Status.READY,check.status());
         assertTrue(fixture.airport.reserveGroundAssignment(fixture.attempt,assignment(),fixture.aircraft.id,ttl));
+    }
+    @Test void directFacilitiesUseTheSameClaimsAndFreshArrivalProofWithoutTaxiGeometry()throws Exception {
+        for (var airframe : List.of(AircraftClass.ROTORCRAFT,AircraftClass.AIRSHIP)) {
+            this.airframe=airframe;
+            var type=airframe==AircraftClass.ROTORCRAFT?AirportFacility.Type.HELIPAD:AirportFacility.Type.MOORING;
+            var facility=new AirportFacility("vertical",type,new BlockPos(-21,64,0),new BlockPos(-20,64,0),12,8);
+            var layout=new AirportGroundLayout(3,List.of(),List.of());
+            AirportGroundOperationsTest.set(AirportBlockEntity.class,fixture.airport,"facilities",
+                    new LinkedHashMap<>(Map.of(facility.id(),facility)));
+            AirportGroundOperationsTest.set(AirportBlockEntity.class,fixture.airport,"groundLayout",layout);
+            var assignment=GroundAssignment.direct(layout.revision(),facility);
+            assertTrue(geometry(actual(),0,0));
+            assertFalse(contains(assignment,physicalId,actual(),0,0,fixture.level.time));
+            var attempt=UUID.randomUUID();
+            AirportGroundPreparation.Check check=null;
+            for (int i=0;i<100;i++,fixture.level.time++) {
+                check=fixture.airport.prepareGroundCandidate(attempt,fixture.aircraft.id,assignment);
+                if (check.status()!=AirportGroundPreparation.Status.WAITING) break;
+            }
+            assertEquals(AirportGroundPreparation.Status.READY,check.status());
+            assertTrue(fixture.airport.reserveGroundAssignment(attempt,assignment,fixture.aircraft.id,200));
+            assertTrue(contains(assignment,physicalId,actual(),0,0,fixture.level.time));
+            assertFalse(fixture.airport.railAssignedStandArrival(assignment,carrier,physicalId,actual(),0,0,39,fixture.level.time));
+            assertTrue(fixture.airport.railAssignedStandArrival(assignment,carrier,physicalId,actual(),0,0,40,fixture.level.time));
+            fixture.level.unloaded.add(new ChunkPos(-2,0));
+            assertFalse(contains(assignment,physicalId,actual(),0,0,fixture.level.time));
+            fixture.level.unloaded.clear();
+            fixture.airport.releaseReservation(fixture.aircraft.id);
+        }
     }
     @Test void departureRunsRealBoundedTerrainPreparationWithoutFcWheelOrNativeGroundProof(){
         assertFalse(departure(actual(),0,0),"an unscanned stand must not instantly be ready");

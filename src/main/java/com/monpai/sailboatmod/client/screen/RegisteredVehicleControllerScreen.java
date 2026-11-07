@@ -43,7 +43,7 @@ public final class RegisteredVehicleControllerScreen extends ThemedScreen {
     private Label surfaceValidationLabel;
     private record SurfaceLabels(Label actual,Label target,Label state) { }
     private final Map<String,SurfaceLabels> surfaceLabels=new LinkedHashMap<>();
-    private Label fuelStatusLabel;
+    private Label fuelStatusLabel,flightPhaseLabel;
     private final Map<String,Label> fuelTimeLabels=new LinkedHashMap<>();
     private record FuelEngineLabels(Label available,Label required,Label state) { }
     private record FuelPropellerLabels(Label rpm,Label state) { }
@@ -111,7 +111,9 @@ public final class RegisteredVehicleControllerScreen extends ThemedScreen {
     public void update(ControllerScreenData update, boolean repaint) {
         boolean setupChanged = data.values().getBoolean("ChooseRegistrationMode") != update.values().getBoolean("ChooseRegistrationMode")
                 || data.values().getBoolean("RegistrationStructureReady") != update.values().getBoolean("RegistrationStructureReady")
-                || !data.values().getString("SetupStatus").equals(update.values().getString("SetupStatus"));
+                || data.values().getBoolean("CanAutoConfigure") != update.values().getBoolean("CanAutoConfigure")
+                || !data.values().getString("SetupStatus").equals(update.values().getString("SetupStatus"))
+                || !data.values().getString("CargoSetupStatus").equals(update.values().getString("CargoSetupStatus"));
         boolean parkingChanged = !data.values().getString("ParkingBrake").equals(update.values().getString("ParkingBrake"))
                 || data.values().getBoolean("ParkingBrakeReleased") != update.values().getBoolean("ParkingBrakeReleased");
         boolean assistScopeChanged = supportsTakeoffAssist(data.values()) != supportsTakeoffAssist(update.values());
@@ -134,7 +136,10 @@ public final class RegisteredVehicleControllerScreen extends ThemedScreen {
                     || aircraftModeChanged && ("power".equals(page) || "status".equals(page))
                     || destinationsChanged && "routes".equals(page)
                     ||(surfacesChanged||surfaceEditingChanged||fuelRowsChanged)&&"power".equals(page)) renderPage();
-            else {refreshTakeoffAssistValues();refreshAirSurfaceValues();refreshFuelValues();}
+            else {
+                refreshTakeoffAssistValues();refreshAirSurfaceValues();refreshFuelValues();
+                if(flightPhaseLabel!=null)flightPhaseLabel.setValue(flightPhaseText(data.values()));
+            }
         }
     }
 
@@ -186,7 +191,7 @@ public final class RegisteredVehicleControllerScreen extends ThemedScreen {
         tabs.select(page);
         content.clearAllScrollViewChildren();
         surfaceLabels.clear();surfacePickButton=null;surfaceValidationLabel=null;
-        fuelStatusLabel=null;fuelTimeLabels.clear();fuelEngineLabels.clear();fuelPropellerLabels.clear();fuelStartButton=null;autoReturnButton=null;
+        flightPhaseLabel=null;fuelStatusLabel=null;fuelTimeLabels.clear();fuelEngineLabels.clear();fuelPropellerLabels.clear();fuelStartButton=null;autoReturnButton=null;
         takeoffAssistStatusLabel = null;
         takeoffAssistToggle = null;
         takeoffAssistSave = null;
@@ -232,8 +237,11 @@ public final class RegisteredVehicleControllerScreen extends ThemedScreen {
                         ? "registered_setup_hint" : "registration_hint"), "sm-muted"));
                 String setup = values.getString("SetupStatus");
                 if (!setup.isBlank()) content.addScrollViewChild(Ui.paragraph(t("setup." + setup), "sm-muted"));
+                String cargoSetup = values.getString("CargoSetupStatus");
+                if (!cargoSetup.isBlank()) content.addScrollViewChild(Ui.paragraph(t("cargo_setup." + cargoSetup), "sm-muted"));
                 if (values.getBoolean("CanAutoConfigure"))
-                    content.addScrollViewChild(button("auto_configure", ControllerAction.AUTO_CONFIGURE));
+                    content.addScrollViewChild(button(values.getBoolean("NamedRegistration")
+                            ? "cargo_auto_configure" : "cargo_auto_configure_only", ControllerAction.AUTO_CONFIGURE));
             }
             case "cargo" -> {
                 content.addScrollViewChild(Ui.paragraph(t("cargo_hint"), "sm-muted"));
@@ -273,8 +281,9 @@ public final class RegisteredVehicleControllerScreen extends ThemedScreen {
                 row(t("progress"), values.getInt("Target") + " / " + values.getInt("PointCount"));
                 UIElement manage = Ui.wrapRow(Ui.GAP_S);
                 manage.addChildren(
-                        button("AIR".equals(values.getString("Kind")) && "FIXED_WING".equals(values.getString("AircraftClass"))
-                                ? "bind_stand_airport" : "bind_terminal", ControllerAction.BIND_NEAREST_TERMINAL),
+                        button(fixedWingRail(values) ? "bind_stand_airport"
+                                : values.getBoolean("AirRail") ? "bind_facility_airport" : "bind_terminal",
+                                ControllerAction.BIND_NEAREST_TERMINAL),
                         button("import_routes", ControllerAction.IMPORT_ROUTES));
                 if (importedRoutesAvailable) manage.addChild(Ui.button(t(showImportedRoutes
                         ? "hide_imported_routes" : "show_imported_routes"), Ui.Tone.SECONDARY, () -> {
@@ -288,7 +297,7 @@ public final class RegisteredVehicleControllerScreen extends ThemedScreen {
                     if (knownDeparture) content.addScrollViewChild(Ui.paragraph(t("imported_routes"), "sm-strong"));
                     renderRouteDestinations(values);
                 }
-                if(values.getBoolean("AirRail"))renderFuelSummary();
+                if(fixedWingRail(values))renderFuelSummary();
                 UIElement drive = Ui.wrapRow(Ui.GAP_S);
                 if (manualRouteControls) {
                     fuelStartButton = Ui.button(t(fuelStartLabel(values)), Ui.Tone.SECONDARY, () -> {
@@ -318,7 +327,8 @@ public final class RegisteredVehicleControllerScreen extends ThemedScreen {
                                 Ui.Tone.SECONDARY,
                                 () -> send(ControllerAction.TOGGLE_AUTO_UNLOAD)));
                 String hint = !knownDeparture ? "route_hint"
-                        : values.getBoolean("AirRail") ? "airport_departure_hint" : "departure_hint";
+                        : fixedWingRail(values) ? "airport_departure_hint"
+                        : values.getBoolean("AirRail") ? "vertical_departure_hint" : "departure_hint";
                 content.addScrollViewChild(Ui.paragraph(t(hint), "sm-muted"));
                 if (knownDeparture) content.addScrollViewChild(manage);
                 refreshFuelValues();
@@ -326,9 +336,11 @@ public final class RegisteredVehicleControllerScreen extends ThemedScreen {
             }
             case "power" -> {
                 if ("AIR".equals(values.getString("Kind"))) {
-                    content.addScrollViewChild(Ui.paragraph(t(values.getBoolean("AirRail")?"air_rail_hint":"flight_hint"), "sm-muted"));
+                    content.addScrollViewChild(Ui.paragraph(t(fixedWingRail(values)?"air_rail_hint":values.getBoolean("AirRail")
+                            ? ("ROTORCRAFT".equals(values.getString("AircraftClass"))?"rotorcraft_route_hint":"airship_route_hint"):"flight_hint"), "sm-muted"));
                     row(t("aircraft_class"), values.getString("AircraftClass"));
-                    row(t("flight_phase"), values.getString("FlightPhase"));
+                    flightPhaseLabel=liveRow("flight_phase",152);
+                    flightPhaseLabel.setValue(flightPhaseText(values));
                     if(values.getBoolean("AirRail"))row(t("air_rail_forward"),values.getString("AirRailForward"));
                     else {
                         row(t("flight_terminal"), values.getString("FlightTerminal"));
@@ -353,8 +365,8 @@ public final class RegisteredVehicleControllerScreen extends ThemedScreen {
                     content.addScrollViewChild(Ui.paragraph(t(values.getBoolean("AirRail") ? "air_rail_speed_hint" : "planning_speed_hint"), "sm-muted"));
                     content.addScrollViewChild(Ui.button(t("save_planning_speed"), Ui.Tone.SECONDARY,
                             () -> send(ControllerAction.SET_SPEED, speedDraft, 0)));
-                    if(values.getBoolean("AirRail")){renderAirFuel(values);renderAirSurfaces(values);}
-                    else renderAirGroundPower(values);
+                    if(fixedWingRail(values)){renderAirFuel(values);renderAirSurfaces(values);}
+                    else if(!values.getBoolean("AirRail"))renderAirGroundPower(values);
                     break;
                 }
                 content.addScrollViewChild(Ui.paragraph(t("power_hint"), "sm-muted"));
@@ -592,15 +604,27 @@ public final class RegisteredVehicleControllerScreen extends ThemedScreen {
         if(fuelStartButton!=null){fuelStartButton.setText(t(fuelStartLabel(values)));fuelStartButton.setActive(fuelStartAllowed(values));}
         if(autoReturnButton!=null){autoReturnButton.setActive(returnEditingAllowed(values));autoReturnButton.setText(t(values.getBoolean("AutoReturn")?"auto_return_on":"auto_return_off"));}
     }
+    private Component flightPhaseText(CompoundTag values) {
+        String phase=values.getString("FlightPhase");
+        return switch (phase) {
+            case "VERTICAL_TAKEOFF" -> t("phase_vertical_takeoff");
+            case "VERTICAL_LANDING" -> t("phase_vertical_landing");
+            default -> Component.literal(phase);
+        };
+    }
+    private static boolean fixedWingRail(CompoundTag values) {
+        return values.getBoolean("AirRail")&&"FIXED_WING".equals(values.getString("AircraftClass"));
+    }
     private static boolean fuelStartAllowed(CompoundTag values) {
         if (airportPreflightQueued(values)) return false;
         if(!values.getBoolean("AirRail"))return true;
         var fuel=values.getCompound("AirFuel");
-        return !values.getBoolean("Active")&&!values.getBoolean("Paused")&&(!fuel.getBoolean("Evaluated")||fuel.getBoolean("Ready"));
+        return !values.getBoolean("Active")&&!values.getBoolean("Paused")
+                &&(!fixedWingRail(values)||!fuel.getBoolean("Evaluated")||fuel.getBoolean("Ready"));
     }
     private static String fuelStartLabel(CompoundTag values) {
         if (airportPreflightQueued(values)) return "airport_preflight_queued";
-        return values.getBoolean("AirRail")&&!values.getCompound("AirFuel").getBoolean("Evaluated")?"fuel_check_start":"start";
+        return fixedWingRail(values)&&!values.getCompound("AirFuel").getBoolean("Evaluated")?"fuel_check_start":"start";
     }
     private static boolean airportPreflightQueued(CompoundTag values) {
         return values.getBoolean("Active") && !values.getBoolean("Paused")
