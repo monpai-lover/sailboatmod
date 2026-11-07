@@ -1,6 +1,7 @@
 package com.monpai.sailboatmod.block.entity;
 
 import com.monpai.sailboatmod.compat.aeronautics.AircraftFuelBridge;
+import com.monpai.sailboatmod.transport.air.AircraftClass;
 import com.monpai.sailboatmod.transport.air.fuel.*;
 import com.monpai.sailboatmod.transport.air.rail.RailAircraftPath;
 import com.monpai.sailboatmod.transport.physical.NativeControlResult;
@@ -11,7 +12,9 @@ import net.minecraft.world.level.block.entity.BlockEntity;
 
 /** Transient real-fuel admission and UI cache. No saved observations, fuel mutations or movement actions. */
 final class RegisteredAircraftFuelController {
-    record Context(BlockEntity controller,UUID expectedBodyId) { }
+    record Context(BlockEntity controller,UUID expectedBodyId,AircraftClass airframe) {
+        Context(BlockEntity controller,UUID expectedBodyId){this(controller,expectedBodyId,AircraftClass.FIXED_WING);}
+    }
     interface NativeAccess {long gameTick(Context c);AircraftFuelBridge.Observation inspect(Context c);}
     private record DurationKey(String pathHash,long fromBits) { }
     private record Plan(Context context,long outboundTicks,long returnTicks,boolean returning) { }
@@ -151,11 +154,11 @@ final class RegisteredAircraftFuelController {
     }
     private static long minimum(List<AircraftFuelBridge.Engine> engines){if(engines.isEmpty())return 0;long min=Long.MAX_VALUE;for(var e:engines){if(e.availableBurnTicks()<0)return -1;min=Math.min(min,e.availableBurnTicks());}return min;}
     private static AircraftFuelBridge.Observation unknown(String why){return new AircraftFuelBridge.Observation(false,why,null,List.of(),List.of(),false);}
-    private static boolean valid(Context c){return c!=null&&c.controller()!=null&&c.expectedBodyId()!=null;}
-    private static boolean same(Context a,Context b){return valid(a)&&valid(b)&&a.controller()==b.controller()&&a.expectedBodyId().equals(b.expectedBodyId());}
+    private static boolean valid(Context c){return c!=null&&c.controller()!=null&&c.expectedBodyId()!=null&&c.airframe()!=null;}
+    private static boolean same(Context a,Context b){return valid(a)&&valid(b)&&a.controller()==b.controller()&&a.expectedBodyId().equals(b.expectedBodyId())&&a.airframe()==b.airframe();}
     private static String safe(String reason,String fallback){return reason==null||reason.isBlank()?fallback:reason;}
     private static final class Native implements NativeAccess {
         public long gameTick(Context c){return c.controller().getLevel()==null?-1:c.controller().getLevel().getGameTime();}
-        public AircraftFuelBridge.Observation inspect(Context c){return AircraftFuelBridge.inspect(c.controller());}
+        public AircraftFuelBridge.Observation inspect(Context c){return AircraftFuelBridge.inspect(c.controller(),c.airframe());}
     }
 }

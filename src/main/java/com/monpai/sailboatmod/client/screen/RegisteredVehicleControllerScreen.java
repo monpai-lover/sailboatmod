@@ -297,7 +297,7 @@ public final class RegisteredVehicleControllerScreen extends ThemedScreen {
                     if (knownDeparture) content.addScrollViewChild(Ui.paragraph(t("imported_routes"), "sm-strong"));
                     renderRouteDestinations(values);
                 }
-                if(fixedWingRail(values))renderFuelSummary();
+                if(values.getBoolean("AirRail"))renderFuelSummary();
                 UIElement drive = Ui.wrapRow(Ui.GAP_S);
                 if (manualRouteControls) {
                     fuelStartButton = Ui.button(t(fuelStartLabel(values)), Ui.Tone.SECONDARY, () -> {
@@ -365,8 +365,10 @@ public final class RegisteredVehicleControllerScreen extends ThemedScreen {
                     content.addScrollViewChild(Ui.paragraph(t(values.getBoolean("AirRail") ? "air_rail_speed_hint" : "planning_speed_hint"), "sm-muted"));
                     content.addScrollViewChild(Ui.button(t("save_planning_speed"), Ui.Tone.SECONDARY,
                             () -> send(ControllerAction.SET_SPEED, speedDraft, 0)));
-                    if(fixedWingRail(values)){renderAirFuel(values);renderAirSurfaces(values);}
-                    else if(!values.getBoolean("AirRail"))renderAirGroundPower(values);
+                    if (values.getBoolean("AirRail")) {
+                        renderAirFuel(values);
+                        if (fixedWingRail(values)) renderAirSurfaces(values);
+                    } else renderAirGroundPower(values);
                     break;
                 }
                 content.addScrollViewChild(Ui.paragraph(t("power_hint"), "sm-muted"));
@@ -620,11 +622,11 @@ public final class RegisteredVehicleControllerScreen extends ThemedScreen {
         if(!values.getBoolean("AirRail"))return true;
         var fuel=values.getCompound("AirFuel");
         return !values.getBoolean("Active")&&!values.getBoolean("Paused")
-                &&(!fixedWingRail(values)||!fuel.getBoolean("Evaluated")||fuel.getBoolean("Ready"));
+                &&(!fuel.getBoolean("Evaluated")||fuel.getBoolean("Ready"));
     }
     private static String fuelStartLabel(CompoundTag values) {
         if (airportPreflightQueued(values)) return "airport_preflight_queued";
-        return fixedWingRail(values)&&!values.getCompound("AirFuel").getBoolean("Evaluated")?"fuel_check_start":"start";
+        return values.getBoolean("AirRail")&&!values.getCompound("AirFuel").getBoolean("Evaluated")?"fuel_check_start":"start";
     }
     private static boolean airportPreflightQueued(CompoundTag values) {
         return values.getBoolean("Active") && !values.getBoolean("Paused")

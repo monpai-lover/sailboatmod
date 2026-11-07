@@ -674,7 +674,7 @@ public final class RegisteredVehicleControllerBlockEntity extends BlockEntity
                 new RegisteredAircraftSurfaces.Context(this,getTransportUuid(),view.physicalId(),facing());
     }
     private RegisteredAircraftFuelController.Context fuelContext() {
-        return view==null||!view.available()?null:new RegisteredAircraftFuelController.Context(this,view.physicalId());
+        return view==null||!view.available()?null:new RegisteredAircraftFuelController.Context(this,view.physicalId(),aircraftClass);
     }
     private NativeControlResult checkAircraftFuel(ServerLevel server,
             com.monpai.sailboatmod.transport.air.rail.RailAircraftPath path,double fromDistance,
@@ -684,12 +684,15 @@ public final class RegisteredVehicleControllerBlockEntity extends BlockEntity
         try {
             if(returning) {
                 var authored=new ArrayList<>(FlightRoutePlanner.cruiseForLeg(selected().waypoints(),returnTrip));Collections.reverse(authored);
-                var arrival=path.sample(path.length());
-                var futureHull=RailAircraftProjectedHull.at(this,facing(),arrival.position(),arrival.tangent(),0)
-                        .orElseThrow(()->new IllegalStateException("fuel_projected_hull_unavailable"));
-                double futureYaw=Math.toDegrees(Math.atan2(-arrival.tangent().x,arrival.tangent().z));
-                double returnDiameter=com.monpai.sailboatmod.transport.air.rail.RailAirportSelection.sweepDiameter(
-                        new com.monpai.sailboatmod.transport.air.rail.RailAirportSelection.Aircraft(view.physicalId(),futureHull,arrival.position(),futureYaw));
+                double returnDiameter=0;
+                if (fixedWingRail()) {
+                    var arrival=path.sample(path.length());
+                    var futureHull=RailAircraftProjectedHull.at(this,facing(),arrival.position(),arrival.tangent(),0)
+                            .orElseThrow(()->new IllegalStateException("fuel_projected_hull_unavailable"));
+                    double futureYaw=Math.toDegrees(Math.atan2(-arrival.tangent().x,arrival.tangent().z));
+                    returnDiameter=com.monpai.sailboatmod.transport.air.rail.RailAirportSelection.sweepDiameter(
+                            new com.monpai.sailboatmod.transport.air.rail.RailAirportSelection.Aircraft(view.physicalId(),futureHull,arrival.position(),futureYaw));
+                }
                 String key=path.fingerprint()+":"+source.getBlockPos().asLong()+":"+destination.getBlockPos().asLong()+":"
                         +source.groundLayoutRevision()+":"+destination.groundLayoutRevision()+":"
                         +sourceAssignment+":"+destinationAssignment+":"+authored+":"+maxSpeed+":"+returnDiameter;
@@ -767,8 +770,8 @@ public final class RegisteredVehicleControllerBlockEntity extends BlockEntity
             loading.setPinnedEndpoints(List.of(mission.source(),mission.target()));
         }
         boolean loaded=loading.update(server,getTransportUuid(),view.physicalId(),view.worldBounds(),view.worldPosition());
-        if(fixedWingRail())aircraftFuel.poll(fuelContext());
-        if(fixedWingRail()&&active&&!paused&&mission!=null&&!mission.completed()&&!airportPreflightPending()
+        aircraftFuel.poll(fuelContext());
+        if(active&&!paused&&mission!=null&&!mission.completed()&&!airportPreflightPending()
                 &&(fuelHealthTick==Long.MIN_VALUE||server.getGameTime()<fuelHealthTick||server.getGameTime()-fuelHealthTick>=20)) {
             fuelHealthTick=server.getGameTime();var health=aircraftFuel.exhausted(fuelContext());
             if(!health.success()){fuelFailure(server,health.reason());return;}
@@ -777,8 +780,8 @@ public final class RegisteredVehicleControllerBlockEntity extends BlockEntity
         }
         if(fixedWingRail()&&!airSurfaces.bindings().isEmpty()&&!railAircraft.owns(context))railAircraft.park(context);
         railAircraft.tick(context,active,paused,sample->loaded&&railPathClear(server,sample),sample->{
-            if(fixedWingRail()&&sample.phase()==com.monpai.sailboatmod.transport.air.rail.RailAircraftPath.Phase.TAKEOFF
-                    &&mission!=null&&mission.phase()!=com.monpai.sailboatmod.transport.air.rail.RailAircraftPath.Phase.TAKEOFF)
+            if(mission!=null&&mission.phase()!=sample.phase()&&
+                    sample.phase()==com.monpai.sailboatmod.transport.air.rail.RailAircraftPath.Phase.TAKEOFF)
                 return checkCurrentAircraftFuel(server);
             return NativeControlResult.applied();
         });
@@ -822,9 +825,12 @@ public final class RegisteredVehicleControllerBlockEntity extends BlockEntity
     }
 
     /** Initial binding/admission only; it never stands in for a captured arrival or native ground permit. */
-    private boolean idleGuidedAirportBinding() {
+    private boolean idleGuidedAirportBinding() { return idleGuidedAirportBinding(false); }
+
+    private boolean idleGuidedAirportBinding(boolean loadedShipment) {
         if(railAircraftAutomation())return level instanceof ServerLevel&&registration.registered()&&bindingValid&&view!=null&&view.available()
-                &&Objects.equals(registration.physicalId(),view.physicalId())&&!active&&!paused&&!manualTakeover&&manifest.isEmpty();
+                &&Objects.equals(registration.physicalId(),view.physicalId())&&!active&&!paused&&!manualTakeover
+                &&(loadedShipment||manifest.isEmpty());
         if (transportKind() != Kind.AIR || aircraftClass != AircraftClass.FIXED_WING
                 || !(level instanceof ServerLevel server) || !registration.registered() || !bindingValid
                 || view == null || !view.available() || !Objects.equals(registration.physicalId(), view.physicalId())
@@ -856,12 +862,23 @@ public final class RegisteredVehicleControllerBlockEntity extends BlockEntity
         return matches;
     }
 
-    /** Package-local airport candidate escape from an empty source binding; active delivery stays on its original gate. */
     boolean canBootstrapAtAirport(AirportBlockEntity airport) {
-        if (sourceTerminal != null || !idleGuidedAirportBinding()) return false;
+        return canBootstrapAtAirport(airport, false);
+    }
+
+    boolean canBootstrapLoadedAtAirport(AirportBlockEntity airport) {
+        return railAircraftAutomation() && !manifest.isEmpty() && canBootstrapAtAirport(airport, true);
+    }
+
+    /** The same departure proof also permits a retry if the first dispatch assigned its source but never started. */
+    private boolean canBootstrapAtAirport(AirportBlockEntity airport, boolean loadedShipment) {
+        if (!idleGuidedAirportBinding(loadedShipment)) return false;
+        if (sourceTerminal != null && (!railAircraftAutomation() || railAircraft.hasMission()
+                || !sourceTerminal.equals(airport.getBlockPos()))) return false;
         var matches = parkedGuidedAirports((ServerLevel) level);
         return matches.size() == 1 && matches.getFirst() == airport && (!railAircraftAutomation()
-                ||airport.railDepartureReady(this,view,groundYawDegrees(),RailAircraftMotionBridge.angularSpeed(this).orElse(Double.NaN)));
+                || airport.railDepartureReady(this, view, groundYawDegrees(),
+                        RailAircraftMotionBridge.angularSpeed(this).orElse(Double.NaN)));
     }
 
     private boolean bindParkedGuidedAirport(ServerLevel server) {
@@ -1293,9 +1310,8 @@ public final class RegisteredVehicleControllerBlockEntity extends BlockEntity
             if(!(resolveDestination(server) instanceof AirportBlockEntity destination)||source==destination){reason="destination_airport_required";return false;}
             boolean prepared=railAircraft.prepare(railContext(server),source,destination,
                     FlightRoutePlanner.cruiseForLeg(selected().waypoints(),returnTrip),Math.max(3,Math.min(60,maxSpeed)),
-                    nextGroundSourceAssignment,nextGroundTargetAssignment,p->fixedWingRail()
-                            ?checkAircraftFuel(server,p.path(),0,source,destination,p.source(),p.destination())
-                            :NativeControlResult.applied());
+                    nextGroundSourceAssignment,nextGroundTargetAssignment,p->
+                            checkAircraftFuel(server,p.path(),0,source,destination,p.source(),p.destination()));
             reason=railAircraft.reason();
             if(!prepared)return false;
             nextGroundSourceAssignment=nextGroundTargetAssignment=null;
@@ -3265,7 +3281,7 @@ public final class RegisteredVehicleControllerBlockEntity extends BlockEntity
             if(!railAircraft.canResume(airportPreflightPending())){
                 reason="rail_recovery_review";setChanged();return;
             }
-            if(fixedWingRail()&&level instanceof ServerLevel server&&railAircraft.mission()!=null&&!railAircraft.mission().completed()&&!airportPreflightPending()) {
+            if(level instanceof ServerLevel server&&railAircraft.mission()!=null&&!railAircraft.mission().completed()&&!airportPreflightPending()) {
                 var fuel=checkCurrentAircraftFuel(server);if(!fuel.success()){fuelFailure(server,fuel.reason());return;}
             }
             railAircraft.allowResume();manualTakeover=false;active=true;paused=false;recoveryRequired=flightRecovering=false;
@@ -3570,7 +3586,10 @@ public final class RegisteredVehicleControllerBlockEntity extends BlockEntity
                         if(view!=null)airSurfaces.neutral(surfaceContext());
                         railAircraft.permanentRelease(railContext(server));
                     }
-                    if(nextClass!=aircraftClass)railAircraft.resetPreparation();
+                    if(nextClass!=aircraftClass) {
+                        railAircraft.resetPreparation();
+                        aircraftFuel.invalidate();fuelReturnKey="";fuelReturnPath=null;
+                    }
                     aircraftClass = nextClass; invalidateGroundCalibration();
                 }
                 case SET_FLIGHT_TERMINAL -> {

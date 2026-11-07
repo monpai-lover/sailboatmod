@@ -12,13 +12,22 @@ public final class RailReturnFlightPlanner {
     }
     private RailReturnFlightPlanner() { }
     public static RailAircraftPath build(RailAircraftPath outbound,Airport source,Airport destination,List<Vec3> returnWaypoints,double speed,double returnSweepDiameter) {
-        if(outbound==null||source==null||destination==null||!Double.isFinite(returnSweepDiameter)||returnSweepDiameter<=0)throw invalid();
+        if(outbound==null||source==null||destination==null)throw invalid();
         var departure=destination.assignment().forDirection(destination.layout(),destination.facilities(),AirportTaxiRoute.Direction.OUTBOUND).orElseThrow(RailReturnFlightPlanner::invalid);
         var arrival=source.assignment().forDirection(source.layout(),source.facilities(),AirportTaxiRoute.Direction.INBOUND).orElseThrow(RailReturnFlightPlanner::invalid);
+        var parked=outbound.sample(outbound.length());
+        if (outbound.airframe()!=AircraftClass.FIXED_WING) {
+            if (!departure.direct() || !arrival.direct()) throw invalid();
+            var from=facility(destination,departure.runwayId());
+            var to=facility(source,arrival.runwayId());
+            double height=parked.position().y-from.landingPosition().y;
+            return RailFlightPlanBuilder.buildVertical(outbound.airframe(),from,to,height,returnWaypoints,speed,parked.position(),parked.tangent());
+        }
+        if (departure.direct() || arrival.direct() || !Double.isFinite(returnSweepDiameter) || returnSweepDiameter<=0) throw invalid();
         var start=destination.layout().stand(departure.standId()).orElseThrow(RailReturnFlightPlanner::invalid);
         var finish=source.layout().stand(arrival.standId()).orElseThrow(RailReturnFlightPlanner::invalid);
         var taxiOut=route(destination,departure.outboundRouteId());var taxiIn=route(source,arrival.inboundRouteId());
-        Vec3 anchor=outbound.sample(outbound.length()).position();double height=anchor.y-start.position().y;
+        Vec3 anchor=parked.position();double height=anchor.y-start.position().y;
         double yaw=Math.toRadians(start.yawDegrees());Vec3 forward=new Vec3(-Math.sin(yaw),0,Math.cos(yaw));
         return RailFlightPlanBuilder.build(facility(destination,departure.runwayId()),facility(source,arrival.runwayId()),taxiOut,taxiIn,finish,
                 height,returnSweepDiameter,returnWaypoints,speed,start,anchor,forward);

@@ -764,6 +764,10 @@ public class DockBlockEntity extends BlockEntity implements MenuProvider {
                 && (isBoatOwnedBy(boat, operator) || boat.isAvailableForRent());
     }
 
+    protected boolean canAssignCarrierToRoute(LogisticsCarrier carrier, boolean allowCargo) {
+        return isCarrierInsideDockZone(carrier);
+    }
+
     /** One voyage receives a private immutable geometry copy, never the dock's mutable selection. */
     private boolean assignBoatUsingItinerary(LogisticsCarrier sailboat, List<RouteDefinition> availableRoutes,
             int routeIndex, boolean autoStart, @Nullable Player operator, boolean allowCargo) {
@@ -773,7 +777,7 @@ public class DockBlockEntity extends BlockEntity implements MenuProvider {
             }
             return false;
         }
-        if (sailboat == null || !sailboat.isTransportAlive() || !isCarrierInsideDockZone(sailboat) || sailboat.isAutopilotActive() || (!allowCargo && sailboat.hasCargo())) {
+        if (sailboat == null || !sailboat.isTransportAlive() || !canAssignCarrierToRoute(sailboat, allowCargo) || sailboat.isAutopilotActive() || (!allowCargo && sailboat.hasCargo())) {
             if (operator != null) {
                 operator.displayClientMessage(Component.translatable(transportNotReadyTranslationKey()), true);
             }

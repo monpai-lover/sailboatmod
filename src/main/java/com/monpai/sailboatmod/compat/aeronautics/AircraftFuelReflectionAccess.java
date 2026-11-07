@@ -1,5 +1,6 @@
 package com.monpai.sailboatmod.compat.aeronautics;
 
+import com.monpai.sailboatmod.transport.air.AircraftClass;
 import net.minecraft.core.BlockPos;
 import net.minecraft.server.level.ServerLevel;
 import net.minecraft.world.entity.Entity;
@@ -41,6 +42,19 @@ final class AircraftFuelReflectionAccess {
             Map.entry(EXTRA_WHEEL,"5aefc6ada10e130de4e10aa71e90ed40fc7cca63a084de546b29b885bd68d951"),
             Map.entry("dev.eriksonn.aeronautics.content.blocks.propeller.bearing.propeller_bearing.PropellerBearingBlockEntity","136d8891da5d0ef01f279f5e6737719200fc5f44163ea13b83df2121a61837ab"),
             Map.entry("dev.eriksonn.aeronautics.content.blocks.propeller.bearing.contraption.PropellerBearingContraptionEntity","fc9c7cec035d377907c62a428a261de65eb7858aa6e40f3ab59362240b9e9d30"));
+    static final String GYRO="dev.eriksonn.aeronautics.content.blocks.propeller.bearing.gyroscopic_propeller_bearing.GyroscopicPropellerBearingBlockEntity";
+    static final String SMALL="dev.eriksonn.aeronautics.content.blocks.propeller.small.";
+    static final String SMALL_BASE=SMALL+"BasePropellerBlockEntity";
+    private static final String ANDESITE=SMALL+"andesite.AndesitePropellerBlockEntity";
+    private static final String WOODEN=SMALL+"wooden.WoodenPropellerBlockEntity";
+    private static final String SMART=SMALL+"smart_propeller.SmartPropellerBlockEntity";
+    static final Map<String,String> VERTICAL_PINS=Map.of(
+            GYRO,"e061eaf4b908318a179cad44c3c0ed2e7768e9116c47b32c20f9c14377bb938b",
+            SMALL_BASE,"462f2efc71a31c42c19242e702b4ab2102c92f459ae7d2a4446861df6e6f4220",
+            ANDESITE,"cc30d5246e71790e49773cb0da38dd6a10fc5389483ae9ef9952a3e29fe06793",
+            WOODEN,"4bbba09dd281b0da2858f901022598ba00dd050d801d33c4a54a6d8a9cd3e973",
+            SMART,"391305a1b4c387bd05423f4858429a230c7df0885bc2de107283ba868fc2f3fd");
+    private final VerticalPropellers verticalPropellers;
     private final Class<?> bodyType,engineType,propType,partType,kineticType,plotType,holderType,transmissionType,extraWheelType;
     private final Object helper,fuelService;
     private final Method containingBE,containingEntity,bodyId,bodyLevel,bodyRemoved,bodyPlot,loadedChunks,holderChunk,plotBounds;
@@ -79,14 +93,19 @@ final class AircraftFuelReflectionAccess {
         if(fuelService==null||!fuelService.getClass().getName().equals("dev.simulated_team.simulated.neoforge.service.NeoForgeSimItemService"))throw fail("fuel_native_abi_unavailable");
         unitBurn=service.getMethod("getBurnTime",ItemStack.class);
         ItemStack.class.getMethod("getBurnTime",lookup.find("net.minecraft.world.item.crafting.RecipeType"));
+        verticalPropellers=VerticalPropellers.tryBind(lookup,propType,kineticType);
     }
-    AircraftFuelBridge.Observation inspect(BlockEntity controller)throws ReflectiveOperationException{
+    AircraftFuelBridge.Observation inspect(BlockEntity controller,AircraftClass airframe)throws ReflectiveOperationException{
+        boolean vertical=airframe!=AircraftClass.FIXED_WING;
+        if(vertical&&verticalPropellers==null)throw fail("fuel_native_abi_unavailable");
         ServerLevel world=(ServerLevel)controller.getLevel();Object body=body(controller);if(body==null)throw fail("fuel_body_unavailable");UUID id=(UUID)call(bodyId,body);
         List<BlockEntity> entities=bodyEntities(body,world);if(entities.stream().noneMatch(be->be==controller))throw fail("fuel_body_not_loaded");Map<BlockEntity,AircraftFuelBridge.Engine> allEngines=new IdentityHashMap<>();List<BlockEntity> props=new ArrayList<>();
         for(BlockEntity entity:entities){
             if(engineType.isInstance(entity)){if(entity.getClass()!=engineType)throw fail("fuel_unsupported_engine");allEngines.put(entity,engine(entity));}
-            if(propType.isInstance(entity)){if(entity.getClass()!=propType)throw fail("fuel_unsupported_propeller");props.add(entity);}
-            else if(entity.getClass().getName().startsWith("dev.eriksonn.aeronautics.content.blocks.propeller."))throw fail("fuel_unsupported_propeller");
+            Class<?> type=entity.getClass();
+            if(type==propType||vertical&&verticalPropellers.supports(type))props.add(entity);
+            else if(propType.isInstance(entity)||type.getName().startsWith("dev.eriksonn.aeronautics.content.blocks.propeller."))
+                throw fail("fuel_unsupported_propeller");
         }
         if(allEngines.size()>32||props.size()>32)throw fail("fuel_observation_limit");
         props.sort(Comparator.comparingLong(e->e.getBlockPos().asLong()));
@@ -95,7 +114,8 @@ final class AircraftFuelReflectionAccess {
         Object worldNetworks=map(networks.get(null),4096,"fuel_network_unavailable").get(world);
         Map<?,?> existing=worldNetworks==null?Map.of():map(worldNetworks,4096,"fuel_network_unavailable");
         for(BlockEntity prop:props){
-            observedProps.add(propeller(prop,body));Object key=kineticNetwork.get(prop);Object network=key==null?null:existing.get(key);
+            observedProps.add(propType.isInstance(prop)?propeller(prop,body):smallPropeller(prop));
+            Object key=kineticNetwork.get(prop);Object network=key==null?null:existing.get(key);
             if(network==null){unresolved=true;continue;}
             if(!Objects.equals(key,networkId.get(network)))throw fail("fuel_network_unavailable");
             String problem=AircraftFuelBridge.networkProblem(networkInitialized.getBoolean(network),networkCapacity.getFloat(network),networkStress.getFloat(network),
@@ -152,6 +172,34 @@ final class AircraftFuelReflectionAccess {
                 number(call(partAngle,part,1f)),Boolean.TRUE.equals(call(partStalled,part)))&&Math.abs(number(call(kineticSpeed,prop)))>1e-5&&!kineticOverstressed.getBoolean(prop);
         return new AircraftFuelBridge.Propeller(prop.getBlockPos(),rpm,assembled,moving,!assembled?"fuel_propeller_unassembled":moving?"":"fuel_propeller_stopped");
     }
+    private AircraftFuelBridge.Propeller smallPropeller(BlockEntity prop)throws ReflectiveOperationException {
+        double rate=number(verticalPropellers.rate().get(prop));
+        double angle=number(call(verticalPropellers.angle(),prop));
+        double previous=number(call(verticalPropellers.previous(),prop));
+        double rpm=rate/.3;
+        boolean active=Boolean.TRUE.equals(call(verticalPropellers.active(),prop));
+        boolean moving=active&&Math.abs(number(call(kineticSpeed,prop)))>1e-5&&!kineticOverstressed.getBoolean(prop)
+                &&AircraftFuelBridge.actualMotion(rpm,rate,angle,previous,angle,false);
+        return new AircraftFuelBridge.Propeller(prop.getBlockPos(),rpm,true,moving,moving?"":"fuel_propeller_stopped");
+    }
+
+    /** The fixed-wing contract remains usable if these additional native classes are unavailable. */
+    private record VerticalPropellers(Set<Class<?>> types,Field rate,Method angle,Method previous,Method active) {
+        boolean supports(Class<?> type){return types.contains(type);}
+        static VerticalPropellers tryBind(Lookup lookup,Class<?> bearing,Class<?> kinetic) {
+            try {
+                for(var pin:VERTICAL_PINS.entrySet())hash(lookup.find(pin.getKey()),pin.getValue());
+                Class<?> gyro=lookup.find(GYRO),base=lookup.find(SMALL_BASE);
+                var small=Set.of(lookup.find(ANDESITE),lookup.find(WOODEN),lookup.find(SMART));
+                if(gyro.getSuperclass()!=bearing||!kinetic.isAssignableFrom(base)
+                        ||small.stream().anyMatch(type->type.getSuperclass()!=base))return null;
+                Set<Class<?>> types=new HashSet<>(small);types.add(gyro);
+                return new VerticalPropellers(Set.copyOf(types),field(base,"rotationSpeed"),base.getMethod("getAngle"),
+                        base.getMethod("getPreviousAngle"),base.getMethod("isActive"));
+            } catch(ReflectiveOperationException|RuntimeException|LinkageError unavailable) {return null;}
+        }
+    }
+
     private BlockEntity kinetic(Object value,Object body,ServerLevel world,List<BlockEntity> entities,boolean source)throws ReflectiveOperationException{
         if(!(value instanceof BlockEntity be)||!kineticType.isInstance(be)||be.isRemoved()||be.getLevel()!=world)throw fail("fuel_foreign_source");
         if(entities.stream().anyMatch(existing->existing==be)){

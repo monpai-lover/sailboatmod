@@ -67,8 +67,8 @@ public final class TownArrivalsBoardRenderer implements BlockEntityRenderer<Town
             return switch (row.publicPhase()) {
                 case "TAXI_OUT", "TAXI_IN" -> tr("phase.taxi");
                 case "HOLD_SHORT", "LINE_UP" -> tr("phase.hold");
-                case "TAKEOFF", "CLIMB" -> tr("phase.departing");
-                case "APPROACH", "LANDING_ROLL", "STAND_STABILIZING" -> tr("phase.arriving");
+                case "TAKEOFF", "CLIMB", "VERTICAL_TAKEOFF" -> tr("phase.departing");
+                case "APPROACH", "LANDING_ROLL", "STAND_STABILIZING", "VERTICAL_LANDING" -> tr("phase.arriving");
                 default -> tr("state.moving");
             };
         }

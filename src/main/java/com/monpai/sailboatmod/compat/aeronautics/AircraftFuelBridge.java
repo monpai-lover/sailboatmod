@@ -1,4 +1,6 @@
 package com.monpai.sailboatmod.compat.aeronautics;
+
+import com.monpai.sailboatmod.transport.air.AircraftClass;
 import net.minecraft.core.BlockPos;
 import net.minecraft.world.level.block.entity.BlockEntity;
 import net.minecraft.server.level.ServerLevel;
@@ -22,9 +24,12 @@ public final class AircraftFuelBridge {
     private static volatile boolean attempted;
     private AircraftFuelBridge(){}
     public static Observation inspect(BlockEntity controller){
-        if(!loaded(controller))return unavailable("fuel_controller_not_loaded");
+        return inspect(controller,AircraftClass.FIXED_WING);
+    }
+    public static Observation inspect(BlockEntity controller,AircraftClass airframe){
+        if(airframe==null||!loaded(controller))return unavailable("fuel_controller_not_loaded");
         var api=api();if(api==null)return unavailable("fuel_native_abi_unavailable");
-        try{return api.inspect(controller);}
+        try{return api.inspect(controller,airframe);}
         catch(ReflectiveOperationException|RuntimeException|LinkageError failure){
             String reason=failure.getMessage();return unavailable(reason!=null&&reason.startsWith("fuel_")?reason:"fuel_native_state_unavailable");
         }

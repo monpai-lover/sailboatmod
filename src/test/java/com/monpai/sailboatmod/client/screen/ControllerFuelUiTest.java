@@ -138,6 +138,17 @@ class ControllerFuelUiTest {
         assertFalse(keys.contains(PREFIX+"fuel_shortfall"));assertFalse(text(body).stream().anyMatch(s->s.contains("0.0 RPM")));
     }
 
+    @Test void guidedRotorcraftAndAirshipsShowFuelReadings() throws Exception {
+        for (String aircraft : List.of("ROTORCRAFT", "AIRSHIP")) {
+            var values = data(budget(true, false), false, false).values();
+            values.putString("AircraftClass", aircraft);
+            var screen = new RegisteredVehicleControllerScreen(new ControllerScreenData(POS, ID, values));
+            var keys = translations(page(screen, "power"));
+            assertTrue(keys.contains(PREFIX + "fuel_title"), aircraft);
+            assertTrue(keys.contains(PREFIX + "reason.fuel_insufficient"), aircraft);
+        }
+    }
+
     @Test void nonGuidedControllersDoNotAdvertiseThisFuelProof() throws Exception {
         var values=data(budget(true,true),false,false).values();values.putBoolean("AirRail",false);
         assertFalse(translations(page(new RegisteredVehicleControllerScreen(new ControllerScreenData(POS,ID,values)),"power")).contains(PREFIX+"fuel_title"));

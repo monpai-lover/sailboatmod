@@ -614,6 +614,14 @@ public final class AirportBlockEntity extends DockBlockEntity {
         arrivalChecks.remove(carrier.getTransportUuid());
         return Optional.empty();
     }
+    @Override protected boolean canAssignCarrierToRoute(LogisticsCarrier carrier, boolean allowCargo) {
+        // Market dispatch stages the manifest before assigning the route. A first departure
+        // needs the same parked-airport proof, while delivery still needs its captured arrival proof.
+        return super.canAssignCarrierToRoute(carrier, allowCargo)
+                || allowCargo && carrier instanceof RegisteredVehicleControllerBlockEntity controller
+                    && controller.canBootstrapLoadedAtAirport(this);
+    }
+
     @Override public boolean isCarrierInsideDockZone(LogisticsCarrier carrier) {
         if (!(carrier instanceof AirportApproachState state) || !state.physicalArrivalReady() || state.velocityMetersPerSecond() == null) {
             if (carrier != null) arrivalChecks.remove(carrier.getTransportUuid());
