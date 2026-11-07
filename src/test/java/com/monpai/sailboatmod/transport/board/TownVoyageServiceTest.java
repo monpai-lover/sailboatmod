@@ -35,6 +35,33 @@ class TownVoyageServiceTest {
         assertTrue(i.currentKey(k.carrier()).isEmpty());
         assertTrue(rows(i,"town-a",160).isEmpty());
     }
+    @Test void townShowsFinalRailEtaWithDwellAndSuppressesTheDuplicateCurrentLeg() {
+        var index = catalogIndex();
+        Endpoint via = new Endpoint("minecraft:overworld", 3, "town-via", "Via");
+        index.observeEndpoint(via, true);
+        UUID train = UUID.randomUUID();
+        Key leg = new Key(new CarrierKey(CREATE_RAIL_PROVIDER, "global", train), UUID.randomUUID());
+        Key freight = new Key(new CarrierKey(CREATE_RAIL_PROVIDER, RAIL_FREIGHT_SCOPE, train), UUID.randomUUID());
+        index.publish(new Observation(leg, Kind.LAND, "Train", "Next", HOME, via, "RAIL_LEG",
+                State.MOVING, true, 100, 20, OptionalLong.of(80), 100, "leg"), 100);
+        index.publish(new Observation(freight, Kind.LAND, "Train", "Final", HOME, AWAY, "RAIL_FREIGHT",
+                State.DWELLING, true, 100, 20, OptionalLong.of(600), 100, "freight"), 100);
+        for (String town : List.of("town-a", "town-b", "town-via")) index.view(town, Filter.ALL, 0, 100);
+        index.refresh(100);
+        assertEquals(1, index.view("town-a", Filter.ALL, 0, 100).rows().size());
+        assertEquals(600, index.view("town-a", Filter.ALL, 0, 100).rows().getFirst().etaTicks().orElseThrow());
+        assertEquals(State.DWELLING, index.view("town-b", Filter.ALL, 0, 100).rows().getFirst().state());
+        assertEquals(80, index.view("town-via", Filter.ALL, 0, 100).rows().getFirst().etaTicks().orElseThrow());
+
+        index.publish(new Observation(freight, Kind.LAND, "Train", "Via → Away", HOME, AWAY, "RAIL_BLOCKED",
+                State.WAITING_RESOURCE, true, 120, 20, OptionalLong.empty(), -1, "freight"), 120);
+        var blocked = rows(index, "town-a", 120);
+        assertEquals(1, blocked.size());
+        assertEquals("RAIL_BLOCKED", blocked.getFirst().publicPhase());
+        assertEquals("Via → Away", blocked.getFirst().routeName());
+        assertTrue(blocked.getFirst().etaTicks().isEmpty());
+    }
+
     @Test void perCarrierEtaRequiresCurrentDestinationAndFreshMotion() {
         var index = catalogIndex();
         Key current = key(1);

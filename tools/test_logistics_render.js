@@ -294,10 +294,10 @@ test("aircraftLegacyModeAliasesMatchTheServer", () => {
 });
 
 test("rail next-stop time is distinct from the final order ETA", () => {
-  const train = { ...boat, transportMode: "RAIL", etaSeconds: 0,
+  const train = { ...boat, transportMode: "RAIL", etaSeconds: 80,
     rail: { nextStop: "<Via Station>", nextStopEtaSeconds: 18 } };
   const html = panel.detailHtml(train, ctx({}));
-  assert.match(html, /<dt>ETA<\/dt><dd>-<\/dd>/);
+  assert.match(html, /<dt>railFinalEta<\/dt><dd>1m 20s<\/dd>/);
   assert.match(html, /<dt>railNextStop<\/dt><dd>&lt;Via Station&gt;<\/dd>/);
   assert.match(html, /<dt>railNextStopEta<\/dt><dd>18s<\/dd>/);
   assert.doesNotMatch(panel.detailHtml({ ...train, rail: { nextStop: "Via Station" } }, ctx({})), /railNextStopEta/);
@@ -306,10 +306,11 @@ test("rail next-stop time is distinct from the final order ETA", () => {
 test("rail dwell and native route retry have distinct status and no stale ETA", () => {
   const train = { ...boat, transportMode: "RAIL", etaSeconds: 0 };
   const dwell = panel.detailHtml({ ...train, rail: { nextStop: "Final", atStation: "Via", state: "DWELLING" } }, ctx({}));
-  const blocked = panel.detailHtml({ ...train, rail: { nextStop: "Final", atStation: "Via", state: "WAITING_ROUTE" } }, ctx({}));
+  const blocked = panel.detailHtml({ ...train, rail: { nextStop: "Final", atStation: "Via", state: "WAITING_ROUTE", blockedFrom: "<Via>", blockedTo: "Final" } }, ctx({}));
   assert.match(dwell, /railDwelling/);
   assert.match(dwell, /<dt>railCurrentStop<\/dt><dd>Via<\/dd>/);
   assert.match(blocked, /railWaitingRoute/);
+  assert.match(blocked, /<dt>railBlockedLeg<\/dt><dd>&lt;Via&gt; → Final<\/dd>/);
   assert.doesNotMatch(dwell + blocked, /railNextStopEta/);
 });
 

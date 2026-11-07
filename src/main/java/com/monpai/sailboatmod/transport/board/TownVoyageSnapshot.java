@@ -13,12 +13,14 @@ import java.nio.charset.StandardCharsets;
 public final class TownVoyageSnapshot {
     public static final long MAX_ETA_TICKS = 12_096_000;
     public static final int MAX_ROWS = 8;
-    public enum State { MOVING, PAUSED, FUEL_BLOCKED, WAITING_TERRAIN, WAITING_RESOURCE, RECOVERING, UNLOADED, STALE, ESTIMATING, ETA_UNKNOWN }
+    public static final String CREATE_RAIL_PROVIDER = "create-train";
+    public static final String RAIL_FREIGHT_SCOPE = "freight";
+    public enum State { MOVING, PAUSED, FUEL_BLOCKED, WAITING_TERRAIN, WAITING_RESOURCE, RECOVERING, UNLOADED, STALE, ESTIMATING, ETA_UNKNOWN, DWELLING }
     public enum Relation { INBOUND, OUTBOUND, LOCAL }
     public enum Filter { ALL, WATER, LAND, AIR }
     private static final Set<String> PUBLIC_PHASES = Set.of("UNKNOWN", "MOVING", "PAUSED", "SAILING", "DRIVING",
             "TAXI_OUT", "HOLD_SHORT", "LINE_UP", "TAKEOFF", "CLIMB", "CRUISE", "APPROACH", "LANDING_ROLL", "TAXI_IN", "STAND_STABILIZING",
-            "VERTICAL_TAKEOFF", "VERTICAL_LANDING");
+            "VERTICAL_TAKEOFF", "VERTICAL_LANDING", "RAIL_LEG", "RAIL_FREIGHT", "RAIL_BLOCKED");
     public record CarrierKey(String providerId, String scopeId, UUID carrierId) {
         public CarrierKey {
             providerId = identity(providerId, 64, false);
@@ -65,7 +67,7 @@ public final class TownVoyageSnapshot {
             sourceName = display(sourceName, 64);
             targetName = display(targetName, 64);
             publicPhase = TownVoyageSnapshot.publicPhase(publicPhase);
-            etaTicks = state == State.MOVING ? boundedEta(etaTicks) : OptionalLong.empty();
+            etaTicks = state == State.MOVING || state == State.DWELLING && publicPhase.equals("RAIL_FREIGHT") ? boundedEta(etaTicks) : OptionalLong.empty();
         }
         /** Elapsed gameplay ticks consume a prediction, but cannot prove an arrival. */
         public PublicRow afterTicks(long elapsed) {

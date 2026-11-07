@@ -55,7 +55,7 @@ class TownVoyageSnapshotTest {
     @Test void publicRowHasOnlyExplicitPublicWhitelistFields() {
         assertEquals(List.of("rowId", "kind", "carrierName", "routeName", "sourceName", "targetName", "relation", "publicPhase", "state", "etaTicks"),
                 Arrays.stream(PublicRow.class.getRecordComponents()).map(RecordComponent::getName).toList());
-        assertEquals(Set.of("MOVING", "PAUSED", "FUEL_BLOCKED", "WAITING_TERRAIN", "WAITING_RESOURCE", "RECOVERING", "UNLOADED", "STALE", "ESTIMATING", "ETA_UNKNOWN"),
+        assertEquals(Set.of("MOVING", "PAUSED", "FUEL_BLOCKED", "WAITING_TERRAIN", "WAITING_RESOURCE", "RECOVERING", "UNLOADED", "STALE", "ESTIMATING", "ETA_UNKNOWN", "DWELLING"),
                 Arrays.stream(State.values()).map(Enum::name).collect(Collectors.toSet()));
     }
     @Test void dedupIdentityIncludesProviderScopeCarrierAndActualLeg() {

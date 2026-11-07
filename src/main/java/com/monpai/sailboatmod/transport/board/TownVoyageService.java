@@ -89,7 +89,7 @@ public final class TownVoyageService {
     public boolean reserveGroundGeometry(CarrierKey carrier, String geometry, int points) { return !closed && index.reserveGroundGeometry(carrier, geometry, points); }
     public void releaseGroundGeometry(CarrierKey carrier) { index.releaseGroundGeometry(carrier); }
     private static BoardView empty(Filter filter, long now) { return new BoardView(0, Math.max(0, now), filter == null ? Filter.ALL : filter, 0, 1, 0, true, List.of()); }
-    private static boolean advancing(State state) { return state == State.MOVING || state == State.ESTIMATING || state == State.ETA_UNKNOWN; }
+    private static boolean advancing(State state) { return state == State.MOVING || state == State.DWELLING || state == State.ESTIMATING || state == State.ETA_UNKNOWN; }
     private static Observation copy(Observation o, Endpoint source, Endpoint target, State state, boolean loaded, OptionalLong eta, long etaTick) {
         return new Observation(o.key(), o.kind(), o.carrierName(), o.routeName(), source, target, o.phase(), state, loaded,
                 o.observedTick(), o.heartbeatTicks(), eta, etaTick, o.geometryId());
@@ -287,7 +287,11 @@ public final class TownVoyageService {
                 if (now - interest.getValue() > INTEREST_TICKS) { projections.remove(interest.getKey()); it.remove(); continue; }
                 String town = interest.getKey(); List<PublicRow> rows = new ArrayList<>();
                 Map<String, Long> observedAirExpiry = new HashMap<>();
-                for (CarrierKey carrier : towns.getOrDefault(town, Set.of())) {
+                Set<CarrierKey> townCarriers = towns.getOrDefault(town, Set.of());
+                for (CarrierKey carrier : townCarriers) {
+                    if (carrier.providerId().equals(CREATE_RAIL_PROVIDER) && carrier.scopeId().equals("global")
+                            && townCarriers.contains(new CarrierKey(CREATE_RAIL_PROVIDER, RAIL_FREIGHT_SCOPE, carrier.carrierId())))
+                        continue;
                     Entry current = carriers.get(carrier); if (current == null) continue;
                     if (current.seen && current.observation.loaded() && !fresh(current.observation, now) && current.observation.state() != State.STALE) {
                         invalidate(current, State.STALE, true, now); changeVersion++;

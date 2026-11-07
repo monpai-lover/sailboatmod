@@ -49,11 +49,14 @@ public final class TownArrivalsBoardRenderer implements BlockEntityRenderer<Town
             PublicRow row = view.rows().get(i);
             int y = 42 + i * 22;
             String relation = switch (row.relation()) { case INBOUND -> "↓"; case OUTBOUND -> "↑"; case LOCAL -> "↔"; };
-            draw(tr("mode." + row.kind().name().toLowerCase(Locale.ROOT)) + relation, 0, y, 30, ACCENT, pose, buffer);
+            String mode = row.publicPhase().startsWith("RAIL_") ? "rail" : row.kind().name().toLowerCase(Locale.ROOT);
+            draw(tr("mode." + mode) + relation, 0, y, 30, ACCENT, pose, buffer);
             draw(row.routeName(), 33, y, 109, TEXT, pose, buffer);
             draw(row.sourceName() + " → " + row.targetName(), 33, y + 10, 109, MUTED, pose, buffer);
             draw(status(row, view.syncing()), 146, y, 52, stateColor(row, view.syncing()), pose, buffer);
             draw(eta(row, view.syncing()), 202, y, 78, TEXT, pose, buffer);
+            if (row.etaTicks().isPresent() && row.publicPhase().equals("RAIL_FREIGHT"))
+                draw(tr("eta.final_stop"), 202, y + 10, 78, MUTED, pose, buffer);
         }
         draw(tr("page", view.page() + 1, view.totalPages()), 0, 226, 104, MUTED, pose, buffer);
         if (view.overflow() > 0) draw(tr("overflow", view.overflow()), 107, 226, 173, MUTED, pose, buffer);
@@ -62,6 +65,7 @@ public final class TownArrivalsBoardRenderer implements BlockEntityRenderer<Town
     }
     private String status(PublicRow row, boolean syncing) {
         if (syncing) return tr("syncing");
+        if (row.state() == State.WAITING_RESOURCE && row.publicPhase().equals("RAIL_BLOCKED")) return tr("phase.rail_blocked");
         if (row.state() == State.WAITING_TERRAIN) return tr("state.waiting_terrain_" + row.kind().name().toLowerCase(Locale.ROOT));
         if (row.state() == State.MOVING) {
             return switch (row.publicPhase()) {

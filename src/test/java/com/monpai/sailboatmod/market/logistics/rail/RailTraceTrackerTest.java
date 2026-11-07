@@ -105,7 +105,7 @@ class RailTraceTrackerTest {
                     .filter(p -> { try { return java.util.regex.Pattern.compile("(?m)^import\\s+(?:static\\s+)?com\\.simibubi\\.create\\.")
                             .matcher(java.nio.file.Files.readString(p)).find(); } catch (java.io.IOException e) { return false; } })
                     .map(p -> p.getFileName().toString()).toList();
-            assertEquals(java.util.Set.of("CreateTrainBridge.java", "RailFreightNativeBridge.java"), java.util.Set.copyOf(users));
+            assertEquals(java.util.Set.of("CreateTrainBridge.java", "RailFreightNativeBridge.java", "CreateRailRouteEstimate.java"), java.util.Set.copyOf(users));
         }
     }
 

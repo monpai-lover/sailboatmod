@@ -17,6 +17,7 @@ public record AirportScreenData(ResourceLocation dimension, BlockPos airportPos,
         List<String> statuses, String result, String customName, List<RouteTarget> routeTargets) {
     private static final String AUTO_LAYOUT_FEATURE = "feature|auto_layout|1";
     private static final String ROUTE_PUBLICATION_FEATURE = "feature|route_publication|1";
+    private static final String ROUTE_NAME_CONFLICT = "feature|route_name_conflict|1";
     public record RouteTarget(BlockPos pos, String name, int suggestedCruiseY, boolean canPublishReturn) {
         public RouteTarget {
             pos = pos.immutable();
@@ -46,6 +47,7 @@ public record AirportScreenData(ResourceLocation dimension, BlockPos airportPos,
     }
     public boolean supportsAutoLayout() { return statuses.contains(AUTO_LAYOUT_FEATURE); }
     public boolean supportsRoutePublication() { return statuses.contains(ROUTE_PUBLICATION_FEATURE); }
+    public boolean hasRouteNameConflict() { return statuses.contains(ROUTE_NAME_CONFLICT); }
     public static AirportScreenData capture(ServerPlayer player, AirportBlockEntity airport, String result) {
         List<String> statuses = new ArrayList<>();
         for (AirportFacility facility : airport.facilities())
@@ -59,6 +61,8 @@ public record AirportScreenData(ResourceLocation dimension, BlockPos airportPos,
         if (statuses.size() < 160) statuses.add(ROUTE_PUBLICATION_FEATURE);
         var town = com.monpai.sailboatmod.nation.service.TownService.getTownAt(player.serverLevel(),airport.getBlockPos());
         boolean canManage = AirportManagementService.canManage(player,airport);
+        if (canManage && !airport.facilities().isEmpty() && statuses.size() < 160
+                && AirportRoutePublication.sourceNameConflict(player.serverLevel(), airport)) statuses.add(ROUTE_NAME_CONFLICT);
         List<RouteTarget> targets = canManage ? AirportRoutePublication.targets(player, airport) : List.of();
         long editorRevision = airport.editorRevision();
         AirportGroundLayout layout = airport.groundLayout();

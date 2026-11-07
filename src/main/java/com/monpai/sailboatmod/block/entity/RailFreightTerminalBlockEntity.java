@@ -210,6 +210,10 @@ public final class RailFreightTerminalBlockEntity extends DockBlockEntity implem
             entry.putString("Owner", train.ownerId() == null ? "" : train.ownerId().toString());
             entry.putBoolean("Owned", player.getUUID().equals(train.ownerId())); entry.putBoolean("Registered", train.registered());
             entry.putBoolean("Enabled", train.enabled()); entry.putString("Status", train.status());
+            if (!train.blockedFrom().isBlank() && !train.blockedTo().isBlank()) {
+                entry.putString("BlockedFrom", train.blockedFrom());
+                entry.putString("BlockedTo", train.blockedTo());
+            }
             entry.putInt("Slots", train.cargoSlots()); entry.putInt("Used", train.cargoUsed()); entry.putInt("FuelSafeSlots", train.fuelSafeSlots());
             entry.putString("Order", train.purchaseOrderId() == null ? "" : train.purchaseOrderId());
             if (train.source() != null) entry.putString("Source", train.source().stationPos().toShortString());

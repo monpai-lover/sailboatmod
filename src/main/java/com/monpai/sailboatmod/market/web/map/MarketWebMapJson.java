@@ -100,10 +100,16 @@ public final class MarketWebMapJson {
         rail.addProperty("state", stop.state().name());
         if (!stop.name().isBlank()) rail.addProperty("nextStop", stop.name());
         if (!stop.atStation().isBlank()) rail.addProperty("atStation", stop.atStation());
-        int eta = stop.state() == LegState.MOVING ? Math.max(0, stop.etaSeconds()) : 0;
-        if (eta > 0) rail.addProperty("nextStopEtaSeconds", eta);
+        if (stop.state() == LegState.MOVING && stop.nextEtaSeconds() > 0)
+            rail.addProperty("nextStopEtaSeconds", stop.nextEtaSeconds());
+        boolean blocked = !stop.blockedFrom().isBlank() && !stop.blockedTo().isBlank();
+        if (blocked) {
+            rail.addProperty("blockedFrom", stop.blockedFrom());
+            rail.addProperty("blockedTo", stop.blockedTo());
+        }
         shipment.add("rail", rail);
-        shipment.addProperty("etaSeconds", stop.finalStop() ? eta : 0);
+        boolean advancing = stop.state() == LegState.MOVING || stop.state() == LegState.DWELLING;
+        shipment.addProperty("etaSeconds", advancing && !blocked ? Math.max(0, stop.finalEtaSeconds()) : 0);
     }
 
     public static JsonObject territory(MarketWebMapDtos.Territory territory) {

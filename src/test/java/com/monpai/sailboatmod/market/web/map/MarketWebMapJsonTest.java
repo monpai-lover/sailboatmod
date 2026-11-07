@@ -172,21 +172,26 @@ class MarketWebMapJsonTest {
     }
 
     @Test
-    void railShipmentEtaUsesOnlyTheObservedFinalLeg() {
+    void railShipmentDistinguishesFinalEtaAndBlockedLeg() {
         var shipment = new JsonObject();
-        MarketWebMapJson.addRailStop(shipment, new NextStop("Via", "", LegState.MOVING, 17, false));
+        MarketWebMapJson.addRailStop(shipment, new NextStop("Via", "", LegState.MOVING, 17, 64, "", ""));
         assertEquals(17, shipment.getAsJsonObject("rail").get("nextStopEtaSeconds").getAsInt());
-        assertEquals(0, shipment.get("etaSeconds").getAsInt());
+        assertEquals(64, shipment.get("etaSeconds").getAsInt());
 
-        MarketWebMapJson.addRailStop(shipment, new NextStop("Final", "Via", LegState.WAITING_ROUTE, 17, true));
+        MarketWebMapJson.addRailStop(shipment, new NextStop("Final", "Via", LegState.WAITING_ROUTE, 17, 53, "Via", "Final"));
         var waiting = shipment.getAsJsonObject("rail");
         assertEquals("WAITING_ROUTE", waiting.get("state").getAsString());
         assertEquals("Via", waiting.get("atStation").getAsString());
         assertFalse(waiting.has("nextStopEtaSeconds"));
+        assertEquals("Via", waiting.get("blockedFrom").getAsString());
+        assertEquals("Final", waiting.get("blockedTo").getAsString());
         assertEquals(0, shipment.get("etaSeconds").getAsInt());
 
-        MarketWebMapJson.addRailStop(shipment, new NextStop("Final", "", LegState.MOVING, 12, true));
+        MarketWebMapJson.addRailStop(shipment, new NextStop("Final", "Via", LegState.DWELLING, 0, 12, "", ""));
         assertEquals(12, shipment.get("etaSeconds").getAsInt());
+        MarketWebMapJson.addRailStop(shipment, new NextStop("Via", "", LegState.MOVING, 17, 64, "Via", "Final"));
+        assertEquals(0, shipment.get("etaSeconds").getAsInt());
+        assertEquals(17, shipment.getAsJsonObject("rail").get("nextStopEtaSeconds").getAsInt());
     }
 
     private static TerminalNetworkSavedData.TerminalEntry terminal(String dimension, BlockPos pos,

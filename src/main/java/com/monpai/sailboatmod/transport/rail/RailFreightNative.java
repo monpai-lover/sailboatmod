@@ -2,6 +2,7 @@ package com.monpai.sailboatmod.transport.rail;
 
 import java.util.List;
 import java.util.Optional;
+import java.util.OptionalLong;
 import java.util.UUID;
 import net.minecraft.core.BlockPos;
 import net.minecraft.nbt.CompoundTag;
@@ -30,6 +31,10 @@ public interface RailFreightNative {
                                CompoundTag ownedSchedule, boolean requireCompleted);
     boolean matchesOwnedSchedule(ServerLevel level, UUID trainId, List<RailStationRef> visits, CompoundTag ownedSchedule);
     Optional<NextStop> nextStop(ServerLevel level, UUID trainId, UUID owner, List<RailStationRef> visits, CompoundTag ownedSchedule);
+    default RemainingRoute estimateRemaining(ServerLevel level, UUID trainId, UUID owner, List<RailStationRef> visits,
+                                             List<Integer> stopoverSeconds, CompoundTag ownedSchedule) {
+        return RemainingRoute.unavailable();
+    }
     void markDirty();
 
     enum LegState {
@@ -45,6 +50,16 @@ public interface RailFreightNative {
     }
 
     record NextStop(@Nullable RailStationRef station, String name, String atStation, LegState state) { }
+
+    record RemainingRoute(OptionalLong finalEtaTicks, String blockedFrom, String blockedTo) {
+        public static RemainingRoute unavailable() {
+            return new RemainingRoute(OptionalLong.empty(), "", "");
+        }
+
+        public static RemainingRoute blocked(String from, String to) {
+            return new RemainingRoute(OptionalLong.empty(), from, to);
+        }
+    }
 
     record Path(int distanceMeters, String sourceName, String targetName) {}
 

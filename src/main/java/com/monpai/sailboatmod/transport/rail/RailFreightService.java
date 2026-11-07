@@ -12,9 +12,12 @@ import com.monpai.sailboatmod.transport.CargoLoadReceipt;
 import com.monpai.sailboatmod.transport.LogisticsCarrier;
 import com.monpai.sailboatmod.transport.SelectedCargoInventory;
 import com.monpai.sailboatmod.transport.TransportRegistry;
+import com.monpai.sailboatmod.transport.board.TownVoyagePublisher;
 import com.monpai.sailboatmod.transport.board.TownVoyageService;
+import com.monpai.sailboatmod.transport.board.TownVoyageSnapshot;
 import com.monpai.sailboatmod.transport.board.TownVoyageSnapshot.CarrierKey;
 import com.monpai.sailboatmod.transport.rail.RailFreightNative.LegState;
+import com.monpai.sailboatmod.transport.rail.RailFreightNative.RemainingRoute;
 import com.monpai.sailboatmod.transport.rail.RailFreightNative.TrainView;
 import com.monpai.sailboatmod.transport.rail.RailFreightSavedData.Job;
 import com.monpai.sailboatmod.transport.rail.RailFreightSavedData.Phase;
@@ -24,6 +27,7 @@ import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+import java.util.OptionalLong;
 import java.util.UUID;
 import java.util.WeakHashMap;
 import java.util.function.Function;
@@ -41,19 +45,21 @@ import org.slf4j.Logger;
 
 /** The only market entry point for opted-in Create trains. A job survives the carrier's loaded lifetime. */
 public final class RailFreightService {
-    public static final String PROVIDER_ID = "create-train";
+    public static final String PROVIDER_ID = TownVoyageSnapshot.CREATE_RAIL_PROVIDER;
     private static final Logger LOGGER = LogUtils.getLogger();
     private static final Map<MinecraftServer, Map<UUID, RailFreightCarrier>> LIVE = new WeakHashMap<>();
     private static boolean incompatibleCreate;
+    private static boolean estimateWarningLogged;
 
     private RailFreightService() {}
 
     public record RegistrationSnapshot(UUID trainId, String trainName, @Nullable UUID ownerId, boolean registered,
                                        boolean enabled, String status, int cargoSlots, int cargoUsed,
                                        String purchaseOrderId, @Nullable RailStationRef source,
-                                       @Nullable RailStationRef target, int fuelSafeSlots) {}
+                                       @Nullable RailStationRef target, int fuelSafeSlots, String blockedFrom, String blockedTo) {}
 
-    public record NextStop(String name, String atStation, LegState state, int etaSeconds, boolean finalStop) { }
+    public record NextStop(String name, String atStation, LegState state, int nextEtaSeconds, int finalEtaSeconds,
+                           String blockedFrom, String blockedTo) { }
 
     /** Observation only. Callers must authorize access to the shipping order first. */
     public static Optional<NextStop> nextStop(ServerLevel level, @Nullable ShippingOrder order) {
@@ -70,18 +76,49 @@ public final class RailFreightService {
                 || !job.route().sourceTerminal().equals(order.sourceDockPos()) || !job.route().targetTerminal().equals(order.targetDockPos())
                 || job.manifest().stream().noneMatch(entry -> order.shippingOrderId().equals(entry.shippingOrderId())
                         && order.purchaseOrderId().equals(entry.purchaseOrderId()))) return Optional.empty();
-        return read(level, Optional.empty(), api -> api.nextStop(level, trainId, registration.ownerId(),
-                job.route().outboundStations(), job.ownedSchedule()).map(next -> {
-                    boolean finalStop = job.route().target().equals(next.station());
-                    if (next.state() != LegState.MOVING || next.station() == null || level.getServer().tickRateManager().isFrozen())
-                        return new NextStop(next.name(), next.atStation(), next.state(), 0, finalStop);
-                    long now = level.getServer().overworld().getGameTime();
-                    long ticks = TownVoyageService.existing(level.getServer())
-                            .map(service -> service.remainingEta(new CarrierKey(PROVIDER_ID, "global", trainId),
-                                    next.station().dimensionId(), next.station().stationPos().asLong(), now).orElse(0))
-                            .orElse(0L);
-                    return new NextStop(next.name(), next.atStation(), next.state(), (int) ((ticks + 19) / 20), finalStop);
-                }));
+        return read(level, Optional.empty(), api -> {
+            RemainingRoute route = estimateRemaining(level, api, registration, job);
+            return api.nextStop(level, trainId, registration.ownerId(), job.route().outboundStations(), job.ownedSchedule())
+                    .map(next -> {
+                        long nextTicks = 0;
+                        if (next.state() == LegState.MOVING && next.station() != null && !level.getServer().tickRateManager().isFrozen()) {
+                            long now = level.getServer().overworld().getGameTime();
+                            nextTicks = TownVoyageService.existing(level.getServer())
+                                    .map(service -> service.remainingEta(new CarrierKey(PROVIDER_ID, "global", trainId),
+                                            next.station().dimensionId(), next.station().stationPos().asLong(), now).orElse(0))
+                                    .orElse(0L);
+                        }
+                        long finalTicks = route.finalEtaTicks().orElse(0);
+                        if (finalTicks > 0 && nextTicks > 0 && job.route().target().equals(next.station())) finalTicks = nextTicks;
+                        return new NextStop(next.name(), next.atStation(), next.state(), etaSeconds(nextTicks),
+                                etaSeconds(finalTicks), route.blockedFrom(), route.blockedTo());
+                    });
+        });
+    }
+
+    private static int etaSeconds(long ticks) {
+        return ticks > 0 && ticks <= TownVoyageSnapshot.MAX_ETA_TICKS ? (int) ((ticks + 19) / 20) : 0;
+    }
+
+    private static RemainingRoute estimateRemaining(ServerLevel level, RailFreightNative api,
+                                                     Registration registration, Job job) {
+        if (level.getServer().tickRateManager().isFrozen() || job.phase() == Phase.PREPARED) return RemainingRoute.unavailable();
+        boolean returning = job.phase() == Phase.RETURN;
+        try {
+            return api.estimateRemaining(level, job.trainId(), registration.ownerId(),
+                    returning ? List.of(job.route().source()) : job.route().outboundStations(),
+                    returning ? List.of() : job.route().stopoverSeconds(), job.ownedSchedule());
+        } catch (RuntimeException | LinkageError unavailable) {
+            if (!estimateWarningLogged) {
+                estimateWarningLogged = true;
+                LOGGER.warn("Could not estimate the remaining Create rail itinerary", unavailable);
+            }
+            return RemainingRoute.unavailable();
+        }
+    }
+
+    private static boolean blocked(RemainingRoute route) {
+        return !route.blockedFrom().isBlank() && !route.blockedTo().isBlank();
     }
 
     public static boolean available() { return nativeApi() != null; }
@@ -109,7 +146,7 @@ public final class RailFreightService {
         if (station == null) return Optional.empty();
         return read(level, Optional.empty(), api -> api.atStation(level, station).map(view -> {
             RailFreightSavedData data = RailFreightSavedData.get(level);
-            return snapshot(data.registration(view.id()), view, data.job(view.id()));
+            return snapshot(level, data.registration(view.id()), view, data.job(view.id()));
         }));
     }
 
@@ -117,7 +154,7 @@ public final class RailFreightService {
         if (!serverThread(level) || station == null) return List.of();
         RailFreightSavedData data = RailFreightSavedData.get(level);
         return data.registrations().stream().filter(registration -> station.equals(registration.home()))
-                .map(registration -> snapshot(registration, read(level, null,
+                .map(registration -> snapshot(level, registration, read(level, null,
                         api -> api.train(level, registration.trainId()).orElse(null)), data.job(registration.trainId())))
                 .toList();
     }
@@ -245,17 +282,61 @@ public final class RailFreightService {
             } else {
                 publish(level, view, job);
             }
-            if (job == null || server.tickRateManager().isFrozen()) continue;
-            try {
-                advance(level, api, data, registration, job, view);
-            } catch (RuntimeException | LinkageError failure) {
-                status(data, job, "native_error");
-                reportFailure(failure);
+            if (job != null && !server.tickRateManager().isFrozen()) {
+                try {
+                    advance(level, api, data, registration, job, view);
+                } catch (RuntimeException | LinkageError failure) {
+                    status(data, job, "native_error");
+                    reportFailure(failure);
+                }
+            }
+            Job current = data.job(registration.trainId());
+            if (current == null || job != null && current.phase() != job.phase()) {
+                TownVoyagePublisher.retireCurrent(level, finalEtaCarrier(registration.trainId()));
+            } else if (current.phase() != Phase.PREPARED) {
+                try {
+                    observeFreightBoard(level, api, registration, current, view);
+                } catch (RuntimeException | LinkageError failure) {
+                    TownVoyagePublisher.markUnloaded(level, finalEtaCarrier(registration.trainId()));
+                    LOGGER.debug("Could not publish the remaining rail itinerary", failure);
+                }
             }
         }
     }
 
+    private static CarrierKey finalEtaCarrier(UUID trainId) {
+        return new CarrierKey(PROVIDER_ID, TownVoyageSnapshot.RAIL_FREIGHT_SCOPE, trainId);
+    }
+
+    private static void observeFreightBoard(ServerLevel level, @Nullable RailFreightNative api,
+                                            Registration registration, Job job, @Nullable TrainView view) {
+        RailRoute route = job.route();
+        boolean returning = job.phase() == Phase.RETURN;
+        var source = TownVoyagePublisher.endpoint(level, returning ? route.targetTerminal() : route.sourceTerminal(), "Rail");
+        var target = TownVoyagePublisher.endpoint(level, returning ? route.sourceTerminal() : route.targetTerminal(), "Rail");
+        boolean loaded = view != null && registration.ownerId().equals(view.owner());
+        LegState leg = loaded ? view.legState() : LegState.PREPARING;
+        RemainingRoute remaining = api != null && loaded ? estimateRemaining(level, api, registration, job) : RemainingRoute.unavailable();
+        boolean blocked = blocked(remaining);
+        var state = blocked ? TownVoyageSnapshot.State.WAITING_RESOURCE : switch (leg) {
+            case WAITING, WAITING_ROUTE -> TownVoyageSnapshot.State.WAITING_RESOURCE;
+            case PAUSED -> TownVoyageSnapshot.State.PAUSED;
+            case DWELLING -> TownVoyageSnapshot.State.DWELLING;
+            case MOVING -> TownVoyageSnapshot.State.MOVING;
+            case PREPARING -> TownVoyageSnapshot.State.ETA_UNKNOWN;
+        };
+        OptionalLong eta = remaining.finalEtaTicks();
+        long now = level.getServer().overworld().getGameTime();
+        TownVoyagePublisher.observe(level, new TownVoyageSnapshot.Observation(
+                new TownVoyageSnapshot.Key(finalEtaCarrier(job.trainId()), job.jobId()), LogisticsCarrier.Kind.LAND,
+                loaded ? view.name() : registration.trainName(),
+                blocked ? remaining.blockedFrom() + " → " + remaining.blockedTo() : source.displayName() + " → " + target.displayName(),
+                source, target, blocked || leg == LegState.WAITING_ROUTE ? "RAIL_BLOCKED" : "RAIL_FREIGHT",
+                state, loaded, now, 20, eta, eta.isPresent() ? now : -1, job.phase().name()));
+    }
+
     public static void stop(MinecraftServer server) {
+        estimateWarningLogged = false;
         Map<UUID, RailFreightCarrier> carriers = LIVE.remove(server);
         if (carriers == null) return;
         for (RailFreightCarrier carrier : carriers.values()) {
@@ -295,7 +376,8 @@ public final class RailFreightService {
         if (train.manual() || !api.matchesOwnedSchedule(level, train.id(), visits, ownedSchedule)) {
             boolean nativeRetry = !train.manual() && train.legState() == LegState.WAITING_ROUTE
                     && ownedSchedule.equals(train.managedSchedule());
-            status(data, job, nativeRetry ? "waiting_route" : "schedule_changed");
+            boolean knownBlock = !train.manual() && blocked(estimateRemaining(level, api, registration, job));
+            status(data, job, nativeRetry || knownBlock ? "waiting_route" : "schedule_changed");
             return;
         }
         if (train.paused() && !train.completed()) { status(data, job, "native_paused"); return; }
@@ -489,7 +571,7 @@ public final class RailFreightService {
         return handlers == null ? null : new SelectedCargoInventory(List.copyOf(handlers));
     }
 
-    private static RegistrationSnapshot snapshot(@Nullable Registration registration, @Nullable TrainView view, @Nullable Job job) {
+    private static RegistrationSnapshot snapshot(ServerLevel level, @Nullable Registration registration, @Nullable TrainView view, @Nullable Job job) {
         UUID id = view == null ? registration.trainId() : view.id();
         String name = view == null ? registration.trainName() : view.name();
         UUID owner = registration == null ? view.owner() : registration.ownerId();
@@ -505,11 +587,15 @@ public final class RailFreightService {
         else if (view.cargoUsed() != 0) status = "cargo_present";
         else if (!view.canDriveBothWays()) status = "driver_unavailable";
         else status = view.parkedAt(registration.home()) ? "ready" : "not_at_home";
+        RemainingRoute remaining = job == null || registration == null ? RemainingRoute.unavailable()
+                : read(level, RemainingRoute.unavailable(), api -> estimateRemaining(level, api, registration, job));
+        if (blocked(remaining)) status = "waiting_route";
         return new RegistrationSnapshot(id, name, owner, registration != null, enabled, status,
                 view == null ? 0 : view.cargoSlots(), view == null ? 0 : view.cargoUsed(),
                 job == null ? "" : job.manifest().getFirst().purchaseOrderId(),
                 job == null ? registration == null ? null : registration.home() : job.route().source(),
-                job == null ? null : job.route().target(), view == null ? 0 : view.fuelSafeSlots());
+                job == null ? null : job.route().target(), view == null ? 0 : view.fuelSafeSlots(),
+                remaining.blockedFrom(), remaining.blockedTo());
     }
 
     private static void status(RailFreightSavedData data, Job job, String status) {

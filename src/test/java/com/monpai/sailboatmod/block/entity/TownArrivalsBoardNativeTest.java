@@ -157,6 +157,16 @@ class TownArrivalsBoardNativeTest {
             assertTrue(row.etaTicks().isEmpty(), state.name());
         }
     }
+    @Test void verifiedRailDwellSurvivesTheBoardCodec() {
+        CompoundTag tag = TownArrivalsBoardBlockEntity.encodePublic(panel());
+        CompoundTag rowTag = tag.getList("Rows", Tag.TAG_COMPOUND).getCompound(0);
+        rowTag.putString("State", State.DWELLING.name());
+        rowTag.putString("Phase", "RAIL_FREIGHT");
+        rowTag.putLong("EtaTicks", 640);
+        var row = TownArrivalsBoardBlockEntity.decodePublic(tag).view().rows().getFirst();
+        assertEquals(State.DWELLING, row.state());
+        assertEquals(640, row.etaTicks().orElseThrow());
+    }
     @Test void codecBoundsUnicodeNamesAndSuppressesFormattingAndUnknownPhase() {
         CompoundTag tag = TownArrivalsBoardBlockEntity.encodePublic(panel());
         tag.putString("TownName", "\u00a7c\u202e镇\n" + "\uD83D\uDEA2".repeat(25));

@@ -1,5 +1,6 @@
 package com.monpai.sailboatmod.compat.create;
 
+import com.monpai.sailboatmod.transport.board.TownVoyageSnapshot;
 import com.monpai.sailboatmod.transport.rail.RailFreightCargoHold;
 import com.monpai.sailboatmod.transport.rail.RailFreightNative;
 import com.monpai.sailboatmod.transport.rail.RailRoute;
@@ -23,6 +24,7 @@ import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.List;
 import java.util.Optional;
+import java.util.OptionalLong;
 import java.util.UUID;
 import java.util.regex.Pattern;
 import net.minecraft.core.BlockPos;
@@ -43,6 +45,7 @@ public final class RailFreightNativeBridge implements RailFreightNative {
     private static final int MAX_STATIONS_IN_GRAPH = 8192;
     private static final String SCHEDULE_JOB = "SailboatFreightJob";
     private static final StationAccess STATIONS = StationAccess.bind();
+    private final CreateRailRouteEstimate routeEstimate = new CreateRailRouteEstimate();
 
     @Override
     public Optional<RailStationRef> station(ServerLevel level, BlockPos pos) {
@@ -246,11 +249,13 @@ public final class RailFreightNativeBridge implements RailFreightNative {
     public Optional<NextStop> nextStop(ServerLevel level, UUID trainId, UUID owner, List<RailStationRef> visits, CompoundTag schedule) {
         Train train = ownedTrain(trainId, owner);
         if (!valid(train) || train.runtime.completed || train.manualTick || train.countPlayerPassengers() != 0) return Optional.empty();
-        GlobalStation navigatingTo = train.navigation.destination;
-        if (navigatingTo != null ? !matchesOwnedSchedule(level, trainId, visits, schedule)
-                : !ownsSchedule(level, train, visits, schedule)) return Optional.empty();
+        if (!ownsSchedule(level, train, visits, schedule)) return Optional.empty();
         int entry = train.runtime.currentEntry;
         if (entry < 0 || entry >= visits.size()) return Optional.empty();
+        GlobalStation navigatingTo = train.navigation.destination;
+        if (navigatingTo != null && (!visits.get(entry).equals(ref(navigatingTo))
+                || !destinationName(train, entry).equals(navigatingTo.name) || !uniqueTarget(train, navigatingTo)))
+            return Optional.empty();
         GlobalStation current = train.getCurrentStation();
         String at = parked(train, current) ? current.name : "";
         boolean dwelling = atScheduledStop(train) && visits.get(entry).equals(ref(current));
@@ -260,6 +265,76 @@ public final class RailFreightNativeBridge implements RailFreightNative {
         if (!(train.runtime.getSchedule().entries.get(next).instruction instanceof DestinationInstruction instruction))
             return Optional.empty();
         return Optional.of(new NextStop(visits.get(next), instruction.getData().getString("Text"), at, state));
+    }
+
+    @Override
+    public RemainingRoute estimateRemaining(ServerLevel level, UUID trainId, UUID owner, List<RailStationRef> visits,
+                                            List<Integer> stopoverSeconds, CompoundTag expected) {
+        Train train = ownedTrain(trainId, owner);
+        if (!ownsSchedule(level, train, visits, expected) || train.runtime.completed || train.manualTick
+                || train.countPlayerPassengers() != 0 || !drivers(train)
+                || !RailRoute.validStopoverSeconds(visits.subList(0, visits.size() - 1), stopoverSeconds))
+            return RemainingRoute.unavailable();
+        int entry = train.runtime.currentEntry;
+        if (entry < 0 || entry >= visits.size()) return RemainingRoute.unavailable();
+        GlobalStation target = graphStation(train, visits.get(entry));
+        String targetName = destinationName(train, entry);
+        if (targetName.isBlank()) return RemainingRoute.unavailable();
+
+        GlobalStation current = train.getCurrentStation();
+        boolean parked = parked(train, current);
+        boolean dwelling = parked && train.runtime.state == ScheduleRuntime.State.POST_TRANSIT
+                && visits.get(entry).equals(ref(current));
+        GlobalStation navigatingTo = train.navigation.destination;
+        LegState state = legState(train);
+        if (navigatingTo != null && (target != navigatingTo || !targetName.equals(navigatingTo.name)))
+            return RemainingRoute.unavailable();
+        if (!dwelling && (target == null || !targetName.equals(target.name) || state == LegState.WAITING_ROUTE)) {
+            String from = parked ? current.name : entry == 0 ? "" : destinationName(train, entry - 1);
+            if (!from.isBlank()) return RemainingRoute.blocked(from, targetName);
+        }
+        if (target == null || !targetName.equals(target.name)) return RemainingRoute.unavailable();
+
+        long ticks = 0;
+        boolean reliable = state == LegState.MOVING || state == LegState.DWELLING;
+        if (state == LegState.MOVING) {
+            double speed = Math.abs(train.speed);
+            double distance = train.navigation.distanceToDestination;
+            reliable = Double.isFinite(distance) && distance >= 0 && speed > 0;
+            if (reliable) ticks = Math.max(1, (long) Math.ceil(distance / speed));
+        }
+        if (dwelling && entry == stopoverSeconds.size()) return RemainingRoute.unavailable();
+
+        for (int i = entry; i < visits.size() - 1; i++) {
+            int dwellTicks = stopoverSeconds.get(i) * 20;
+            if (i == entry && dwelling) dwellTicks = remainingDwell(train.runtime, dwellTicks);
+            String nextName = destinationName(train, i + 1);
+            if (nextName.isBlank()) return RemainingRoute.unavailable();
+            GlobalStation next = graphStation(train, visits.get(i + 1));
+            if (next == null || !nextName.equals(next.name) || !uniqueTarget(train, next))
+                return RemainingRoute.blocked(target.name, nextName);
+            CreateRailRouteEstimate.Leg leg = routeEstimate.between(level.getServer(), train, target, next);
+            if (leg.status() == CreateRailRouteEstimate.Status.BLOCKED)
+                return RemainingRoute.blocked(target.name, nextName);
+            if (leg.status() == CreateRailRouteEstimate.Status.UNKNOWN) reliable = false;
+            if (ticks > TownVoyageSnapshot.MAX_ETA_TICKS - dwellTicks - leg.ticks()) reliable = false;
+            else ticks += dwellTicks + leg.ticks();
+            target = next;
+        }
+        return reliable && ticks > 0 && ticks <= TownVoyageSnapshot.MAX_ETA_TICKS
+                ? new RemainingRoute(OptionalLong.of(ticks), "", "") : RemainingRoute.unavailable();
+    }
+
+    private static int remainingDwell(ScheduleRuntime runtime, int duration) {
+        if (!runtime.conditionProgress.isEmpty() && runtime.conditionProgress.getFirst() > 0) return 0;
+        var contexts = runtime.conditionContext;
+        int spent = contexts.isEmpty() ? 0 : contexts.getFirst().getInt("Time");
+        return duration - Math.clamp(spent, 0, duration);
+    }
+
+    private static String destinationName(Train train, int entry) {
+        return train.runtime.getSchedule().entries.get(entry).instruction instanceof DestinationInstruction instruction
+                ? instruction.getData().getString("Text") : "";
     }
 
     private static boolean ownsSchedule(ServerLevel level, Train train, List<RailStationRef> visits, CompoundTag expected) {

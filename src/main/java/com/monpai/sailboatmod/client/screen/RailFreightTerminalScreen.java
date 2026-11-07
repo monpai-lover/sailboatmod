@@ -136,6 +136,8 @@ public final class RailFreightTerminalScreen extends ThemedScreen {
             content.addScrollViewChild(Ui.text(Component.literal(train.getString("Name") + " · " + id.toString().substring(0, 8))));
             String status = train.getString("Status"); String key = "screen.sailboatmod.rail.status." + status.toLowerCase(java.util.Locale.ROOT);
             line(Component.translatable(I18n.exists(key) ? key : "screen.sailboatmod.rail.status.unavailable"));
+            if (!train.getString("BlockedFrom").isBlank() && !train.getString("BlockedTo").isBlank())
+                line(t("blocked_leg", train.getString("BlockedFrom"), train.getString("BlockedTo")));
             line(t("cargo", train.getInt("Used"), train.getInt("Slots")));
             line(t("fuel_cargo", train.getInt("FuelSafeSlots")));
             if (!train.getString("Order").isBlank()) line(t("order", train.getString("Order")));

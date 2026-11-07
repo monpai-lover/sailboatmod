@@ -164,7 +164,7 @@ public final class CreateRailLogistics {
                 // 'loaded' means a fresh authoritative native simulation read; it does not assert carriage chunks.
                 sink.publish(new Observation(new Key(carrier, train.leg), LogisticsCarrier.Kind.LAND, sample.carrierName(),
                         source.displayName() + " → " + target.displayName(), source, target,
-                        state == State.PAUSED ? "PAUSED" : state == State.MOVING ? "DRIVING" : "UNKNOWN",
+                        "RAIL_LEG",
                         state, true, tick, INTERVAL_TICKS, eta, eta.isPresent() ? tick : -1, train.geometry));
             }
         }
@@ -246,7 +246,7 @@ public final class CreateRailLogistics {
     }
 
     static Set<UUID> trackedBoardTrainIds() { return boardTracker.trackedTrainIds(); }
-    private static CarrierKey carrier(UUID train) { return new CarrierKey("create-train", "global", train); }
+    private static CarrierKey carrier(UUID train) { return new CarrierKey(CREATE_RAIL_PROVIDER, "global", train); }
 
     public static void tick(MinecraftServer server) {
         if (server == null || server.getTickCount() % INTERVAL_TICKS != 0 || !available()) {

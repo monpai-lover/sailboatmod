@@ -167,7 +167,8 @@ public final class AirportScreen extends ThemedScreen {
         if (!data().dimension().equals(update.dimension()) || !airportPos().equals(update.airportPos())) return;
         long previousRevision = data().revision();
         boolean nameChanged = !data().name().equals(update.name());
-        boolean targetsChanged = !data().routeTargets().equals(update.routeTargets());
+        boolean targetsChanged = !data().routeTargets().equals(update.routeTargets())
+                || data().hasRouteNameConflict() != update.hasRouteNameConflict();
         boolean toolbarChanged = data().canManage() != update.canManage()
                 || data().supportsAutoLayout() != update.supportsAutoLayout()
                 || data().supportsRoutePublication() != update.supportsRoutePublication();
@@ -466,6 +467,11 @@ public final class AirportScreen extends ThemedScreen {
     }
     private void routePublicationControls() {
         inspector.addScrollViewChild(Ui.paragraph(t("quick_route_title"), "sm-strong"));
+        if (data().hasRouteNameConflict()) {
+            text(t("route_name_conflict"));
+            actions(button("tab.settings", this::showSettings));
+            return;
+        }
         var targets = data().routeTargets();
         if (targets.isEmpty()) { text(t("route_no_targets")); return; }
         var chosen = routeTarget();
@@ -505,7 +511,7 @@ public final class AirportScreen extends ThemedScreen {
     private void publishRoute(boolean returnRoute) {
         var target = routeTarget();
         if (target == null || !editable() || !validCruiseY() || hasManualAirportDraft()
-                || returnRoute && !target.canPublishReturn()) return;
+                || data().hasRouteNameConflict() || returnRoute && !target.canPublishReturn()) return;
         var packet = AirportActionPacket.publishRoute(data().dimension(), airportPos(), data().revision(), target.pos(),
                 Integer.parseInt(routeCruiseY.trim()), returnRoute);
         routeReplyDeadline = ticks() + AUTO_LAYOUT_ACK_TIMEOUT;

@@ -208,13 +208,14 @@
         </div>
         <dl class="map-shipment-stats">
           <div><dt>${escapeHtml(label("progress"))}</dt><dd>${percent}%</dd></div>
-          <div><dt>${escapeHtml(label("eta"))}</dt><dd>${etaSec > 0 ? escapeHtml(formatEta(etaSec)) : "-"}</dd></div>
+          <div><dt>${escapeHtml(label(rail ? "railFinalEta" : "eta"))}</dt><dd>${etaSec > 0 ? escapeHtml(formatEta(etaSec)) : "-"}</dd></div>
           <div><dt>${escapeHtml(label("speed"))}</dt><dd>${speed > 0 ? escapeHtml(formatSpeed(speed)) : "-"}</dd></div>
           <div><dt>${escapeHtml(label("status"))}</dt><dd class="map-shipment-status">${escapeHtml(ctx.history ? label(eventKey(shipment.status, "")) : railState ? label(railState) : statusText(shipment, label))}</dd></div>
           ${flightStatsHtml(shipment.flight, label)}
           ${rail?.atStation ? `<div><dt>${escapeHtml(label("railCurrentStop"))}</dt><dd>${escapeHtml(rail.atStation)}</dd></div>` : ""}
           ${rail?.nextStop ? `<div><dt>${escapeHtml(label("railNextStop"))}</dt><dd>${escapeHtml(rail.nextStop)}</dd></div>` : ""}
           ${rail?.nextStop && nextStopEta > 0 ? `<div><dt>${escapeHtml(label("railNextStopEta"))}</dt><dd>${escapeHtml(formatEta(nextStopEta))}</dd></div>` : ""}
+          ${rail?.blockedFrom && rail?.blockedTo ? `<div><dt>${escapeHtml(label("railBlockedLeg"))}</dt><dd>${escapeHtml(rail.blockedFrom)} → ${escapeHtml(rail.blockedTo)}</dd></div>` : ""}
         </dl>
         ${timelineHtml(shipment.events, Number(ctx.nowGameTime) || 0, ctx)}
         <div class="map-shipment-cargo-list">
