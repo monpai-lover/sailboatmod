@@ -154,7 +154,7 @@ final class RailAircraftMotionState {
             throw new IllegalArgumentException("air_rail_invalid_substep");
         s.elapsed = Math.min(SEGMENT_SECONDS, s.elapsed + dt);
         double alpha = s.elapsed / SEGMENT_SECONDS;
-        Quaterniond q = new Quaterniond(s.from.orientation).slerp(s.target.orientation, alpha).normalize();
+        Quaterniond q = s.from.orientation().normalize().slerp(s.target.orientation().normalize(), alpha).normalize();
         s.current = new Frame(s.from.anchor().lerp(s.target.anchor(), alpha), q);
         return s.current;
     }
@@ -250,7 +250,7 @@ final class RailAircraftMotionState {
                 ||box.getXsize()>1000||box.getYsize()>1000||box.getZsize()>1000
                 ||from.anchor().distanceToSqr(to.anchor())>MAX_TARGET_STEP*MAX_TARGET_STEP)
             throw new IllegalArgumentException("air_rail_invalid_envelope");
-        Quaterniond relative=new Quaterniond(to.orientation).mul(new Quaterniond(from.orientation).conjugate());
+        Quaterniond relative=to.orientation().normalize().mul(from.orientation().normalize().conjugate()).normalize();
         double minX=box.minX,minY=box.minY,minZ=box.minZ,maxX=box.maxX,maxY=box.maxY,maxZ=box.maxZ,radius=0;
         for(int i=0;i<8;i++) {
             var corner=new Vector3d((i&1)==0?box.minX:box.maxX,(i&2)==0?box.minY:box.maxY,(i&4)==0?box.minZ:box.maxZ)
@@ -260,9 +260,16 @@ final class RailAircraftMotionState {
             minX=Math.min(minX,corner.x);minY=Math.min(minY,corner.y);minZ=Math.min(minZ,corner.z);
             maxX=Math.max(maxX,corner.x);maxY=Math.max(maxY,corner.y);maxZ=Math.max(maxZ,corner.z);
         }
-        double angle=2*Math.acos(Math.min(1,Math.abs(from.orientation.dot(to.orientation))));
-        double arcSlack=radius*(1-Math.cos(angle*.5));
-        return new AABB(minX,minY,minZ,maxX,maxY,maxZ).inflate(arcSlack);
+        if (!Double.isFinite(radius)) throw new IllegalArgumentException("air_rail_invalid_envelope");
+        // The shortest-arc sagitta lies in the plane perpendicular to the relative rotation axis.
+        // The quaternion vector is axis * sin(halfAngle). Factor the sagitta before projecting
+        // so nearly zero angles do not lose their padding to cancellation in 1 - cos(halfAngle).
+        double sinHalfAngle = Math.hypot(Math.hypot(relative.x, relative.y), relative.z);
+        double arcFactor = radius * sinHalfAngle / (1.0 + Math.abs(relative.w));
+        return new AABB(minX,minY,minZ,maxX,maxY,maxZ).inflate(
+                arcFactor * Math.hypot(relative.y, relative.z),
+                arcFactor * Math.hypot(relative.x, relative.z),
+                arcFactor * Math.hypot(relative.x, relative.y));
     }
     static boolean valid(Frame frame) {
         if (frame == null || !finite(frame.anchor()) || frame.orientation == null) return false;

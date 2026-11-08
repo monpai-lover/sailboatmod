@@ -2061,6 +2061,7 @@
   "screen.sailboatmod.controller.reason.missing_route": "请选择有效路线。",
   "screen.sailboatmod.controller.reason.obstacle": "实际障碍阻挡了载具，导航已停车等待。",
   "screen.sailboatmod.controller.reason.waiting_terrain": "等待沿途地形加载。",
+  "screen.sailboatmod.controller.reason.water_route_dry": "船身经过的位置缺水或深度不足。",
   "screen.sailboatmod.controller.reason.manual_control": "检测到人工接管，准备好后请明确点击继续。",
   "screen.sailboatmod.controller.reason.manual": "检测到人工接管。",
   "screen.sailboatmod.controller.reason.no_progress": "载具没有前进，请检查动力和转向。",
@@ -2696,5 +2697,10 @@
   "screen.sailboatmod.rail.follow_town": "跟随城镇名称",
   "screen.sailboatmod.rail.native_name_hint": "此名称用于铁路货运终端；原生停靠站可在 Create 车站界面改名。",
   "screen.sailboatmod.controller.no_destinations": "暂无目的地。请先绑定出发站，并导入该载具可用的航线。",
-  "screen.sailboatmod.controller.destination": "目的地"
+  "screen.sailboatmod.controller.destination": "目的地",
+  "screen.sailboatmod.controller.reason.guided_road_unsupported": "前方车身下方的路面不连续，车辆正在等待。",
+  "screen.sailboatmod.controller.reason.guided_off_route": "车辆偏离了已保存的路线，请驶回路线后再继续。",
+  "screen.sailboatmod.controller.reason.guided_pose_unconfirmed": "正在确认载具的实际位置。",
+  "screen.sailboatmod.controller.reason.guided_recovery_review": "需要检查已保存的载具路线后才能继续。",
+  "screen.sailboatmod.controller.reason.guided_motion_unavailable": "此载具暂时无法沿路线自动行驶。"
 }

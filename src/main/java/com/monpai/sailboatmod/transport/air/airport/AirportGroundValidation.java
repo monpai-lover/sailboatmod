@@ -60,6 +60,7 @@ public final class AirportGroundValidation {
     }
     /** Explicit transient ingress corridor; shares the same incremental generation and two terrain passes. */
     public static Scan ingressScan(Vec3 start,Vec3 end,double width,int height) { return new Scan(start,end,width,height); }
+    static double segmentDistance(double x,double z,Vec3 a,Vec3 b){double dx=b.x-a.x,dz=b.z-a.z;double t=Math.max(0,Math.min(1,((x-a.x)*dx+(z-a.z)*dz)/(dx*dx+dz*dz)));return Math.hypot(x-a.x-t*dx,z-a.z-t*dz);}
     public static final class Scan {
         private record Cell(BlockPos pos,boolean support){}
         private record Area(AABB bounds,Vec3 start,Vec3 end,double radius){}
@@ -122,6 +123,5 @@ public final class AirportGroundValidation {
             }
             return result;
         }
-        private static double segmentDistance(double x,double z,Vec3 a,Vec3 b){double dx=b.x-a.x,dz=b.z-a.z;double t=Math.max(0,Math.min(1,((x-a.x)*dx+(z-a.z)*dz)/(dx*dx+dz*dz)));return Math.hypot(x-a.x-t*dx,z-a.z-t*dz);}
     }
 }

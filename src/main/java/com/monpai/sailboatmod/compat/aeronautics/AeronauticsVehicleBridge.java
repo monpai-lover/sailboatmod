@@ -10,6 +10,8 @@ import net.minecraft.core.Direction;
 import net.minecraft.server.level.ServerLevel;
 import net.minecraft.world.level.block.entity.BlockEntity;
 import net.minecraft.world.entity.Entity;
+import net.minecraft.world.phys.AABB;
+import net.minecraft.world.phys.Vec3;
 import net.neoforged.fml.ModList;
 import org.jetbrains.annotations.Nullable;
 import org.slf4j.Logger;
@@ -94,6 +96,20 @@ public final class AeronauticsVehicleBridge {
         } catch (ReflectiveOperationException | RuntimeException | LinkageError failure) {
             warn(failure);
             return false;
+        }
+    }
+
+    /** Exact Offroad support patches when the loaded body can identify a stable tire layout. */
+    public static List<AABB> roadTireSweeps(@Nullable BlockEntity controller, UUID bodyId, Direction facing,
+                                          Vec3 anchor, Vec3 tangent) {
+        if (!serverThread(controller) || bodyId == null || facing == null) return List.of();
+        SableReflectionAccess api = api();
+        if (api == null) return List.of();
+        try {
+            return api.roadTireSweeps(bodyFor(api, controller), controller, bodyId, facing, anchor, tangent);
+        } catch (ReflectiveOperationException | RuntimeException | LinkageError unavailable) {
+            warn(unavailable);
+            return List.of();
         }
     }
 

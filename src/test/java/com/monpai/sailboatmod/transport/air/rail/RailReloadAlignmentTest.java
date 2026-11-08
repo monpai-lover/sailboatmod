@@ -5,6 +5,15 @@ import org.junit.jupiter.api.Test;
 import static org.junit.jupiter.api.Assertions.*;
 
 class RailReloadAlignmentTest {
+    @Test void reservedParkedStartAllowsNativeFloatingPointDriftOnly() {
+        Vec3 saved = new Vec3(135549.81190873584, 136.7713294740383, -28707.49969792455);
+        Vec3 actual = new Vec3(135549.81190873584, 136.77132947403922, -28707.499697913376);
+        assertFalse(RailReloadAlignment.permits(saved, actual));
+        assertTrue(RailReloadAlignment.permitsParkedStart(saved, actual));
+        assertTrue(RailReloadAlignment.permitsParkedStart(saved, saved.add(.03, -.1, .04)));
+        assertFalse(RailReloadAlignment.permitsParkedStart(saved, saved.add(0, .000002, 0)));
+        assertFalse(RailReloadAlignment.permitsParkedStart(saved, saved.add(.05001, 0, 0)));
+    }
     private final Vec3 saved=new Vec3(-15028.77,-57.3481,5223.894);
 
     @Test void sameAnchorAndObservedGravityDropAreEligible() {

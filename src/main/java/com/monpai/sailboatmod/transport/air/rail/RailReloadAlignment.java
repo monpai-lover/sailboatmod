@@ -14,5 +14,12 @@ public final class RailReloadAlignment {
         return drop>=0&&drop<=MAX_DOWNWARD_DROP+BOUNDARY_TOLERANCE
                 &&Math.hypot(savedAnchor.x-actualAnchor.x,savedAnchor.z-actualAnchor.z)<=MAX_HORIZONTAL_DISTANCE+BOUNDARY_TOLERANCE;
     }
+
+    /** Only for a verified aircraft still parked at its never-advanced source. */
+    public static boolean permitsParkedStart(Vec3 savedAnchor, Vec3 actualAnchor) {
+        return permits(savedAnchor, actualAnchor) || finite(savedAnchor) && finite(actualAnchor)
+                && savedAnchor.distanceToSqr(actualAnchor) <= 1e-12;
+    }
+
     private static boolean finite(Vec3 v){return v!=null&&Double.isFinite(v.x)&&Double.isFinite(v.y)&&Double.isFinite(v.z);}
 }

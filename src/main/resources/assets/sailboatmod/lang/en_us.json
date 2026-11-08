@@ -2061,6 +2061,7 @@
   "screen.sailboatmod.controller.reason.missing_route": "Select a valid route.",
   "screen.sailboatmod.controller.reason.obstacle": "An actual obstacle blocks this vehicle. Navigation is holding position.",
   "screen.sailboatmod.controller.reason.waiting_terrain": "Waiting for terrain to load.",
+  "screen.sailboatmod.controller.reason.water_route_dry": "The swept hull needs navigable water and sufficient depth.",
   "screen.sailboatmod.controller.reason.manual_control": "Manual control detected. Resume explicitly when ready.",
   "screen.sailboatmod.controller.reason.manual": "Manual control detected.",
   "screen.sailboatmod.controller.reason.no_progress": "The vehicle is not moving. Check its engine and steering.",
@@ -2696,5 +2697,10 @@
   "screen.sailboatmod.rail.follow_town": "Use town name",
   "screen.sailboatmod.rail.native_name_hint": "This names the freight terminal. Rename the native stop in the Create station screen.",
   "screen.sailboatmod.controller.no_destinations": "No destinations yet. Bind a departure terminal and import routes for this vehicle.",
-  "screen.sailboatmod.controller.destination": "Destination"
+  "screen.sailboatmod.controller.destination": "Destination",
+  "screen.sailboatmod.controller.reason.guided_road_unsupported": "The vehicle is waiting for a continuous road surface beneath its route.",
+  "screen.sailboatmod.controller.reason.guided_off_route": "The vehicle is too far from its saved route. Bring it back before resuming.",
+  "screen.sailboatmod.controller.reason.guided_pose_unconfirmed": "Waiting to confirm the vehicle’s actual position.",
+  "screen.sailboatmod.controller.reason.guided_recovery_review": "The saved vehicle route needs review before it can resume.",
+  "screen.sailboatmod.controller.reason.guided_motion_unavailable": "Guided movement is unavailable for this vehicle."
 }

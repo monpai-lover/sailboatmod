@@ -16,6 +16,8 @@ import net.minecraft.world.level.block.entity.BlockEntity;
 import net.minecraft.world.entity.Entity;
 import net.minecraft.world.phys.AABB;
 import net.minecraft.world.phys.Vec3;
+import org.joml.Quaterniondc;
+import org.joml.Vector3d;
 import org.joml.Vector3dc;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -40,6 +42,7 @@ final class SableReflectionAccess {
     private final Class<?> bodyType;
     private final Method containing, passengerTracking, id, level, removed, pose, lastPose, bounds, massTracker;
     private final Method transformPosition, transformNormal, toMojangBounds, getMass;
+    private final Method poseScale, poseOrientation;
     private final Field angularVelocity;
     private final OffroadWheelReflectionAccess wheels;
     private final GroundSurfaceReflectionAccess groundSurfaces;
@@ -94,6 +97,8 @@ final class SableReflectionAccess {
         groundSurfaces = GroundSurfaceReflectionAccess.bindIfAvailable(lookup);
         transformPosition = poseType.getMethod("transformPosition", Vec3.class);
         transformNormal = poseType.getMethod("transformNormal", Vec3.class);
+        poseScale = optionalMethod(poseType, "scale");
+        poseOrientation = optionalMethod(poseType, "orientation");
         toMojangBounds = boundsType.getMethod("toMojang");
         getMass = massType.getMethod("getMass");
         actuators = NativeActuators.bindIfAvailable(lookup);
@@ -172,6 +177,63 @@ final class SableReflectionAccess {
         if (!(value instanceof Vector3dc vector)) return null;
         Vec3 result=new Vec3(vector.x(),vector.y(),vector.z());
         return finite(result) ? result : null;
+    }
+
+    /**
+     * The Offroad suspension starts at the center of the block one step along the actual mount's axle.
+     * A small swept contact patch follows that material point, independently of the chassis envelope.
+     */
+    List<AABB> roadTireSweeps(Object body, BlockEntity controller, UUID expectedBody, Direction facing,
+                             Vec3 anchor, Vec3 tangent) throws ReflectiveOperationException {
+        if (wheels == null || plotMembers == null || poseScale == null || poseOrientation == null
+                || !isLive(body) || !expectedBody.equals(id.invoke(body))
+                || !(level.invoke(body) instanceof ServerLevel world) || controller.getLevel() != world)
+            return List.of();
+        var members = plotMembers.read(body, world);
+        if (members.isEmpty() || !members.orElseThrow().contains(controller)) return List.of();
+        Object currentPose = pose.invoke(body);
+        if (currentPose == null || !(poseScale.invoke(currentPose) instanceof Vector3dc scale)
+                || !(poseOrientation.invoke(currentPose) instanceof Quaterniondc from)) return List.of();
+        var to = RailAircraftMotionState.orientation(facing, tangent, 0);
+        double arcFactor = 1 - Math.min(1, Math.abs(from.dot(to)));
+        var result = new ArrayList<AABB>();
+        var centers = new ArrayList<Vec3>();
+        Vec3 localAnchor = Vec3.atCenterOf(controller.getBlockPos());
+        for (BlockEntity wheel : members.orElseThrow()) {
+            if (!wheels.isWheel(wheel)) continue;
+            if (containing(wheel) != body || !wheel.getBlockState().hasProperty(BlockStateProperties.HORIZONTAL_FACING))
+                return List.of();
+            double tireRadius = wheels.tireRadius(wheel);
+            if (tireRadius == 0) continue;
+            if (result.size() >= 32) return List.of();
+            Direction axle = wheel.getBlockState().getValue(BlockStateProperties.HORIZONTAL_FACING);
+            Vec3 localCenter = Vec3.atCenterOf(wheel.getBlockPos().relative(axle));
+            Vec3 oldCenter = (Vec3) transformPosition.invoke(currentPose, localCenter);
+            Vec3 delta = localCenter.subtract(localAnchor);
+            var displacement = new Vector3d(delta.x * scale.x(), delta.y * scale.y(), delta.z * scale.z());
+            double arc = displacement.length() * arcFactor;
+            var projected = to.transform(displacement).add(anchor.x, anchor.y, anchor.z);
+            Vec3 newCenter = new Vec3(projected.x, projected.y, projected.z);
+            if (!finite(oldCenter) || !finite(newCenter) || !Double.isFinite(arc)) return List.of();
+            double margin = Math.clamp(tireRadius * 0.22, 0.14, 0.30) + arc;
+            result.add(new AABB(oldCenter, newCenter).inflate(margin, 0, margin));
+            centers.add(oldCenter);
+        }
+        return hasStableWheelLayout(centers) ? List.copyOf(result) : List.of();
+    }
+
+    private static boolean hasStableWheelLayout(List<Vec3> centers) {
+        if (centers.size() < 3) return false;
+        Vec3 a = centers.getFirst();
+        Vec3 baseline = centers.stream().map(center -> center.subtract(a))
+                .max(java.util.Comparator.comparingDouble(Vec3::horizontalDistanceSqr)).orElseThrow();
+        return centers.stream().map(center -> center.subtract(a))
+                .anyMatch(delta -> Math.abs(baseline.x * delta.z - baseline.z * delta.x) > 0.5);
+    }
+
+    private static Method optionalMethod(Class<?> owner, String name) {
+        try { return owner.getMethod(name); }
+        catch (NoSuchMethodException unavailable) { return null; }
     }
 
     NativeGroundObservation groundObservation(Object body, List<BlockEntity> targets) throws ReflectiveOperationException {

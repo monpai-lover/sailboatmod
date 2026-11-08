@@ -34,10 +34,8 @@ final class OffroadWheelReflectionAccess {
     Evidence observe(Object wheel,Object pose,Direction axleFacing) throws ReflectiveOperationException {
         if (!wheelType.isInstance(wheel) || axleFacing == null || axleFacing.getAxis().isVertical())
             throw new ReflectiveOperationException("wrong_native_wheel");
-        Object tire=getComponent.invoke(heldItem.invoke(wheel),tireComponent.get(null));
-        if (tire==null) return new Evidence(0,0,false);
-        double r=((Number)radius.invoke(tire)).doubleValue();
-        if (!Double.isFinite(r) || r<=0) throw new ReflectiveOperationException("invalid_tire_radius");
+        double r = tireRadius(wheel);
+        if (r == 0) return new Evidence(0,0,false);
         Object cast=terrainCast.invoke(wheel,travelAxis(wheel,axleFacing),pose);
         double extension=((Number)maxExtension.invoke(cast)).doubleValue();
         if (!Double.isFinite(extension)) throw new ReflectiveOperationException("invalid_native_suspension");
@@ -46,6 +44,18 @@ final class OffroadWheelReflectionAccess {
         boolean supported=interactingBlock.invoke(cast)!=null && extension>0 && compression>1e-5;
         return new Evidence(r, supported ? compression : 0, supported);
     }
+    boolean isWheel(Object blockEntity) {
+        return wheelType.isInstance(blockEntity);
+    }
+
+    double tireRadius(Object wheel) throws ReflectiveOperationException {
+        Object tire = getComponent.invoke(heldItem.invoke(wheel), tireComponent.get(null));
+        if (tire == null) return 0;
+        double value = ((Number) radius.invoke(tire)).doubleValue();
+        if (!Double.isFinite(value) || value <= 0) throw new ReflectiveOperationException("invalid_tire_radius");
+        return value;
+    }
+
     Vector3dc travelAxis(Object wheel, Direction axleFacing) throws ReflectiveOperationException {
         Direction axis=Direction.get(Direction.AxisDirection.POSITIVE,axleFacing.getAxis());
         Vec3i normal=axis.getNormal();

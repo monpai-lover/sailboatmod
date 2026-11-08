@@ -86,7 +86,7 @@ public final class RegisteredVehicleControllerBlockEntity extends BlockEntity
     private boolean active, paused, returnTrip, manualTakeover;
     private double maxSpeed = 4.0D;
     private TakeoffAssistConfig takeoffAssistConfig = TakeoffAssistConfig.DEFAULT;
-    private int rentalPrice = -1, selectedRoute, targetIndex, arrivalTicks, stalledTicks;
+    private int rentalPrice = -1, selectedRoute, targetIndex, arrivalTicks;
     private long departureMillis;
     private double missionDistance;
     private final List<RouteDefinition> routeCatalog = new ArrayList<>();
@@ -109,11 +109,13 @@ public final class RegisteredVehicleControllerBlockEntity extends BlockEntity
             List<AirportFacility> sourceFacilities, AirportGroundLayout sourceGround, AirportBlockEntity target, long targetRevision,
             List<AirportFacility> targetFacilities, AirportGroundLayout targetGround) { }
     private final SweptTerrainProbe terrainProbe = new SweptTerrainProbe();
-    private final NativeRouteProgression.TerrainPaths navigationTerrain = new NativeRouteProgression.TerrainPaths();
+    private final RegisteredSurfaceGuide surfaceGuide = new RegisteredSurfaceGuide();
+    private final GuidedRoadTerrain guidedRoadTerrain = new GuidedRoadTerrain();
+    private final GuidedWaterTerrain guidedWaterTerrain = new GuidedWaterTerrain();
+    private double surfaceSpeed;
     private final GroundTerrainWindow groundTerrainWindow = new GroundTerrainWindow();
     private SweptTerrainProbe.Result terrainResult = SweptTerrainProbe.Result.WAITING;
     private boolean cargoFaultReported;
-    private Vec3 lastProgressPosition;
     private AircraftClass aircraftClass = AircraftClass.AIRSHIP;
     private boolean legacyNativeAirJob, guidedAirportDeparture;
     private BlockPos flightTerminalOffset;
@@ -378,8 +380,11 @@ public final class RegisteredVehicleControllerBlockEntity extends BlockEntity
             if (core.flightRecovering && !core.railAircraftAutomation()) core.blockReloadReplay(server);
             if (core.parkingBrake().held() && !core.railAircraftAutomation()) core.updateParkingBrake(server, false);
             if (core.groundOutputsOwned && core.paused) core.stopOwnedGroundOutputs(server, core.manualTakeover);
-            if (server.getGameTime() % 5 == 0 || core.railAircraftAutomation() && (core.active || core.railAircraft.hasMission()) || core.groundMission != null
-                    && core.groundMission.state().phase() != AircraftGroundMission.Phase.FC_ACTIVE) core.tickServer(server);
+            if (server.getGameTime() % 5 == 0
+                    || core.surfaceGuided() && core.active
+                    || core.railAircraftAutomation() && (core.active || core.railAircraft.hasMission())
+                    || core.groundMission != null && core.groundMission.state().phase() != AircraftGroundMission.Phase.FC_ACTIVE)
+                core.tickServer(server);
             core.updateTakeoffAssist();
             core.publishTownVoyage(server);
         }
@@ -420,7 +425,7 @@ public final class RegisteredVehicleControllerBlockEntity extends BlockEntity
             TransportRegistry.unregister(server, getTransportUuid());
             if (transportKind() == Kind.AIR) stopOwnedGroundOutputs(server, false);
             ownSignalsOff();
-            if (transportKind() == Kind.AIR && active) {
+            if (active) {
                 // Startup may resolve Sable after either block entity. Keep the persisted live
                 // registration/tickets until it does; lack of telemetry is not a lost aircraft.
                 status = ControllerStatus.WAITING_TERRAIN;
@@ -491,11 +496,6 @@ public final class RegisteredVehicleControllerBlockEntity extends BlockEntity
             recordFlightTelemetry(server);
             return;
         }
-        if (transportKind() != Kind.AIR && !ControllerRegistration.validControlPorts(ports)) {
-            portsConfirmed = false;
-            fault("configure_power", false);
-            return;
-        }
         if (transportKind() == Kind.AIR && active && airportPreflightPending() && !paused) {
             BlockPos origin = returnFlightPending ? returnOrigin : sourceTerminal;
             if (origin != null && server.hasChunkAt(origin)
@@ -514,6 +514,8 @@ public final class RegisteredVehicleControllerBlockEntity extends BlockEntity
             }
         }
         if (!active || paused) {
+            if (surfaceGuided() && active && paused && !manualTakeover)
+                loading.update(server, getTransportUuid(), view.physicalId(), view.worldBounds(), view.worldPosition());
             if (transportKind() == Kind.AIR && active && paused) {
                 // Continue following an airborne craft after relinquishing control; never unload it under a pilot.
                 loading.update(server,getTransportUuid(),view.physicalId(),view.worldBounds(),view.worldPosition());
@@ -542,7 +544,7 @@ public final class RegisteredVehicleControllerBlockEntity extends BlockEntity
         }
         if (!controlsReady()) {
             if (groundMission != null) { groundFailure(server, "ground_control_conflict", false); return; }
-            fault("configure_power", false);
+            fault(surfaceGuided() ? "guided_motion_unavailable" : "configure_power", false);
             return;
         }
         if (targetIndex < 0 || targetIndex >= activeRoute.size()) {
@@ -553,90 +555,76 @@ public final class RegisteredVehicleControllerBlockEntity extends BlockEntity
             tickAircraft(server);
             return;
         }
-        double radius =
-                Math.max(
-                        2.0D,
-                        Math.max(view.worldBounds().getXsize(), view.worldBounds().getZsize())
-                                        * 0.5D
-                                + 1.0D);
-        DockBlockEntity destination = resolveDestination(server);
-        boolean atDock = destination != null && destination.isCarrierInsideDockZone(this);
-        boolean terminalShortcutReady = atDock
-                && loading.isWindowLoaded(server, view.worldBounds(), activeRoute.getLast());
-        boolean[] chunksReady = { false };
-        NativeRouteProgression.Selection selection = NativeRouteProgression.selectLoaded(
-                activeRoute, targetIndex, view.worldPosition(), view.linearVelocity(), radius,
-                target -> clearSweptTerrain(server, target), terminalShortcutReady ? destination::isInsideDockZone : null,
-                target -> {
-                    chunksReady[0] = loading.update(
-                            server, getTransportUuid(), view.physicalId(), view.worldBounds(), target);
-                    return chunksReady[0];
+        tickGuidedSurface(server);
+    }
+
+    private boolean surfaceGuided() {
+        return transportKind() == Kind.LAND || transportKind() == Kind.WATER;
+    }
+
+    private void tickGuidedSurface(ServerLevel server) {
+        boolean water = transportKind() == Kind.WATER;
+        BlockPos origin = returnTrip ? returnOrigin : sourceTerminal;
+        DockBlockEntity terminal = origin != null && server.hasChunkAt(origin)
+                && server.getBlockEntity(origin) instanceof DockBlockEntity dock ? dock : null;
+        var step = surfaceGuide.tick(this, getTransportUuid(), view, facing(), activeRoute, targetIndex,
+                maxSpeed, water, position -> terminal != null && terminal.isInsideDockZone(position),
+                (anchor, tangent, routePoint, swept) -> {
+                    if (!loading.update(server, getTransportUuid(), view.physicalId(), swept, anchor))
+                        return loading.reason().isBlank() ? "waiting_terrain" : loading.reason();
+                    return water ? guidedWaterTerrain.check(server, view, anchor, swept)
+                            : guidedRoadTerrain.check(server, routePoint.position(), routePoint.tangent(), swept,
+                                    AeronauticsVehicleBridge.roadTireSweeps(this, view.physicalId(), facing(), anchor, tangent));
                 });
-        if (selection == null) {
-            fault("missing_route", false);
-            return;
+        targetIndex = Math.clamp(step.routeIndex(), 0, activeRoute.size() - 1);
+        surfaceSpeed = step.speed();
+        reason = step.reason();
+        status = reason.isBlank() ? ControllerStatus.RUNNING : ControllerStatus.WAITING_TERRAIN;
+        if (reason.isBlank() && !step.arrived()) {
+            if (!updateSurfaceAnimation(water, step)) return;
+        } else if (signals.entrySet().stream()
+                .anyMatch(signal -> signal.getValue() != 0 && signal.getKey() != ports.get(ControlChannel.BRAKE))) {
+            holdNative(false);
         }
-        Vec3 target = selection.target();
-        boolean terrainReady = selection.terrainReady();
-        if (terrainReady && targetIndex != selection.index()) {
-            targetIndex = selection.index();
-            arrivalTicks = 0;
-            setChanged();
-        }
-        boolean finalLeg = targetIndex == activeRoute.size() - 1;
-        if (finalLeg && destination != null) {
-            radius = NativeNavigationDriver.terminalArrivalRadius(radius,
-                    target.subtract(Vec3.atCenterOf(destination.getBlockPos())),
-                    destination.getZoneMinX(), destination.getZoneMaxX(),
-                    destination.getZoneMinZ(), destination.getZoneMaxZ());
-            if (!Double.isFinite(radius) || radius < 0) {
-                fault("missing_route", false);
-                return;
+
+        if (step.arrived()) {
+            DockBlockEntity destination = resolveDestination(server);
+            boolean atDestination = destination != null && destination.isCarrierInsideDockZone(this);
+            if (atDestination || destinationTerminal == null && manifest.isEmpty() && knownDepartureRoute == null) {
+                if (++arrivalTicks >= 20) {
+                    arrive(server, destination);
+                    return;
+                }
+            } else {
+                reason = "waiting_terrain";
+                status = ControllerStatus.WAITING_TERRAIN;
+                arrivalTicks = 0;
             }
-        }
-        NativeNavigationDriver.Command command =
-                NativeNavigationDriver.drive(
-                        new NativeNavigationDriver.Input(
-                                transportKind(),
-                                view.worldPosition(),
-                                view.worldForward(),
-                                view.linearVelocity(),
-                                target,
-                                maxSpeed,
-                                radius,
-                                terrainReady,
-                                false,
-                                allowReverse),
-                        finalLeg && atDock, finalLeg);
-        if (!applyCommand(command)) return;
-        status = command.waiting() ? ControllerStatus.WAITING_TERRAIN : ControllerStatus.RUNNING;
-        reason =
-                !chunksReady[0]
-                        ? loading.reason()
-                        : terrainReady
-                                ? command.reason()
-                                : terrainResult == SweptTerrainProbe.Result.BLOCKED
-                                        ? "obstacle"
-                                        : "waiting_terrain";
-        boolean slow = view.linearVelocity().horizontalDistanceSqr() <= 0.25D * 0.25D;
-        if (terrainReady
-                && finalLeg
-                && slow
-                && (atDock || (destination == null && manifest.isEmpty() && command.arrived()))) {
-            arrivalTicks += 5;
-            if (arrivalTicks >= 20) arrive(server, destination);
         } else arrivalTicks = 0;
-        if (status == ControllerStatus.RUNNING && !command.arrived()) {
-            if (lastProgressPosition != null
-                    && lastProgressPosition.distanceToSqr(view.worldPosition()) < 0.01D)
-                stalledTicks += 5;
-            else {
-                stalledTicks = 0;
-                lastProgressPosition = view.worldPosition();
-            }
-            if (stalledTicks > 400) fault("no_progress", false);
+        if (server.getGameTime() % 5 == 0) updateTrace(server);
+        setChanged();
+    }
+
+    /** Wheel roll is derived by Offroad from the actual Sable client pose history. */
+    private boolean updateSurfaceAnimation(boolean water, RegisteredSurfaceGuide.Result step) {
+        if (!portsConfirmed || !ControllerRegistration.validControlPorts(ports)) return true;
+        if (water) {
+            // Straight-only shaft animation. The motion lease owns the body, not its kinetic network.
+            if (step.speed() > 0 && signals.getOrDefault(ports.get(ControlChannel.FORWARD), 0) != 15)
+                return applyCommand(new NativeNavigationDriver.Command(15, 0, 0, 0, 15, 0,
+                        false, false, true, "driving"));
+            return true;
         }
-        if (active) updateTrace(server);
+        // Only the steering animation is supplied by this controller. The wheel drive stays neutral.
+        int steering = (int) Math.ceil(Math.abs(step.turnRadians()) * 115);
+        int left = step.turnRadians() < 0 ? steering : 0;
+        int right = step.turnRadians() > 0 ? steering : 0;
+        if (signals.getOrDefault(ports.get(ControlChannel.LEFT), 0) == left
+                && signals.getOrDefault(ports.get(ControlChannel.RIGHT), 0) == right
+                && signals.getOrDefault(ports.get(ControlChannel.BRAKE), 0) == 0
+                && signals.getOrDefault(ports.get(ControlChannel.THROTTLE), 0) == 0) return true;
+        return applyCommand(new NativeNavigationDriver.Command(0, left, right, 0, 0, 0,
+                false, false, true, "driving"));
     }
 
     @Override public AircraftClass aircraftClass() { return aircraftClass; }
@@ -843,9 +831,28 @@ public final class RegisteredVehicleControllerBlockEntity extends BlockEntity
         AABB hull=railAircraft.sweptBounds(railContext(server),next).orElse(null);
         if(hull==null)return false;
         AABB area=new AABB(hull.minX+.02,hull.minY+.1,hull.minZ+.02,hull.maxX-.02,hull.maxY-.02,hull.maxZ-.02);
-        terrainResult=terrainProbe.scan(area,16_384,server::hasChunkAt,
-                at->server.getBlockState(at).getCollisionShape(server,at).toAabbs().stream()
-                        .anyMatch(box->box.move(at.getX(),at.getY(),at.getZ()).intersects(area)));
+        var mission=railAircraft.mission();
+        AirportGroundContact contact=null;
+        if(fixedWingRail()&&mission!=null){
+            var direction=AirportGroundContact.direction(mission.phase(),next.phase());
+            if(direction!=null){
+                boolean outbound=direction==AirportTaxiRoute.Direction.OUTBOUND;
+                AirportBlockEntity airport=groundAirport(server,outbound?mission.source():mission.target());
+                var assignment=outbound?mission.sourceAssignment():mission.targetAssignment();
+                if(airport==null||!airport.holdsGroundAssignment(assignment,getTransportUuid()))return false;
+                contact=AirportGroundContact.forStep(airport.groundLayout(),airport.facilities(),assignment,
+                        mission.phase(),next.phase()).orElse(null);
+                if(contact==null)return false;
+            }
+        }
+        AirportGroundContact support=contact;
+        terrainResult=terrainProbe.scan(support==null?area:support.scanBounds(area),16_384,server::hasChunkAt,at->{
+            BlockState state=server.getBlockState(at);
+            if(support!=null&&support.requiredSupport(at)&&!state.isFaceSturdy(server,at,Direction.UP))return true;
+            return state.getCollisionShape(server,at).toAabbs().stream()
+                    .map(box->box.move(at.getX(),at.getY(),at.getZ()))
+                    .anyMatch(box->box.intersects(area)&&(support==null||!support.permitsBelowDeck(at,box)));
+        });
         return terrainResult==SweptTerrainProbe.Result.CLEAR;
     }
 
@@ -2395,31 +2402,6 @@ public final class RegisteredVehicleControllerBlockEntity extends BlockEntity
             airport.releaseReservation(getTransportUuid());
     }
 
-    private boolean clearSweptTerrain(ServerLevel server, Vec3 waypoint) {
-        Vec3 toward = waypoint.subtract(view.worldPosition()).multiply(1, 0, 1);
-        Vec3 direction =
-                (toward.lengthSqr() > 0.01D ? toward.normalize() : view.worldForward())
-                        .scale(Math.min(12, Math.max(2, view.linearVelocity().length() * 2)));
-        AABB area = view.worldBounds().expandTowards(direction).deflate(0.1D);
-        terrainResult =
-                navigationTerrain.scan(
-                        waypoint.equals(activeRoute.getLast()),
-                        area,
-                        8192,
-                        server::hasChunkAt,
-                        at ->
-                                server
-                                        .getBlockState(at)
-                                        .getCollisionShape(server, at)
-                                        .toAabbs()
-                                        .stream()
-                                        .anyMatch(
-                                                shape ->
-                                                        shape.move(at.getX(), at.getY(), at.getZ())
-                                                                .intersects(area)));
-        return terrainResult == SweptTerrainProbe.Result.CLEAR;
-    }
-
     private boolean applyCommand(NativeNavigationDriver.Command command) {
         if (throttleOffset != null) {
             BlockEntity target = target(throttleOffset);
@@ -2513,7 +2495,14 @@ public final class RegisteredVehicleControllerBlockEntity extends BlockEntity
         }
     }
 
+    private void suspendSurfaceGuide(boolean manual) {
+        surfaceSpeed = 0;
+        if (manual || manualTakeover) surfaceGuide.release(this);
+        else surfaceGuide.hold(this);
+    }
+
     private void fault(String why, boolean manual) {
+        if (surfaceGuided()) suspendSurfaceGuide(manual);
         if(railAircraftAutomation()){
             manualTakeover|=manual;paused=true;flightPhase=manualTakeover?"MANUAL":"PAUSED";
             status=manualTakeover?ControllerStatus.MANUAL:ControllerStatus.FAULT;reason=why;
@@ -2676,6 +2665,7 @@ public final class RegisteredVehicleControllerBlockEntity extends BlockEntity
     }
 
     private boolean controlsReady() {
+        if (surfaceGuided()) return view != null && view.available() && RailAircraftMotionBridge.available(this);
         if(railAircraftAutomation())return view!=null&&view.available()&&registration.registered()&&RailAircraftMotionBridge.available(this);
         if (transportKind() == Kind.AIR) {
             if (!(level instanceof ServerLevel server) || flightTerminalOffset == null || view == null) return false;
@@ -2784,6 +2774,10 @@ public final class RegisteredVehicleControllerBlockEntity extends BlockEntity
             flightPending = returnFlightPending = departureFlightPending = false;
             flightRecovering = recoveryRequired = false;
         }
+        if (surfaceGuided() && !surfaceGuide.clear(this)) {
+            fault("guided_motion_unavailable", false);
+            return;
+        }
         finishTownVoyage();
         active = false;
         paused = false;
@@ -2816,7 +2810,11 @@ public final class RegisteredVehicleControllerBlockEntity extends BlockEntity
                     nextGroundSourceAssignment = returnSource.orElseThrow();
                     nextGroundTargetAssignment = returnTarget.orElseThrow();
                 }
-            } else { invalidateTownGeometry(); Collections.reverse(activeRoute); }
+            } else {
+                returnOrigin = dock.getBlockPos();
+                invalidateTownGeometry();
+                Collections.reverse(activeRoute);
+            }
             destinationTerminal = sourceTerminal;
             returnTrip = true;
             targetIndex = 0;
@@ -2864,7 +2862,7 @@ public final class RegisteredVehicleControllerBlockEntity extends BlockEntity
                     view.worldPosition().z,
                     targetIndex,
                     progress,
-                    view.linearVelocity().length() / 20);
+                    (surfaceGuided() ? surfaceSpeed : view.linearVelocity().length()) / 20);
         } else
             for (ShipmentManifestEntry entry : manifest) {
                 ShippingTraceService.updateStatus(
@@ -2879,7 +2877,7 @@ public final class RegisteredVehicleControllerBlockEntity extends BlockEntity
                         view.worldPosition().z,
                         targetIndex,
                         progress,
-                        view.linearVelocity().length() / 20);
+                        (surfaceGuided() ? surfaceSpeed : view.linearVelocity().length()) / 20);
             }
     }
 
@@ -3126,6 +3124,10 @@ public final class RegisteredVehicleControllerBlockEntity extends BlockEntity
     public void setRouteCatalog(List<RouteDefinition> routes, int preferred, BlockPos dockPos) {
         knownDepartureRoute = null;
         routeCatalog.clear();
+        if (surfaceGuided() && !surfaceGuide.clear(this)) {
+            fault("guided_motion_unavailable", false);
+            return;
+        }
         invalidateTownGeometry(); activeRoute.clear();
         if (routes != null) {
             for (RouteDefinition route : routes) {
@@ -3182,7 +3184,7 @@ public final class RegisteredVehicleControllerBlockEntity extends BlockEntity
                 if (!airport.isCarrierInsideDockZone(this)) return false;
             } else if (airport.facilities().stream().noneMatch(facility ->
                     facility.supports(aircraftClass) && facility.isParked(view.worldBounds(), view.linearVelocity().length()))) return false;
-        } else if (!dock.isCarrierInsideDockZone(this)) return false;
+        } else if (!dock.isCarrierInsideDockZone(this) || !surfaceGuide.clear(this)) return false;
         if (aircraft) {
             if(railAircraftAutomation()){railAircraft.resetPreparation();railAircraft.allowResume();}
             else {parkingBrake().rearm();updateParkingBrake(server,true);updateGroundHold(server);}
@@ -3225,8 +3227,7 @@ public final class RegisteredVehicleControllerBlockEntity extends BlockEntity
                 activeRoute.getFirst());
         status = departureFlightPending ? ControllerStatus.WAITING_TERRAIN : ControllerStatus.RUNNING;
         if (!departureFlightPending) reason = "";
-        arrivalTicks = stalledTicks = 0;
-        lastProgressPosition = null;
+        arrivalTicks = 0;
         startTownVoyage(server, sourceTerminal, destinationTerminal);
         remember(server);
         setChanged();
@@ -3260,6 +3261,7 @@ public final class RegisteredVehicleControllerBlockEntity extends BlockEntity
 
     private void pause(boolean manual) {
         if (level instanceof ServerLevel) { townVoyage().clearMotion(); townVoyageDirty = true; }
+        if (surfaceGuided()) suspendSurfaceGuide(manual);
         if(railAircraftAutomation()) {
             manualTakeover|=manual;paused=true;
             if(level instanceof ServerLevel server&&view!=null){
@@ -3335,11 +3337,11 @@ public final class RegisteredVehicleControllerBlockEntity extends BlockEntity
                             getTransportUuid(), view.physicalId(), result.snapshot());
                 }
             }
+            if (surfaceGuided()) surfaceGuide.realign();
             manualTakeover = false;
             active = true;
             paused = false;
-            stalledTicks = 0;
-            lastProgressPosition = null;
+            arrivalTicks = 0;
             status = ControllerStatus.RUNNING;
             reason = "";
             setChanged();
@@ -3403,6 +3405,10 @@ public final class RegisteredVehicleControllerBlockEntity extends BlockEntity
     }
 
     private void stop() {
+        if (surfaceGuided() && !surfaceGuide.clear(this)) {
+            fault("guided_motion_unavailable", false);
+            return;
+        }
         if(railAircraftAutomation()) {
             if(level instanceof ServerLevel server) {
                 airSurfaces.neutral(surfaceContext());
@@ -3532,6 +3538,7 @@ public final class RegisteredVehicleControllerBlockEntity extends BlockEntity
 
     /** Called only by actual block replacement, never ordinary chunk unload or server shutdown. */
     public void onPermanentRemoval() {
+        if (surfaceGuided()) surfaceGuide.clear(this);
         finishTownVoyage();
         clearAirportLoading();
         if (!(level instanceof ServerLevel server)) return;
@@ -3942,7 +3949,7 @@ public final class RegisteredVehicleControllerBlockEntity extends BlockEntity
         tag.putString("TakeoffAssistStatus", NativeTakeoffAssist.status(this));
         tag.putString("FlightPhase", flightPhase);
         tag.putString("FlightTerminal", flightTerminalOffset == null ? "-" : flightTerminalOffset.toShortString());
-        tag.putString("ExecutionMode", "PHYSICAL");
+        tag.putString("ExecutionMode", surfaceGuided() ? "GUIDED" : "PHYSICAL");
         tag.putString("HybridStatus", "sable_custody_transaction_missing");
         ListTag groundWheels = new ListTag();
         for (BlockPos offset : groundWheelOffsets) groundWheels.add(StringTag.valueOf(offset.toShortString()));
@@ -3989,6 +3996,7 @@ public final class RegisteredVehicleControllerBlockEntity extends BlockEntity
         if (flightTerminalOffset != null) tag.putLong("FlightTerminalOffset", flightTerminalOffset.asLong());
         tag.putBoolean("Active", active);
         tag.putBoolean("Paused", paused);
+        if (surfaceGuided()) tag.putDouble("GuidedSpeed", surfaceSpeed);
         tag.putBoolean("ManualTakeover", manualTakeover);
         tag.putBoolean("PortsConfirmed", portsConfirmed);
         tag.putBoolean("Inverted", transmissionInverted);
@@ -4099,6 +4107,7 @@ public final class RegisteredVehicleControllerBlockEntity extends BlockEntity
         if (flightTerminalOffset != null) tag.putLong("FlightTerminalOffset", flightTerminalOffset.asLong());
         tag.putBoolean("Active", active);
         tag.putBoolean("Paused", paused);
+        if (surfaceGuided() && active) tag.put("SurfaceGuide", surfaceGuide.save());
         tag.putBoolean("ReturnTrip", returnTrip);
         tag.putBoolean("ManualTakeover", manualTakeover);
         tag.putString("Status", status.name());
@@ -4178,6 +4187,10 @@ public final class RegisteredVehicleControllerBlockEntity extends BlockEntity
         groundObservationTick = -1;
         if (tag.contains("Registration"))
             registration = ControllerRegistration.load(tag.getCompound("Registration"));
+        if (surfaceGuided()) {
+            surfaceGuide.load(tag.getCompound("SurfaceGuide"));
+            surfaceSpeed = 0;
+        }
         universalModeChosen = tag.getBoolean("UniversalModeChosen") || registration.registered();
         try { aircraftClass = AircraftClass.valueOf(tag.getString("AircraftClass")); }
         catch (IllegalArgumentException ignored) { aircraftClass = AircraftClass.AIRSHIP; }
@@ -4265,12 +4278,7 @@ public final class RegisteredVehicleControllerBlockEntity extends BlockEntity
                 ports.put(channel, Direction.valueOf(portTag.getString(channel.name())));
             } catch (IllegalArgumentException ignored) {
             }
-        if (transportKind() != Kind.AIR && !ControllerRegistration.validControlPorts(ports)) {
-            portsConfirmed = false;
-            paused = true;
-            status = ControllerStatus.FAULT;
-            reason = "configure_power";
-        }
+        if (surfaceGuided() && !ControllerRegistration.validControlPorts(ports)) portsConfirmed = false;
         routeCatalog.clear();
         routeCatalog.addAll(RouteNbtUtil.readRoutes(tag, "Routes"));
         knownDepartureRoute = RouteNbtUtil.readRoutes(tag, "AirportDepartureRoute").stream()

@@ -134,9 +134,7 @@ final class RegisteredAircraftRailController {
             if(pending==null) {
                 if(!RailAircraftMotionBridge.matchesTarget(c.controller(),lease,current.position(),current.tangent(),current.bankRadians(),.05,.03)){
                     // Sable's first physics tick precedes controller BE tick after a process restart.
-                    // Recover only a small downward startup displacement, with actual pose acknowledgment and no distance credit.
-                    if(!paused&&reloadAlignmentAvailable&&RailReloadAlignment.permits(current.position(),c.view().worldPosition())
-                            &&RailAircraftMotionBridge.matchesTarget(c.controller(),lease,c.view().worldPosition(),current.tangent(),current.bankRadians(),.001,.03)) {
+                    if(!paused&&reloadAlignmentAvailable&&canRealignAfterReload(c,source,current,now)) {
                         if(!pathClear.test(current)){blocked(c,"rail_path_blocked");return;}
                         reloadAlignmentAvailable=false;
                         var aligned=RailAircraftMotionBridge.move(c.controller(),lease,current.position(),current.tangent(),current.bankRadians());
@@ -191,6 +189,17 @@ final class RegisteredAircraftRailController {
         var moved=RailAircraftMotionBridge.move(c.controller(),lease,step.sample().position(),step.sample().tangent(),step.sample().bankRadians());
         if(!moved.success()){blocked(c,moved.reason());return;}
         pending=step;reason="";
+    }
+
+    private boolean canRealignAfterReload(Context c, AirportBlockEntity source, RailAircraftPath.Sample saved, long now) {
+        Vec3 actual = c.view().worldPosition();
+        if (RailReloadAlignment.permits(saved.position(), actual)
+                && RailAircraftMotionBridge.matchesTarget(c.controller(), lease, actual, saved.tangent(), saved.bankRadians(), .001, .03)) return true;
+        // A mission that never moved may still have its admitted resting pitch on the source stand.
+        return c.airframe() == AircraftClass.FIXED_WING && mission.distance() == 0
+                && (saved.phase() == RailAircraftPath.Phase.TAXI_OUT || saved.phase() == RailAircraftPath.Phase.HOLD_SHORT)
+                && RailReloadAlignment.permitsParkedStart(saved.position(), actual)
+                && source.railStandContains(mission.sourceAssignment(), c.carrier(), mission.bodyId(), c.view(), c.yaw(), c.angularSpeed(), now);
     }
 
     boolean ready(Context c,AirportBlockEntity airport) {
