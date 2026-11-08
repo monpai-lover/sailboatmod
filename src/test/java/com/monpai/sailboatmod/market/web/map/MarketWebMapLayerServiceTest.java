@@ -12,10 +12,27 @@ import org.junit.jupiter.api.Test;
 
 import java.util.List;
 import java.util.UUID;
+import java.util.concurrent.atomic.AtomicInteger;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 
 class MarketWebMapLayerServiceTest {
+    @Test
+    @SuppressWarnings("unchecked")
+    void terminalCleanupInvalidatesTheLayerServicesPublicSnapshot() throws ReflectiveOperationException {
+        MarketWebMapLayerService service = new MarketWebMapLayerService();
+        var cacheField = MarketWebMapLayerService.class.getDeclaredField("publicDataCache");
+        cacheField.setAccessible(true);
+        var cache = (MarketWebMapPublicDataCache<Object>) cacheField.get(service);
+        Object world = new Object();
+        AtomicInteger builds = new AtomicInteger();
+        assertEquals(1, cache.get(world, builds::incrementAndGet));
+
+        service.invalidatePublicData();
+
+        assertEquals(2, cache.get(world, builds::incrementAndGet));
+    }
+
     @Test
     void territoryUsesNationPrimaryAndSecondaryColors() {
         NationRecord nation = new NationRecord("crimea", "Crimea", "CRM", 0x2255AA, 0xF2C14E,

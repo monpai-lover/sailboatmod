@@ -282,6 +282,7 @@ public final class MarketWebServer {
     }
 
     private void stopInternal() {
+        service.close();
         auth.clear();
         events.close();
         if (httpServer != null) {
@@ -315,6 +316,7 @@ public final class MarketWebServer {
      * second; recorded trades become {@code trade} events for the page's ticker. In-game and web actions alike.
      */
     void publishMarketChanges(long tick) {
+        service.tick(minecraftServer);
         long revision = com.monpai.sailboatmod.market.MarketChangeNotifier.revision();
         if (publishedRevision < 0L) {
             publishedRevision = revision;
@@ -344,13 +346,32 @@ public final class MarketWebServer {
             try {
                 handler.handle(exchange);
             } catch (Exception exception) {
-                LOGGER.error("Market web request failed: {}", exchange.getRequestURI(), exception);
-                writeJson(exchange, 500, error("internal_error", "Internal server error"));
+                handleRequestFailure(exchange, exception);
             } finally {
                 exchange.close();
             }
         });
         context.getFilters().clear();
+    }
+
+    private static void handleRequestFailure(HttpExchange exchange, Exception exception) throws IOException {
+        Throwable failure = unwrapRequestFailure(exception);
+        if (failure instanceof MarketWebMarketResolver.UnavailableException unavailable) {
+            exchange.getResponseHeaders().set("Retry-After", Integer.toString(Math.max(1, unavailable.retryAfterSeconds())));
+            exchange.getResponseHeaders().set("Cache-Control", "no-store");
+            writeJson(exchange, 503, error(unavailable.reason(), unavailable.getMessage()));
+            return;
+        }
+        LOGGER.error("Market web request failed: {}", exchange.getRequestURI(), exception);
+        writeJson(exchange, 500, error("internal_error", "Internal server error"));
+    }
+
+    private static Throwable unwrapRequestFailure(Throwable failure) {
+        while ((failure instanceof java.util.concurrent.CompletionException
+                || failure instanceof java.util.concurrent.ExecutionException) && failure.getCause() != null) {
+            failure = failure.getCause();
+        }
+        return failure;
     }
 
     private void handleTokenLogin(HttpExchange exchange) throws IOException {
@@ -603,7 +624,20 @@ public final class MarketWebServer {
             }
             return json(400, error("action_failed", "Action failed"));
         }
-        JsonObject detail = callOnServerThread(() -> service.marketDetail(minecraftServer, identity, marketId));
+        return afterMarketAction(() -> callOnServerThread(() -> service.marketDetail(minecraftServer, identity, marketId)));
+    }
+
+    /** The mutation has committed. A delayed view refresh must still produce a replayable success receipt. */
+    static MarketWebIdempotency.StoredResponse afterMarketAction(Supplier<JsonObject> refresh) {
+        JsonObject detail;
+        try {
+            detail = refresh.get();
+        } catch (RuntimeException failure) {
+            if (unwrapRequestFailure(failure) instanceof MarketWebMarketResolver.UnavailableException) {
+                return json(200, success());
+            }
+            throw failure;
+        }
         return json(200, detail == null ? success() : detail);
     }
 

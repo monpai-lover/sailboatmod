@@ -16,6 +16,11 @@ final class MarketWebMapPublicDataCache<T> {
         this.clock = clock;
     }
 
+    void invalidate() {
+        context = null;
+        value = null;
+    }
+
     T get(Object requestedContext, Supplier<T> loader) {
         long now = clock.getAsLong();
         long age = now - builtAt;

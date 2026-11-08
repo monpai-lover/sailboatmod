@@ -1705,9 +1705,24 @@ async function api(path, options = {}) {
   if (idempotencyKey) {
     headers.set("Idempotency-Key", idempotencyKey);
   }
-  const response = await fetch(path, { ...fetchOptions, headers });
-  const data = await response.json().catch(() => ({}));
-  if (!response.ok) {
+  const attempts = String(fetchOptions.method || "GET").toUpperCase() === "GET" ? 5 : 1;
+  for (let attempt = 1; attempt <= attempts; attempt++) {
+    const response = await fetch(path, { ...fetchOptions, headers });
+    const data = await response.json().catch(() => {
+      if (fetchOptions.signal?.aborted) throw fetchOptions.signal.reason;
+      return {};
+    });
+    if (response.ok) return data;
+    if (attempt < attempts && response.status === 503 && [
+      "market_loading", "market_probe_busy", "market_probe_timeout", "market_probe_failed", "market_activation_unavailable", "market_unloading"
+    ].includes(data.errorCode)) {
+      const retryAfter = response.headers.get("Retry-After");
+      const seconds = Number(retryAfter);
+      const requestedDelay = Number.isFinite(seconds) ? seconds * 1000 : Date.parse(retryAfter) - Date.now();
+      const delay = Number.isFinite(requestedDelay) ? Math.min(5000, Math.max(1000, requestedDelay)) : 1000;
+      await waitForApiRetry(delay, fetchOptions.signal);
+      continue;
+    }
     if (response.status === 401 && state.sessionToken && !String(path).startsWith("/api/auth/")) {
       expireSession();
     }
@@ -1715,7 +1730,25 @@ async function api(path, options = {}) {
     error.status = response.status;
     throw error;
   }
-  return data;
+}
+
+function waitForApiRetry(delay, signal) {
+  return new Promise((resolve, reject) => {
+    if (signal?.aborted) {
+      reject(signal.reason);
+      return;
+    }
+    const abort = () => {
+      window.clearTimeout(timer);
+      signal.removeEventListener("abort", abort);
+      reject(signal.reason);
+    };
+    const timer = window.setTimeout(() => {
+      signal?.removeEventListener("abort", abort);
+      resolve();
+    }, delay);
+    signal?.addEventListener("abort", abort, { once: true });
+  });
 }
 
 // 会话失效(服务器重启、令牌过期):清掉本地令牌,页面退回游客模式继续可浏览。

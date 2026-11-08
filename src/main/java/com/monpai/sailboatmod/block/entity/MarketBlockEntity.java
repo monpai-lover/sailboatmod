@@ -178,6 +178,15 @@ public class MarketBlockEntity extends BlockEntity implements MenuProvider {
     }
 
     public MarketOverviewData buildOverviewForIdentity(String playerUuid, String playerName, @Nullable Player onlinePlayer) {
+        return buildOverviewForIdentity(playerUuid, playerName, onlinePlayer, true);
+    }
+
+    public MarketOverviewData buildWebOverviewForIdentity(String playerUuid, String playerName, @Nullable Player onlinePlayer) {
+        return buildOverviewForIdentity(playerUuid, playerName, onlinePlayer, false);
+    }
+
+    private MarketOverviewData buildOverviewForIdentity(String playerUuid, String playerName, @Nullable Player onlinePlayer,
+                                                       boolean allowChunkLoads) {
         String safePlayerUuid = playerUuid == null ? "" : playerUuid.trim();
         long walletAvailableBalance = 0L;
         long walletReservedBalance = 0L;
@@ -206,7 +215,8 @@ public class MarketBlockEntity extends BlockEntity implements MenuProvider {
         boolean dockStorageAccessible = false;
         List<String> dockStorageLines = List.of();
         List<MarketOverviewData.StorageEntry> storageEntries = new ArrayList<>();
-        if (level != null && linkedDockPos != null && level.getBlockEntity(linkedDockPos) instanceof TownWarehouseBlockEntity warehouse) {
+        TownWarehouseBlockEntity warehouse = allowChunkLoads ? getLinkedWarehouse() : getLoadedLinkedWarehouse();
+        if (warehouse != null) {
             dockName = warehouse.getDisplayName().getString();
             dockPosText = linkedDockPos.toShortString();
             linked = true;
@@ -327,8 +337,7 @@ public class MarketBlockEntity extends BlockEntity implements MenuProvider {
                 );
             }
             List<PurchaseOrder> openOrders = linkedDockPos == null ? List.<PurchaseOrder>of() : market.getOpenOrdersForSourceDock(linkedDockPos);
-            TownWarehouseBlockEntity linkedWarehouse = getLinkedWarehouse();
-            availableDispatchOptions.addAll(buildAvailableDispatchOptions(linkedWarehouse, onlinePlayer));
+            availableDispatchOptions.addAll(buildAvailableDispatchOptions(warehouse, onlinePlayer, allowChunkLoads));
             // 卖家发货待发单按 orderId 稳定排序求位次（与 web myOrders 同源逻辑，见 SellerShipQueue）。
             List<String> sellerShipQueueIds = new ArrayList<>();
             for (PurchaseOrder o : openOrders) {
@@ -353,7 +362,7 @@ public class MarketBlockEntity extends BlockEntity implements MenuProvider {
                         queuePos,
                         queueEta,
                         order.buyerUuid(),
-                        buildDispatchOptionsForOrder(linkedWarehouse, order, onlinePlayer)
+                        buildDispatchOptionsForOrder(warehouse, order, onlinePlayer, allowChunkLoads)
                 ));
             }
         }
@@ -438,7 +447,7 @@ public class MarketBlockEntity extends BlockEntity implements MenuProvider {
             analyticsSeries = MARKET_ANALYTICS.loadAnalyticsSeries(level instanceof net.minecraft.server.level.ServerLevel serverLevel ? serverLevel : null, collectCategories(listingEntries));
         }
 
-        java.util.List<MarketOverviewData.WarehouseOption> receivingOptions = receivingWarehouseOptionsForViewer(safePlayerUuid);
+        java.util.List<MarketOverviewData.WarehouseOption> receivingOptions = receivingWarehouseOptionsForViewer(safePlayerUuid, allowChunkLoads);
 
         List<MarketOverviewData.MyOrderEntry> myOrders = buildMyOrders(safePlayerUuid);
 
@@ -910,15 +919,20 @@ public class MarketBlockEntity extends BlockEntity implements MenuProvider {
 
     /** 收货下拉同源数据：买家当前 town 可写入仓库，每项含显示名 + townName，默认仓首位。 */
     public java.util.List<MarketOverviewData.WarehouseOption> receivingWarehouseOptionsForViewer(String buyerUuid) {
+        return receivingWarehouseOptionsForViewer(buyerUuid, true);
+    }
+
+    private java.util.List<MarketOverviewData.WarehouseOption> receivingWarehouseOptionsForViewer(String buyerUuid,
+                                                                                               boolean allowChunkLoads) {
         java.util.List<MarketOverviewData.WarehouseOption> out = new java.util.ArrayList<>();
         if (level == null || level.isClientSide) {
             return out;
         }
         NationSavedData nations = NationSavedData.get(level);
-        TownWarehouseBlockEntity linked = getLinkedWarehouse();
+        TownWarehouseBlockEntity linked = allowChunkLoads ? getLinkedWarehouse() : getLoadedLinkedWarehouse();
         for (BlockPos pos : receivingWarehouseCandidatesFor(buyerUuid)) {
-            String display = linked != null ? warehouseDisplayNameFor(pos, linked) : posLabel(pos);
-            String townName = townNameForWarehouse(nations, pos);
+            String display = linked != null ? warehouseDisplayNameFor(pos, linked, allowChunkLoads) : posLabel(pos);
+            String townName = townNameForWarehouse(nations, pos, allowChunkLoads);
             out.add(new MarketOverviewData.WarehouseOption(pos, display, townName));
         }
         return out;
@@ -928,8 +942,8 @@ public class MarketBlockEntity extends BlockEntity implements MenuProvider {
         return pos == null ? "" : pos.getX() + "," + pos.getY() + "," + pos.getZ();
     }
 
-    private String townNameForWarehouse(NationSavedData nations, BlockPos pos) {
-        if (level != null && level.getBlockEntity(pos) instanceof TownWarehouseBlockEntity w) {
+    private String townNameForWarehouse(NationSavedData nations, BlockPos pos, boolean allowChunkLoads) {
+        if (blockEntityAt(pos, allowChunkLoads) instanceof TownWarehouseBlockEntity w) {
             String townId = w.getTownId();
             TownRecord town = townId == null ? null : nations.getTown(townId);
             return town == null ? "" : town.name();
@@ -954,10 +968,14 @@ public class MarketBlockEntity extends BlockEntity implements MenuProvider {
 
     /** 取某仓库坐标的显示名：是 town 仓则用其名，否则回退 linked 仓名。 */
     private String warehouseDisplayNameFor(BlockPos warehousePos, TownWarehouseBlockEntity fallback) {
-        if (level != null && level.getBlockEntity(warehousePos) instanceof TownWarehouseBlockEntity w) {
+        return warehouseDisplayNameFor(warehousePos, fallback, true);
+    }
+
+    private String warehouseDisplayNameFor(BlockPos warehousePos, TownWarehouseBlockEntity fallback, boolean allowChunkLoads) {
+        if (blockEntityAt(warehousePos, allowChunkLoads) instanceof TownWarehouseBlockEntity w) {
             return w.getDisplayName().getString();
         }
-        return fallback.getDisplayName().getString();
+        return allowChunkLoads ? fallback.getDisplayName().getString() : posLabel(warehousePos);
     }
 
     private boolean purchaseListingResolved(String playerUuid, String playerName, @Nullable Player onlinePlayer,
@@ -1437,6 +1455,20 @@ public class MarketBlockEntity extends BlockEntity implements MenuProvider {
         return level.getBlockEntity(linkedDockPos) instanceof TownWarehouseBlockEntity warehouse ? warehouse : null;
     }
 
+    @Nullable
+    public TownWarehouseBlockEntity getLoadedLinkedWarehouse() {
+        return blockEntityAt(linkedDockPos, false) instanceof TownWarehouseBlockEntity warehouse ? warehouse : null;
+    }
+
+    @Nullable
+    private BlockEntity blockEntityAt(BlockPos position, boolean allowChunkLoads) {
+        if (level == null || position == null) return null;
+        if (allowChunkLoads) return level.getBlockEntity(position);
+        if (!(level instanceof ServerLevel serverLevel)) return null;
+        var chunk = serverLevel.getChunkSource().getChunkNow(position.getX() >> 4, position.getZ() >> 4);
+        return chunk == null ? null : chunk.getBlockEntity(position);
+    }
+
     @Override
     public Component getDisplayName() {
         return Component.literal(getMarketName());
@@ -1883,25 +1915,25 @@ public class MarketBlockEntity extends BlockEntity implements MenuProvider {
     }
 
     private List<MarketOverviewData.DispatchOption> buildAvailableDispatchOptions(@Nullable TownWarehouseBlockEntity sourceWarehouse,
-                                                                                  @Nullable Player player) {
+                                                                                  @Nullable Player player, boolean allowChunkLoads) {
         if (sourceWarehouse == null) {
             return List.of();
         }
         List<MarketOverviewData.DispatchOption> options = new ArrayList<>();
-        collectAvailableDispatchOptions(sourceWarehouse, TransportTerminalKind.PORT, player, options);
-        collectAvailableDispatchOptions(sourceWarehouse, TransportTerminalKind.POST_STATION, player, options);
-        collectAvailableDispatchOptions(sourceWarehouse, TransportTerminalKind.AIRPORT, player, options);
+        collectAvailableDispatchOptions(sourceWarehouse, TransportTerminalKind.PORT, player, options, allowChunkLoads);
+        collectAvailableDispatchOptions(sourceWarehouse, TransportTerminalKind.POST_STATION, player, options, allowChunkLoads);
+        collectAvailableDispatchOptions(sourceWarehouse, TransportTerminalKind.AIRPORT, player, options, allowChunkLoads);
         return List.copyOf(options);
     }
 
     private void collectAvailableDispatchOptions(TownWarehouseBlockEntity sourceWarehouse,
                                                  TransportTerminalKind terminalKind,
                                                  @Nullable Player player,
-                                                 List<MarketOverviewData.DispatchOption> options) {
+                                                 List<MarketOverviewData.DispatchOption> options, boolean allowChunkLoads) {
         if (sourceWarehouse == null || terminalKind == null || options == null) {
             return;
         }
-        for (DockBlockEntity terminal : terminalsForTown(sourceWarehouse.getTownId(), terminalKind)) {
+        for (DockBlockEntity terminal : terminalsForTown(sourceWarehouse.getTownId(), terminalKind, allowChunkLoads)) {
             List<LogisticsCarrier> carriers = availableDispatchBoats(terminal, player);
             for (LogisticsCarrier carrier : carriers) {
                 options.add(new MarketOverviewData.DispatchOption(
@@ -1931,19 +1963,19 @@ public class MarketBlockEntity extends BlockEntity implements MenuProvider {
 
     private List<MarketOverviewData.DispatchOption> buildDispatchOptionsForOrder(@Nullable TownWarehouseBlockEntity sourceWarehouse,
                                                                                  @Nullable PurchaseOrder order,
-                                                                                 @Nullable Player player) {
+                                                                                 @Nullable Player player, boolean allowChunkLoads) {
         if (sourceWarehouse == null || order == null) {
             return List.of();
         }
         return List.of(
-                buildDispatchOption(sourceWarehouse, order.targetDockPos(), TransportTerminalKind.PORT, player),
-                buildDispatchOption(sourceWarehouse, order.targetDockPos(), TransportTerminalKind.POST_STATION, player),
-                buildDispatchOption(sourceWarehouse, order.targetDockPos(), TransportTerminalKind.AIRPORT, player)
+                buildDispatchOption(sourceWarehouse, order.targetDockPos(), TransportTerminalKind.PORT, player, allowChunkLoads),
+                buildDispatchOption(sourceWarehouse, order.targetDockPos(), TransportTerminalKind.POST_STATION, player, allowChunkLoads),
+                buildDispatchOption(sourceWarehouse, order.targetDockPos(), TransportTerminalKind.AIRPORT, player, allowChunkLoads)
         );
     }
 
     private MarketOverviewData.DispatchOption buildDispatchOption(TownWarehouseBlockEntity sourceWarehouse, BlockPos targetWarehousePos,
-                                                                  TransportTerminalKind terminalKind, @Nullable Player player) {
+                                                                  TransportTerminalKind terminalKind, @Nullable Player player, boolean allowChunkLoads) {
         String terminalLabel = terminalKind == TransportTerminalKind.AIRPORT ? "Airport" : terminalKind == TransportTerminalKind.POST_STATION ? "Post Station" : "Port";
         if (level == null || sourceWarehouse == null || targetWarehousePos == null || terminalKind == null || terminalKind == TransportTerminalKind.AUTO) {
             return new MarketOverviewData.DispatchOption(
@@ -1976,13 +2008,13 @@ public class MarketBlockEntity extends BlockEntity implements MenuProvider {
             );
         }
 
-        TownWarehouseBlockEntity targetWarehouse = level.getBlockEntity(targetWarehousePos) instanceof TownWarehouseBlockEntity warehouse ? warehouse : null;
+        TownWarehouseBlockEntity targetWarehouse = blockEntityAt(targetWarehousePos, allowChunkLoads) instanceof TownWarehouseBlockEntity warehouse ? warehouse : null;
         if (targetWarehouse == null) {
             return new MarketOverviewData.DispatchOption(terminalKind.name(), terminalLabel, "-", "-", "", "", 0, 0, false, "Unavailable", "Target warehouse is missing.");
         }
 
-        List<DockBlockEntity> sourceTerminals = terminalsForTown(sourceWarehouse.getTownId(), terminalKind);
-        List<DockBlockEntity> targetTerminals = terminalsForTown(targetWarehouse.getTownId(), terminalKind);
+        List<DockBlockEntity> sourceTerminals = terminalsForTown(sourceWarehouse.getTownId(), terminalKind, allowChunkLoads);
+        List<DockBlockEntity> targetTerminals = terminalsForTown(targetWarehouse.getTownId(), terminalKind, allowChunkLoads);
         if (sourceTerminals.isEmpty() || targetTerminals.isEmpty()) {
             return new MarketOverviewData.DispatchOption(
                     terminalKind.name(),
@@ -2176,13 +2208,17 @@ public class MarketBlockEntity extends BlockEntity implements MenuProvider {
     }
 
     private List<DockBlockEntity> terminalsForTown(String townId, TransportTerminalKind terminalKind) {
+        return terminalsForTown(townId, terminalKind, true);
+    }
+
+    private List<DockBlockEntity> terminalsForTown(String townId, TransportTerminalKind terminalKind, boolean allowChunkLoads) {
         if (level == null || townId == null || townId.isBlank() || terminalKind == null) {
             return List.of();
         }
         Set<BlockPos> candidates = terminalPositions(terminalKind);
         List<DockBlockEntity> terminals = new ArrayList<>();
         for (BlockPos pos : candidates) {
-            if (!(level.getBlockEntity(pos) instanceof DockBlockEntity terminal)) {
+            if (!(blockEntityAt(pos, allowChunkLoads) instanceof DockBlockEntity terminal)) {
                 continue;
             }
             if (!matchesTerminalKind(terminal, terminalKind)) {

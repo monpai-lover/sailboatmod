@@ -107,10 +107,28 @@ public class MarketTerminalSavedData extends SavedData {
         if (dimensionId == null || dimensionId.isBlank() || pos == null) {
             return;
         }
-        if (entries.remove(MarketTerminalEntry.keyFor(dimensionId, pos)) != null) {
-            positionEvidence.remove(MarketTerminalEntry.keyFor(dimensionId, pos));
+        String dimension = dimensionId.trim();
+        String key = MarketTerminalEntry.keyFor(dimension, pos);
+        boolean removedEntry = entries.remove(key) != null;
+        boolean removedEvidence = positionEvidence.remove(key) != null;
+        boolean removedAliases = positionAliases.values().removeIf(alias -> alias.dimensionId().equals(dimension)
+                && (alias.canonical().equals(pos) || alias.previous().equals(pos)));
+        if (removedEntry || removedEvidence || removedAliases) {
             setDirty();
         }
+    }
+
+    public MarketTerminalEntry getEntry(String dimensionId, BlockPos position) {
+        if (position == null) return null;
+        MarketTerminalEntry entry = entries.get(MarketTerminalEntry.keyFor(dimensionId, position));
+        return entry != null && entry.dimensionId().equals(dimensionId) && entry.marketPos().equals(position)
+                ? entry : null;
+    }
+
+    public boolean hasUnverifiedPosition(String dimensionId, BlockPos position) {
+        if (getEntry(dimensionId, position) == null) return false;
+        PersistedBlockPos.Evidence evidence = positionEvidence.get(MarketTerminalEntry.keyFor(dimensionId, position));
+        return evidence != null && evidence.portablePosition() == null;
     }
 
     public List<MarketTerminalEntry> entries() {
@@ -125,9 +143,7 @@ public class MarketTerminalSavedData extends SavedData {
     }
 
     public boolean containsPosition(String dimensionId, BlockPos position) {
-        if (position == null) return false;
-        MarketTerminalEntry entry = entries.get(MarketTerminalEntry.keyFor(dimensionId, position));
-        return entry != null && entry.dimensionId().equals(dimensionId) && entry.marketPos().equals(position);
+        return getEntry(dimensionId, position) != null;
     }
 
     private void addAlias(PositionAlias alias) {

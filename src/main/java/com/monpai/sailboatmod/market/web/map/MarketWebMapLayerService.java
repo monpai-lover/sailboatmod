@@ -39,6 +39,10 @@ public final class MarketWebMapLayerService {
         return publicDataCache.get(server, () -> new PublicData(loadMarkets(server), loadTerritories(server)));
     }
 
+    public void invalidatePublicData() {
+        publicDataCache.invalidate();
+    }
+
     public MarketWebMapDtos.Snapshot snapshot(MinecraftServer server, MarketPlayerIdentity identity, String focusedMarketId) {
         PublicData data = publicData(server);
         List<MarketWebMapDtos.MarketMarker> markers = data.markets();

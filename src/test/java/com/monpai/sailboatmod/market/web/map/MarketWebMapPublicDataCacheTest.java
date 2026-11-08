@@ -6,6 +6,20 @@ import org.junit.jupiter.api.Test;
 import static org.junit.jupiter.api.Assertions.*;
 
 class MarketWebMapPublicDataCacheTest {
+    @Test void invalidationRebuildsPublicDataBeforeTheTtlExpires() {
+        AtomicLong clock = new AtomicLong(100L);
+        AtomicInteger builds = new AtomicInteger();
+        var cache = new MarketWebMapPublicDataCache<Integer>(2_000_000_000L, clock::get);
+        Object world = new Object();
+        assertEquals(1, cache.get(world, builds::incrementAndGet));
+
+        cache.invalidate();
+
+        assertEquals(2, cache.get(world, builds::incrementAndGet),
+                "removing a terminal must evict its public marker immediately");
+        assertEquals(2, cache.get(world, builds::incrementAndGet));
+    }
+
     @Test void repeatedPublicRequestsShareOneBuildUntilExpiry() {
         AtomicLong clock = new AtomicLong();
         AtomicInteger builds = new AtomicInteger();

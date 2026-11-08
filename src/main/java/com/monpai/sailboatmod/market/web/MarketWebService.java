@@ -47,13 +47,11 @@ import com.monpai.sailboatmod.nation.service.NationService;
 import com.monpai.sailboatmod.nation.service.TownService;
 import net.minecraft.core.BlockPos;
 import net.minecraft.core.registries.BuiltInRegistries;
-import net.minecraft.resources.ResourceKey;
 import net.minecraft.resources.ResourceLocation;
 import net.minecraft.server.MinecraftServer;
 import net.minecraft.server.level.ServerLevel;
 import net.minecraft.world.item.Item;
 import net.minecraft.world.item.ItemStack;
-import net.minecraft.world.level.Level;
 import net.minecraft.core.registries.BuiltInRegistries;
 
 import java.util.ArrayList;
@@ -68,6 +66,18 @@ public final class MarketWebService {
     private static final MarketAnalyticsService MARKET_ANALYTICS = new MarketAnalyticsService();
     private final MarketWebMapLayerService mapLayers = new MarketWebMapLayerService();
     private final MarketWebFlagService mapFlags = new MarketWebFlagService();
+    private final MarketWebMarketResolver marketResolver = new MarketWebMarketResolver(() -> {
+        mapLayers.invalidatePublicData();
+        com.monpai.sailboatmod.market.MarketChangeNotifier.changed();
+    });
+
+    public void tick(MinecraftServer server) {
+        marketResolver.tick(server);
+    }
+
+    public void close() {
+        marketResolver.close();
+    }
 
     public record ItemPreview(String commodityKey, String itemId, String displayName, String category,
                               int suggestedUnitPrice) {
@@ -109,9 +119,13 @@ public final class MarketWebService {
         if (server == null || identity == null) {
             return out;
         }
-        List<MarketTerminalSavedData.MarketTerminalEntry> entries = new ArrayList<>(MarketTerminalSavedData.get(server.overworld()).entries());
+        marketResolver.validateCatalog(server);
+        MarketTerminalSavedData terminals = MarketTerminalSavedData.get(server.overworld());
+        List<MarketTerminalSavedData.MarketTerminalEntry> entries = new ArrayList<>(terminals.entries());
         entries.sort(Comparator.comparing(MarketTerminalSavedData.MarketTerminalEntry::marketName, String.CASE_INSENSITIVE_ORDER));
         for (MarketTerminalSavedData.MarketTerminalEntry entry : entries) {
+            boolean loaded = marketResolver.isLoaded(server, entry.dimensionId(), entry.marketPos());
+            if (terminals.getEntry(entry.dimensionId(), entry.marketPos()) == null) continue;
             JsonObject json = new JsonObject();
             json.addProperty("marketId", encodeMarketId(entry.dimensionId(), entry.marketPos()));
             json.addProperty("marketName", entry.marketName().isBlank() ? "Market" : entry.marketName());
@@ -120,17 +134,19 @@ public final class MarketWebService {
             json.addProperty("dimensionId", entry.dimensionId());
             json.addProperty("position", entry.marketPos().toShortString());
             json.addProperty("canManage", entry.ownerUuid().equals(identity.playerUuidString()));
-            json.addProperty("loaded", resolveMarket(server, entry.dimensionId(), entry.marketPos()) != null);
+            json.addProperty("loaded", loaded);
             out.add(json);
         }
         return out;
     }
 
     public JsonObject mapSnapshot(MinecraftServer server, MarketPlayerIdentity identity, String focusedMarketId) {
+        marketResolver.validateCatalog(server);
         return MarketWebMapJson.snapshot(mapLayers.snapshot(server, identity, focusedMarketId));
     }
 
     public JsonArray mapMarkets(MinecraftServer server, MarketPlayerIdentity identity) {
+        marketResolver.validateCatalog(server);
         return MarketWebMapJson.markets(mapLayers.markets(server));
     }
 
@@ -344,7 +360,7 @@ public final class MarketWebService {
         if (resolved == null || identity == null) {
             return null;
         }
-        MarketOverviewData overview = resolved.market().buildOverviewForIdentity(
+        MarketOverviewData overview = resolved.market().buildWebOverviewForIdentity(
                 identity.playerUuidString(),
                 identity.playerName(),
                 identity.onlinePlayer()
@@ -888,12 +904,12 @@ public final class MarketWebService {
         }
         MarketBlockEntity market = resolved.market();
         // 仅市场管理者可见(与 marketDetail 的 canManage 同源)。
-        MarketOverviewData overview = market.buildOverviewForIdentity(
+        MarketOverviewData overview = market.buildWebOverviewForIdentity(
                 identity.playerUuidString(),
                 identity.playerName(),
                 identity.onlinePlayer()
         );
-        if (!overview.canManage()) {
+        if (!overview.canManage() || !overview.linkedDock()) {
             return out;
         }
         int colonyId = market.resolveLinkedColonyId();
@@ -1258,7 +1274,7 @@ public final class MarketWebService {
                     Integer.parseInt(parts[2]),
                     Integer.parseInt(parts[3])
             ));
-        } catch (Exception ignored) {
+        } catch (IllegalArgumentException ignored) {
             return null;
         }
     }
@@ -1267,42 +1283,7 @@ public final class MarketWebService {
         if (server == null || dimensionId == null || dimensionId.isBlank() || pos == null) {
             return null;
         }
-        MarketTerminalSavedData terminals = MarketTerminalSavedData.get(server.overworld());
-        pos = terminals.canonicalPosition(dimensionId, pos);
-        if (!terminals.containsPosition(dimensionId, pos)) {
-            return null;
-        }
-        ResourceLocation resourceLocation = ResourceLocation.tryParse(dimensionId);
-        if (resourceLocation == null) {
-            return null;
-        }
-        ResourceKey<Level> key = ResourceKey.create(net.minecraft.core.registries.Registries.DIMENSION, resourceLocation);
-        ServerLevel level = server.getLevel(key);
-        if (level == null || level.isOutsideBuildHeight(pos)) {
-            return null;
-        }
-        if (level.getChunkSource().getChunkNow(pos.getX() >> 4, pos.getZ() >> 4) == null) {
-            var saved = com.monpai.sailboatmod.util.OfflineChunkNbtReader.readSafeOnMainThread(
-                    level, new net.minecraft.world.level.ChunkPos(pos), 250L, false);
-            if (saved.isEmpty()) return null;
-            boolean found = false;
-            for (net.minecraft.nbt.Tag raw : saved.get().getList("block_entities", net.minecraft.nbt.Tag.TAG_COMPOUND)) {
-                if (raw instanceof net.minecraft.nbt.CompoundTag entity
-                        && "sailboatmod:market".equals(entity.getString("id"))
-                        && entity.getInt("x") == pos.getX() && entity.getInt("y") == pos.getY()
-                        && entity.getInt("z") == pos.getZ()) {
-                    found = true;
-                    break;
-                }
-            }
-            if (!found) return null;
-        }
-        // Only load an existing, verified market chunk. A stale URL must never generate remote Earth terrain.
-        level.getChunkAt(pos);
-        if (!(level.getBlockEntity(pos) instanceof MarketBlockEntity market)) {
-            return null;
-        }
-        return new ResolvedMarket(level, market);
+        return marketResolver.resolve(server, dimensionId, pos);
     }
 
     private JsonArray receivingWarehouseOptions(MarketOverviewData overview) {
