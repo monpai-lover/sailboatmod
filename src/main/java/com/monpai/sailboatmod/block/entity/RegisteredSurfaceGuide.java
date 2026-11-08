@@ -2,6 +2,7 @@ package com.monpai.sailboatmod.block.entity;
 
 import com.monpai.sailboatmod.compat.aeronautics.RailAircraftMotionBridge;
 import com.monpai.sailboatmod.transport.GuidedSurfacePath;
+import com.monpai.sailboatmod.transport.board.TownVoyageSnapshot;
 import com.monpai.sailboatmod.transport.physical.PhysicalVehicleView;
 import net.minecraft.core.Direction;
 import net.minecraft.nbt.CompoundTag;
@@ -11,13 +12,16 @@ import net.minecraft.world.phys.AABB;
 import net.minecraft.world.phys.Vec3;
 
 import java.util.List;
+import java.util.OptionalLong;
 import java.util.UUID;
+import java.util.function.IntPredicate;
 import java.util.function.Predicate;
 
 /** Moves a real Sable body through one checked pose at a time. Only native readback advances freight progress. */
 final class RegisteredSurfaceGuide {
     private static final double TICKS_PER_SECOND = 20;
     private static final double ACCELERATION_PER_TICK = 0.16;
+    private static final double MIN_PROGRESS_PER_TICK = 0.0125;
     private static final double MAX_HEADING_STEP = Math.toRadians(4);
     private static final double MAX_PITCH_STEP = Math.toRadians(2);
     private static final double POSITION_TOLERANCE = 0.018;
@@ -35,6 +39,7 @@ final class RegisteredSurfaceGuide {
     private record Pending(double distance, Vec3 anchor, Vec3 tangent, Vec3 from, double turn, long tick) {}
 
     private GuidedSurfacePath path;
+    private GuidedSurfacePath.Timing timing;
     private RailAircraftMotionBridge.Lease lease;
     private Pending pending;
     private UUID body;
@@ -47,6 +52,7 @@ final class RegisteredSurfaceGuide {
     private boolean approach;
     private boolean legacyApproach;
     private boolean invalidSavedState;
+    private boolean confirmedRouteProgress;
 
     Result tick(BlockEntity controller, UUID owner, PhysicalVehicleView view, Direction facing, List<Vec3> route,
                 int routeIndex, double speedLimit, boolean water, Predicate<Vec3> departureZone, Probe probe) {
@@ -88,6 +94,7 @@ final class RegisteredSurfaceGuide {
         }
 
         if (lease == null || !RailAircraftMotionBridge.owns(controller, lease)) {
+            confirmedRouteProgress = false;
             var acquired = RailAircraftMotionBridge.acquire(controller, owner, body, facing);
             if (!acquired.accepted()) return waitAt(controller, current.routeIndex(), acquired.reason());
             lease = acquired.lease();
@@ -104,6 +111,7 @@ final class RegisteredSurfaceGuide {
                 if (now - pending.tick() < 6) return new Result(current.routeIndex(), false, 0, 0, "");
                 return waitAt(controller, current.routeIndex(), "guided_pose_unconfirmed");
             }
+            if (!align && pending.distance() > distance) confirmedRouteProgress = true;
             distance = pending.distance();
             actualSpeed = view.worldPosition().subtract(pending.from()).horizontalDistance() * TICKS_PER_SECOND;
             actualTurn = pending.turn();
@@ -144,7 +152,7 @@ final class RegisteredSurfaceGuide {
         align = approach = false;
 
         speed = Math.min(Math.min(speedLimit, speed + ACCELERATION_PER_TICK), path.speedLimit(distance));
-        double nextDistance = Math.min(path.length(), distance + Math.max(0.0125, speed / TICKS_PER_SECOND));
+        double nextDistance = Math.min(path.length(), distance + Math.max(MIN_PROGRESS_PER_TICK, speed / TICKS_PER_SECOND));
         var next = path.sample(nextDistance);
         double targetHeading = Math.atan2(next.tangent().z, next.tangent().x);
         double yawDelta = wrap(targetHeading - heading);
@@ -210,18 +218,32 @@ final class RegisteredSurfaceGuide {
         return new Result(routeIndex, false, 0, 0, reason);
     }
 
+    OptionalLong remainingEtaTicks(double cruiseSpeed, IntPredicate reserveTiming) {
+        if (!confirmedRouteProgress || !Double.isFinite(cruiseSpeed) || cruiseSpeed <= 0) return OptionalLong.empty();
+        if (timing == null && !reserveTiming.test(path.pointCount())) return OptionalLong.empty();
+        double effectiveCruiseSpeed = Math.max(cruiseSpeed, MIN_PROGRESS_PER_TICK * TICKS_PER_SECOND);
+        if (timing == null || timing.cruiseSpeed() != effectiveCruiseSpeed) timing = path.timing(effectiveCruiseSpeed);
+        long ticks = timing.remainingTicks(distance);
+        return ticks > 0 && ticks <= TownVoyageSnapshot.MAX_ETA_TICKS ? OptionalLong.of(ticks) : OptionalLong.empty();
+    }
+
+    void discardEtaTiming() { timing = null; }
+
     void hold(BlockEntity controller) {
         if (lease != null) RailAircraftMotionBridge.hold(controller, lease);
         pending = null;
         speed = 0;
+        confirmedRouteProgress = false;
     }
 
     void realign() {
         align = true;
         restored = body != null;
+        confirmedRouteProgress = false;
     }
 
     boolean release(BlockEntity controller) {
+        confirmedRouteProgress = false;
         if (lease != null) {
             var result = RailAircraftMotionBridge.release(controller, lease);
             if (!result.success() && !"air_rail_stale_lease".equals(result.reason())) return false;
@@ -236,6 +258,7 @@ final class RegisteredSurfaceGuide {
     boolean clear(BlockEntity controller) {
         if (!release(controller)) return false;
         path = null;
+        timing = null;
         body = null;
         restored = invalidSavedState = approach = legacyApproach = false;
         return true;
@@ -257,10 +280,12 @@ final class RegisteredSurfaceGuide {
 
     void load(CompoundTag tag) {
         path = null;
+        timing = null;
         body = null;
         pending = null;
         speed = 0;
         invalidSavedState = false;
+        confirmedRouteProgress = false;
         restored = approach = legacyApproach = false;
         if (tag.isEmpty()) return;
         if (!tag.hasUUID("Body") || !tag.contains("RouteHash", Tag.TAG_INT)

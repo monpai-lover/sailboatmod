@@ -1,6 +1,7 @@
 package com.monpai.sailboatmod.block;
 
 import com.monpai.sailboatmod.block.entity.AirportBlockEntity;
+import com.monpai.sailboatmod.market.terminal.TerminalNetworkSavedData;
 import com.monpai.sailboatmod.nation.service.TownService;
 import com.monpai.sailboatmod.transport.air.airport.AirportSavedData;
 import com.mojang.serialization.MapCodec;
@@ -70,7 +71,9 @@ public final class AirportBlock extends BaseEntityBlock {
     @Override public void onRemove(BlockState state, Level level, BlockPos pos, BlockState newState, boolean movedByPiston) {
         if (!state.is(newState.getBlock()) && level instanceof ServerLevel server) {
             com.monpai.sailboatmod.transport.board.TownVoyagePublisher.markEndpointRemoved(server, pos);
-            AirportSavedData.get(server).remove(level.dimension().location().toString(), pos);
+            String dimension = level.dimension().location().toString();
+            AirportSavedData.get(server).remove(dimension, pos);
+            TerminalNetworkSavedData.get(server).removeEntry(dimension, pos.asLong());
         }
         super.onRemove(state, level, pos, newState, movedByPiston);
     }

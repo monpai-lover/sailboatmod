@@ -1,5 +1,7 @@
 package com.monpai.sailboatmod.transport.control;
 
+import com.google.common.base.Suppliers;
+import com.monpai.sailboatmod.compat.aeronautics.WaterHullSweep;
 import com.monpai.sailboatmod.transport.physical.PhysicalVehicleView;
 import net.minecraft.core.BlockPos;
 import net.minecraft.server.level.ServerLevel;
@@ -7,8 +9,10 @@ import net.minecraft.tags.FluidTags;
 import net.minecraft.world.phys.AABB;
 import net.minecraft.world.phys.Vec3;
 
+import java.util.Optional;
 import java.util.function.BiPredicate;
 import java.util.function.Predicate;
+import java.util.function.Supplier;
 
 /** Checks the actual swept hull and its draft before committing a guided water movement. */
 public final class GuidedWaterTerrain {
@@ -20,7 +24,8 @@ public final class GuidedWaterTerrain {
 
     private final SweptTerrainProbe terrain = new SweptTerrainProbe();
 
-    public String check(ServerLevel level, PhysicalVehicleView view, Vec3 anchor, AABB swept) {
+    public String check(ServerLevel level, PhysicalVehicleView view, Vec3 anchor, AABB swept,
+                        Supplier<Optional<WaterHullSweep>> narrowPhase) {
         if (view == null || !view.available() || !finite(swept) || anchor == null
                 || !Double.isFinite(anchor.y)) return "waiting_terrain";
 
@@ -32,6 +37,7 @@ public final class GuidedWaterTerrain {
         int x = (int) Math.floor(center.x), z = (int) Math.floor(center.z);
         int bottom = (int) Math.floor(hull.minY - WATERLINE_TOLERANCE) - 1;
         int top = (int) Math.ceil(hull.maxY) - 1;
+        var verifiedSweep = Suppliers.memoize(narrowPhase::get);
         try {
             for (int y = top; y >= bottom; y--) {
                 if (loaded.getFluidState(sample.set(x, y, z)).is(FluidTags.WATER)) {
@@ -40,13 +46,18 @@ public final class GuidedWaterTerrain {
                     return scan(swept, y, loaded::available,
                             at -> loaded.getFluidState(at).is(FluidTags.WATER),
                             (at, collisionHull) -> loaded.getBlockState(at).getCollisionShape(loaded, at).toAabbs().stream()
-                                    .anyMatch(shape -> shape.move(at.getX(), at.getY(), at.getZ()).intersects(collisionHull)));
+                                    .anyMatch(shape -> intersectsHull(shape.move(at.getX(), at.getY(), at.getZ()),
+                                            collisionHull, verifiedSweep)));
                 }
             }
         } catch (RuntimeException unavailable) {
             return "waiting_terrain";
         }
         return "water_route_dry";
+    }
+
+    static boolean intersectsHull(AABB shape, AABB broad, Supplier<Optional<WaterHullSweep>> narrowPhase) {
+        return shape.intersects(broad) && !narrowPhase.get().map(sweep -> sweep.definitelyDisjoint(shape)).orElse(false);
     }
 
     String scan(AABB swept, int waterY, Predicate<BlockPos> loaded, Predicate<BlockPos> water,

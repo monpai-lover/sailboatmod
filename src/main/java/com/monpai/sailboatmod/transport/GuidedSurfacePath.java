@@ -31,8 +31,7 @@ public final class GuidedSurfacePath {
         brakingSpeeds = new double[points.size()];
         for (int i = points.size() - 2; i >= 0; i--) {
             double following = distances[i + 1] - distances[i];
-            double braking = Math.sqrt(brakingSpeeds[i + 1] * brakingSpeeds[i + 1]
-                    + 2 * BRAKING_ACCELERATION * following);
+            double braking = speedAfter(brakingSpeeds[i + 1], following);
             double curveLimit = Double.POSITIVE_INFINITY;
             if (i > 0) {
                 Vec3 from = points.get(i).position.subtract(points.get(i - 1).position);
@@ -103,6 +102,8 @@ public final class GuidedSurfacePath {
         return distances[distances.length - 1];
     }
 
+    public int pointCount() { return distances.length; }
+
     /** Reserve enough distance to slow down before the next bend or terminal. */
     public double speedLimit(double distance) {
         double d = Math.clamp(distance, 0, length());
@@ -110,8 +111,63 @@ public final class GuidedSurfacePath {
         double untilNext = distances[next] - d;
         double after = brakingSpeeds[next];
         double from = brakingSpeeds[next - 1];
-        return Math.min(Math.sqrt(after * after + 2 * BRAKING_ACCELERATION * untilNext),
-                Math.sqrt(from * from + 2 * BRAKING_ACCELERATION * (d - distances[next - 1])));
+        return Math.min(speedAfter(after, untilNext), speedAfter(from, d - distances[next - 1]));
+    }
+
+    public Timing timing(double cruiseSpeed) {
+        if (!Double.isFinite(cruiseSpeed) || cruiseSpeed <= 0)
+            throw new IllegalArgumentException("Invalid surface cruise speed");
+        return new Timing(cruiseSpeed);
+    }
+
+    /** Nominal travel time over the compiled path, using the route's braking and corner limits. */
+    public final class Timing {
+        private final double cruiseSpeed;
+        private final double[] vertexSpeeds = new double[distances.length];
+        private final double[] secondsToEnd = new double[distances.length];
+
+        private Timing(double cruiseSpeed) {
+            this.cruiseSpeed = cruiseSpeed;
+            for (int i = 1; i < distances.length; i++) {
+                double span = distances[i] - distances[i - 1];
+                // Use the same acceleration bound in both directions for a conservative nominal profile.
+                vertexSpeeds[i] = Math.min(Math.min(cruiseSpeed, brakingSpeeds[i]), speedAfter(vertexSpeeds[i - 1], span));
+            }
+            for (int i = distances.length - 2; i >= 0; i--)
+                secondsToEnd[i] = secondsToEnd[i + 1] + remainingSegmentSeconds(i + 1, 0);
+        }
+
+        public double cruiseSpeed() { return cruiseSpeed; }
+
+        public long remainingTicks(double distance) {
+            if (!Double.isFinite(distance) || distance < 0 || distance >= length()) return 0;
+            int next = nextIndex(distance);
+            double seconds = remainingSegmentSeconds(next, distance - distances[next - 1]) + secondsToEnd[next];
+            return (long) Math.ceil(seconds * 20);
+        }
+
+        private double remainingSegmentSeconds(int next, double offset) {
+            double span = distances[next] - distances[next - 1];
+            double entry = vertexSpeeds[next - 1], exit = vertexSpeeds[next];
+            double twiceAcceleration = 2 * BRAKING_ACCELERATION;
+            double entrySquared = entry * entry, exitSquared = exit * exit, cruiseSquared = cruiseSpeed * cruiseSpeed;
+            double crossover = Math.clamp((span + (exitSquared - entrySquared) / twiceAcceleration) / 2, 0, span);
+            double acceleratingUntil = Math.min(crossover, (cruiseSquared - entrySquared) / twiceAcceleration);
+            double brakingFrom = Math.max(crossover, span - (cruiseSquared - exitSquared) / twiceAcceleration);
+
+            double seconds = 0;
+            if (offset < acceleratingUntil) {
+                seconds += 2 * (acceleratingUntil - offset) / (speedAfter(entry, offset) + speedAfter(entry, acceleratingUntil));
+            }
+            seconds += Math.max(0, brakingFrom - Math.max(offset, acceleratingUntil)) / cruiseSpeed;
+            double brakingDistance = span - Math.max(offset, brakingFrom);
+            if (brakingDistance > 0) seconds += 2 * brakingDistance / (speedAfter(exit, brakingDistance) + exit);
+            return seconds;
+        }
+    }
+
+    private static double speedAfter(double initialSpeed, double distance) {
+        return Math.sqrt(initialSpeed * initialSpeed + 2 * BRAKING_ACCELERATION * distance);
     }
 
     public Sample sample(double distance) {

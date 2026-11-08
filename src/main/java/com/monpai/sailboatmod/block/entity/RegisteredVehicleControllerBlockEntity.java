@@ -572,7 +572,9 @@ public final class RegisteredVehicleControllerBlockEntity extends BlockEntity
                 (anchor, tangent, routePoint, swept) -> {
                     if (!loading.update(server, getTransportUuid(), view.physicalId(), swept, anchor))
                         return loading.reason().isBlank() ? "waiting_terrain" : loading.reason();
-                    return water ? guidedWaterTerrain.check(server, view, anchor, swept)
+                    return water ? guidedWaterTerrain.check(server, view, anchor, swept,
+                                    () -> RailAircraftMotionBridge.waterHullSweep(this, getTransportUuid(),
+                                            view.physicalId(), view.worldBounds(), anchor, tangent))
                             : guidedRoadTerrain.check(server, routePoint.position(), routePoint.tangent(), swept,
                                     AeronauticsVehicleBridge.roadTireSweeps(this, view.physicalId(), facing(), anchor, tangent));
                 });
@@ -3516,9 +3518,8 @@ public final class RegisteredVehicleControllerBlockEntity extends BlockEntity
     public void setRemoved() {
         if (level instanceof ServerLevel server) {
             TownVoyagePublisher.markUnloaded(server, townCarrierKey());
-            TownVoyagePublisher.releaseGroundGeometry(server, townCarrierKey());
         }
-        townVoyage().invalidateGeometry();
+        invalidateTownGeometry();
         NativeTakeoffAssist.remove(this);
         clearGroundIngress();
         clearGroundNativeLease();
@@ -4311,6 +4312,7 @@ public final class RegisteredVehicleControllerBlockEntity extends BlockEntity
     }
 
     private void invalidateTownGeometry() {
+        if (surfaceGuided()) surfaceGuide.discardEtaTiming();
         townVoyage().invalidateGeometry();
         if (level instanceof ServerLevel server) TownVoyagePublisher.releaseGroundGeometry(server, townCarrierKey());
     }
@@ -4324,6 +4326,7 @@ public final class RegisteredVehicleControllerBlockEntity extends BlockEntity
     }
 
     private void finishTownVoyage() {
+        if (surfaceGuided()) surfaceGuide.discardEtaTiming();
         if (level instanceof ServerLevel server) {
             TownVoyagePublisher.retireCurrent(server, townCarrierKey());
             TownVoyagePublisher.releaseGroundGeometry(server, townCarrierKey());
@@ -4362,16 +4365,24 @@ public final class RegisteredVehicleControllerBlockEntity extends BlockEntity
         if (state == State.MOVING && mission != null) state = TownVoyagePublisher.state(mission.paused(), mission.waitReason());
         long tick = server.getServer().overworld().getGameTime();
         OptionalLong eta = OptionalLong.empty();
-        if (transportKind() != Kind.AIR && loaded) eta = townVoyage().ground(activeRoute, targetIndex, view.worldPosition(),
-                tick, state == State.MOVING,
-                (geometry, points) -> TownVoyagePublisher.reserveGroundGeometry(server, townCarrierKey(), geometry, points));
-        else townVoyage().clearMotion();
-        if (townVoyage().geometryId().isEmpty()) TownVoyagePublisher.releaseGroundGeometry(server, townCarrierKey());
+        String geometryId;
+        if (surfaceGuided()) {
+            geometryId = legId.toString();
+            if (loaded && state == State.MOVING) eta = surfaceGuide.remainingEtaTicks(maxSpeed,
+                    points -> TownVoyagePublisher.reserveGroundGeometry(server, townCarrierKey(), geometryId, points));
+        } else {
+            if (transportKind() != Kind.AIR && loaded) eta = townVoyage().ground(activeRoute, targetIndex, view.worldPosition(),
+                    tick, state == State.MOVING,
+                    (geometry, points) -> TownVoyagePublisher.reserveGroundGeometry(server, townCarrierKey(), geometry, points));
+            else townVoyage().clearMotion();
+            geometryId = townVoyage().geometryId();
+        }
+        if (geometryId.isEmpty()) TownVoyagePublisher.releaseGroundGeometry(server, townCarrierKey());
         var progress = townRailProgress(rail != null && rail.timed() && state == State.MOVING, mission);
         var observation = new Observation(new Key(townCarrierKey(), legId), transportKind(), getTransportName().getString(),
                 getAutopilotRouteName(), source, target, transportKind() == Kind.AIR ? flightPhase : paused ? "PAUSED" : "MOVING",
                 state, loaded, tick, 20, eta, eta.isPresent() ? tick : -1,
-                progress == null ? townVoyage().geometryId() : progress.path().fingerprint());
+                progress == null ? geometryId : progress.path().fingerprint());
         if (progress == null) TownVoyagePublisher.observe(server, observation);
         else TownVoyagePublisher.observeAir(server, observation, progress.path(), progress.confirmedDistance(), progress.actualStandTicks());
     }

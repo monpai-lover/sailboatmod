@@ -29,7 +29,7 @@ import java.util.Set;
  * 存"市场方块"清单)、{@code DockLocationSavedData}(只存港口坐标)。本类 DATA_NAME=
  * {@value #DATA_NAME},语义是"码头/驿站连通网络",别名相撞。范式照搬 DockLocationSavedData。</p>
  *
- * <p><b>写入时机</b>:DockBlockEntity.onLoad/setChanged 刷新本条(港口名/城镇/路线终点),setRemoved 删本条;
+ * <p><b>写入时机</b>:DockBlockEntity.onLoad/setChanged 刷新本条(港口名/城镇/路线终点)，终端方块被替换时删除本条；
  * 驿站建立陆路自动航线成功时(RoadAutoRouteService)往 reachableTownIds 加目标城镇。onLoad 刷新时<b>保留</b>已存
  * reachableTownIds(onLoad 不知可达,不能清)。</p>
  *

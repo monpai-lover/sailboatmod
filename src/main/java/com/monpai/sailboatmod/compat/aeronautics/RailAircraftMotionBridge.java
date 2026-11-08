@@ -204,6 +204,31 @@ public final class RailAircraftMotionBridge {
         }catch(ReflectiveOperationException|RuntimeException|LinkageError failure){warn(failure);return Optional.empty();}
     }
 
+    /** Water only: disprove broad hits using the same body and start pose as the authorized movement. */
+    public static Optional<WaterHullSweep> waterHullSweep(BlockEntity controller, UUID owner, UUID physicalId,
+                                                        AABB currentBounds, Vec3 targetAnchor, Vec3 tangent) {
+        if (!loadedController(controller) || owner == null || physicalId == null) return Optional.empty();
+        RailAircraftReflectionAccess api = api();
+        var session = STATE.existing(physicalId);
+        if (api == null || session == null || failed(session) || !owner.equals(session.token.owner()))
+            return Optional.empty();
+        try {
+            Object body = api.body(controller);
+            if (!STATE.owns(controller, controller.getLevel(), body, session.token)) return Optional.empty();
+            Vec3 localAnchor = Vec3.atCenterOf(controller.getBlockPos());
+            var actual = api.frame(body, localAnchor);
+            var start = session.current;
+            if (Math.abs(actual.orientation().normalize().dot(start.orientation().normalize())) < 1 - 1e-10)
+                return Optional.empty();
+            var target = RailAircraftMotionState.orientation(session.forward, tangent, 0);
+            return WaterHullSweep.create(api.localHullOffsets(body, localAnchor), actual.anchor(), start.anchor(),
+                    start.orientation(), targetAnchor, target, currentBounds);
+        } catch (ReflectiveOperationException | RuntimeException | LinkageError failure) {
+            warn(failure);
+            return Optional.empty();
+        }
+    }
+
     /** Explicit manual/stop/removal release; unloading or a missed heartbeat does not call this. */
     public static NativeControlResult release(BlockEntity controller, Lease lease) {
         var s = STATE.session(token(lease));

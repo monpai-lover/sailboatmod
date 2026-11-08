@@ -1,11 +1,15 @@
 package com.monpai.sailboatmod.route.water;
 
+import com.monpai.sailboatmod.block.AirportBlock;
+import com.monpai.sailboatmod.block.entity.AirportBlockEntity;
 import com.monpai.sailboatmod.block.entity.DockBlockEntity;
 import com.monpai.sailboatmod.block.entity.PostStationBlockEntity;
 import com.monpai.sailboatmod.compat.ItemStackNbt;
+import com.monpai.sailboatmod.dock.PostStationRegistry;
 import com.monpai.sailboatmod.item.PostRouteBookItem;
 import com.monpai.sailboatmod.item.RouteBookItem;
 import com.monpai.sailboatmod.market.terminal.TerminalNetworkSavedData;
+import com.monpai.sailboatmod.market.terminal.TerminalVisibility;
 import com.monpai.sailboatmod.route.RouteDefinition;
 import com.monpai.sailboatmod.route.RouteNbtUtil;
 import java.lang.reflect.Field;
@@ -18,6 +22,7 @@ import net.minecraft.SharedConstants;
 import net.minecraft.core.BlockPos;
 import net.minecraft.core.RegistryAccess;
 import net.minecraft.core.registries.BuiltInRegistries;
+import net.minecraft.nbt.CompoundTag;
 import net.minecraft.resources.ResourceKey;
 import net.minecraft.server.Bootstrap;
 import net.minecraft.server.MinecraftServer;
@@ -175,6 +180,41 @@ class DockRouteBookPublicationTest {
                         "The land route must not become a public water connection"));
     }
 
+    @Test void unloadingAPostStationKeepsItsPublishedMarketConnectionInTheSavedNetwork() throws Exception {
+        var station = initialize(allocate(TestStation.class));
+        terminal(A, "A", TerminalNetworkSavedData.Kind.POST_STATION);
+        terminal(B, "B", TerminalNetworkSavedData.Kind.POST_STATION);
+        var network = TerminalNetworkSavedData.get(level);
+        network.addReachableTown("minecraft:overworld", A.asLong(), "town-B");
+        PostStationRegistry.register(level, A);
+
+        station.onChunkUnloaded();
+        station.setRemoved();
+
+        assertTrue(station.isRemoved());
+        assertFalse(PostStationRegistry.get(level).contains(A), "Unload must still unregister the live station");
+        var reloaded = TerminalNetworkSavedData.load(network.save(new CompoundTag(), level.registryAccess()));
+        assertTrue(TerminalVisibility.isVisible(reloaded, "town-A", "town-B"),
+                "A previously published road must remain market-visible after chunk unload and server save");
+    }
+
+    @Test void airportNetworkSurvivesUnloadButIsRemovedByBlockReplacement() throws Exception {
+        var airport = initialize(allocate(AirportBlockEntity.class));
+        terminal(A, "A", TerminalNetworkSavedData.Kind.AIRPORT);
+        var network = TerminalNetworkSavedData.get(level);
+
+        airport.onChunkUnloaded();
+        airport.setRemoved();
+
+        assertNotNull(network.getEntry("minecraft:overworld", A.asLong()), "Unload must keep the airport identity");
+        var block = allocate(AirportBlock.class);
+        var occupied = Blocks.CHEST.defaultBlockState();
+        block.onRemove(occupied, level, A, occupied, false);
+        assertNotNull(network.getEntry("minecraft:overworld", A.asLong()), "A same-block update is not destruction");
+        block.onRemove(occupied, level, A, Blocks.AIR.defaultBlockState(), false);
+        assertNull(network.getEntry("minecraft:overworld", A.asLong()), "A replaced airport cannot remain market-visible");
+    }
+
     private <T extends DockBlockEntity> T initialize(T terminal) throws Exception {
         set(BlockEntity.class, terminal, "worldPosition", A);
         set(BlockEntity.class, terminal, "blockState", Blocks.AIR.defaultBlockState());
@@ -225,6 +265,8 @@ class DockRouteBookPublicationTest {
             return RegistryAccess.fromRegistryOfRegistries(BuiltInRegistries.REGISTRY);
         }
         @Override public ResourceKey<Level> dimension() { return Level.OVERWORLD; }
+        @Override public void invalidateCapabilities(BlockPos pos) { }
+        @Override public void removeBlockEntity(BlockPos pos) { } // Only persistent callbacks are under test.
         @Override public BlockEntity getBlockEntity(BlockPos pos) {
             throw new AssertionError("Import publication must not load or read remote blocks: " + pos);
         }

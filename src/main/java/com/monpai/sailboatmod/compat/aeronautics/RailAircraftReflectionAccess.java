@@ -3,6 +3,7 @@ package com.monpai.sailboatmod.compat.aeronautics;
 import net.minecraft.server.level.ServerLevel;
 import net.minecraft.world.level.Level;
 import net.minecraft.world.level.block.entity.BlockEntity;
+import net.minecraft.world.phys.AABB;
 import net.minecraft.world.phys.Vec3;
 import com.monpai.sailboatmod.transport.physical.NativeControlResult;
 import org.joml.Quaterniond;
@@ -29,6 +30,7 @@ final class RailAircraftReflectionAccess {
     private final Method orientation, rotationPoint, scale, systemGet, systemLevel, getPipeline;
     private final Method resetVelocity, teleport, updatePose, updateBounds, clearForces;
     private final Method eventSystem, eventStep, constraintValid, getPlot, getActors;
+    private final PlotBoundsAccess plotBounds;
     private final Field latestAngularVelocity;
     private final ClassValue<FccReadAccess> fccReaders = new ClassValue<>() {
         @Override protected FccReadAccess computeValue(Class<?> computer) {
@@ -61,7 +63,9 @@ final class RailAircraftReflectionAccess {
         bodyId = bodyType.getMethod("getUniqueId"); bodyLevel = bodyType.getMethod("getLevel");
         removed = bodyType.getMethod("isRemoved"); pose = bodyType.getMethod("logicalPose");
         getPlot = bodyType.getMethod("getPlot");
-        getActors = lookup.find(RailAircraftMotionCompatibility.PLOT).getMethod("getBlockEntityActors");
+        Class<?> plotType = lookup.find(RailAircraftMotionCompatibility.PLOT);
+        getActors = plotType.getMethod("getBlockEntityActors");
+        plotBounds = PlotBoundsAccess.bind(plotType);
         latestAngularVelocity = bodyType.getField("latestAngularVelocity");
         if (!Vector3dc.class.isAssignableFrom(latestAngularVelocity.getType()))
             throw new ReflectiveOperationException("air_rail_invalid_angular_velocity_abi");
@@ -171,6 +175,37 @@ final class RailAircraftReflectionAccess {
         var frame = new RailAircraftMotionState.Frame(anchor, q);
         if (!RailAircraftMotionState.valid(frame)) throw new ReflectiveOperationException("air_rail_invalid_native_pose");
         return frame;
+    }
+
+    AABB localHullOffsets(Object body, Vec3 localAnchor) throws ReflectiveOperationException {
+        if (plotBounds == null) return null;
+        Object box = call(plotBounds.bounds(), call(getPlot, body));
+        if (box == null || !(call(scale, call(pose, body)) instanceof Vector3dc nativeScale)
+                || !RailAircraftMotionState.finite(vector(nativeScale))
+                || nativeScale.x() <= 0 || nativeScale.y() <= 0 || nativeScale.z() <= 0) return null;
+        int minX = (int) call(plotBounds.minX(), box), minY = (int) call(plotBounds.minY(), box),
+                minZ = (int) call(plotBounds.minZ(), box);
+        int maxX = (int) call(plotBounds.maxX(), box), maxY = (int) call(plotBounds.maxY(), box),
+                maxZ = (int) call(plotBounds.maxZ(), box);
+        if (minX > maxX || minY > maxY || minZ > maxZ) return null;
+        // Sable constructs the global bounds with inclusive plot block positions and an exclusive max edge.
+        return new AABB((minX - localAnchor.x) * nativeScale.x(), (minY - localAnchor.y) * nativeScale.y(),
+                (minZ - localAnchor.z) * nativeScale.z(), (maxX + 1.0 - localAnchor.x) * nativeScale.x(),
+                (maxY + 1.0 - localAnchor.y) * nativeScale.y(), (maxZ + 1.0 - localAnchor.z) * nativeScale.z());
+    }
+
+    private record PlotBoundsAccess(Method bounds, Method minX, Method minY, Method minZ,
+                                    Method maxX, Method maxY, Method maxZ) {
+        static PlotBoundsAccess bind(Class<?> plot) {
+            try {
+                Method bounds = plot.getMethod("getBoundingBox");
+                Class<?> type = bounds.getReturnType();
+                return new PlotBoundsAccess(bounds, type.getMethod("minX"), type.getMethod("minY"), type.getMethod("minZ"),
+                        type.getMethod("maxX"), type.getMethod("maxY"), type.getMethod("maxZ"));
+            } catch (ReflectiveOperationException | LinkageError unavailable) {
+                return null;
+            }
+        }
     }
 
     void apply(Object system, Object body, Vec3 localAnchor, RailAircraftMotionState.Frame target)

@@ -133,13 +133,8 @@ public class DockBlockEntity extends BlockEntity implements MenuProvider {
         if (level != null && !level.isClientSide) {
             if (level instanceof net.minecraft.server.level.ServerLevel server)
                 com.monpai.sailboatmod.transport.board.TownVoyagePublisher.markEndpointUnloaded(server, worldPosition);
+            // Only actual block replacement deletes the persisted terminal network entry.
             unregisterFacility(level, worldPosition);
-            // Chunk unload removes the live object, not a known WATER port/network identity.
-            // Rail endpoints also retain their last verified network identity while unloaded.
-            if (!com.monpai.sailboatmod.route.water.PortDockSnapshot.isPort(this) && !(this instanceof RailFreightTerminalBlockEntity))
-                com.monpai.sailboatmod.market.terminal.TerminalNetworkSavedData.get(level)
-                    .removeEntry(level.dimension().location().toString(),worldPosition.asLong());
-            // Actual water-port destruction removes metadata in DockBlock.onRemove.
         }
         super.setRemoved();
     }

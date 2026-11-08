@@ -56,4 +56,25 @@ final class GuidedSurfacePathTest {
         assertEquals(4, firstPass, 1e-8);
         assertTrue(route.nearestDistance(new Vec3(4, 63, 1), 11, route.length()) > 15);
     }
+
+    @Test void estimatesTheWholeSeaLegAtNominalSpeedEvenJustAfterDeparture() {
+        var route = GuidedSurfacePath.compile(List.of(Vec3.ZERO, new Vec3(2000, 0, 0)), 4);
+        var timing = route.timing(4.2);
+
+        assertEquals(9556, timing.remainingTicks(0.0125));
+        assertEquals(4779, timing.remainingTicks(1000));
+        assertEquals(0, timing.remainingTicks(route.length()));
+    }
+
+    @Test void includesBrakingAndAccelerationAroundBendsAndUsesTheConfirmedDistance() {
+        var route = GuidedSurfacePath.compile(List.of(Vec3.ZERO, new Vec3(40, 0, 0), new Vec3(40, 0, 40)), 2.5);
+        var straight = GuidedSurfacePath.compile(List.of(Vec3.ZERO, new Vec3(route.length(), 0, 0)), 2.5);
+        var timing = route.timing(12);
+
+        assertTrue(timing.remainingTicks(0) > straight.timing(12).remainingTicks(0));
+        assertTrue(timing.remainingTicks(37) > timing.remainingTicks(39));
+        assertTrue(timing.remainingTicks(39) > timing.remainingTicks(41));
+        assertTrue(timing.remainingTicks(50) < route.timing(6).remainingTicks(50));
+        assertEquals(0, timing.remainingTicks(Double.NaN));
+    }
 }
