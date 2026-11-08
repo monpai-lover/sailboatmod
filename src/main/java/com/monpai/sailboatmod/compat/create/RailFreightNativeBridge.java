@@ -2,6 +2,7 @@ package com.monpai.sailboatmod.compat.create;
 
 import com.monpai.sailboatmod.transport.board.TownVoyageSnapshot;
 import com.monpai.sailboatmod.transport.rail.RailFreightCargoHold;
+import com.monpai.sailboatmod.transport.rail.RailFreightEta;
 import com.monpai.sailboatmod.transport.rail.RailFreightNative;
 import com.monpai.sailboatmod.transport.rail.RailRoute;
 import com.monpai.sailboatmod.transport.rail.RailStationRef;
@@ -291,18 +292,16 @@ public final class RailFreightNativeBridge implements RailFreightNative {
             return RemainingRoute.unavailable();
         if (!dwelling && (target == null || !targetName.equals(target.name) || state == LegState.WAITING_ROUTE)) {
             String from = parked ? current.name : entry == 0 ? "" : destinationName(train, entry - 1);
-            if (!from.isBlank()) return RemainingRoute.blocked(from, targetName);
+            if (!from.isBlank()) return RemainingRoute.blocked(OptionalLong.empty(), from, targetName);
         }
         if (target == null || !targetName.equals(target.name)) return RemainingRoute.unavailable();
 
-        long ticks = 0;
-        boolean reliable = state == LegState.MOVING || state == LegState.DWELLING;
-        if (state == LegState.MOVING) {
-            double speed = Math.abs(train.speed);
-            double distance = train.navigation.distanceToDestination;
-            reliable = Double.isFinite(distance) && distance >= 0 && speed > 0;
-            if (reliable) ticks = Math.max(1, (long) Math.ceil(distance / speed));
-        }
+        OptionalLong activeLegEta = state == LegState.MOVING
+                ? RailFreightEta.activeLegTicks(train.navigation.distanceToDestination, Math.abs(train.speed),
+                        train.maxSpeed() * Math.abs(train.throttle), train.acceleration())
+                : OptionalLong.empty();
+        long ticks = activeLegEta.orElse(0);
+        boolean reliable = activeLegEta.isPresent() || state == LegState.DWELLING;
         if (dwelling && entry == stopoverSeconds.size()) return RemainingRoute.unavailable();
 
         for (int i = entry; i < visits.size() - 1; i++) {
@@ -312,17 +311,18 @@ public final class RailFreightNativeBridge implements RailFreightNative {
             if (nextName.isBlank()) return RemainingRoute.unavailable();
             GlobalStation next = graphStation(train, visits.get(i + 1));
             if (next == null || !nextName.equals(next.name) || !uniqueTarget(train, next))
-                return RemainingRoute.blocked(target.name, nextName);
+                return RemainingRoute.blocked(activeLegEta, target.name, nextName);
             CreateRailRouteEstimate.Leg leg = routeEstimate.between(level.getServer(), train, target, next);
             if (leg.status() == CreateRailRouteEstimate.Status.BLOCKED)
-                return RemainingRoute.blocked(target.name, nextName);
+                return RemainingRoute.blocked(activeLegEta, target.name, nextName);
             if (leg.status() == CreateRailRouteEstimate.Status.UNKNOWN) reliable = false;
             if (ticks > TownVoyageSnapshot.MAX_ETA_TICKS - dwellTicks - leg.ticks()) reliable = false;
             else ticks += dwellTicks + leg.ticks();
             target = next;
         }
-        return reliable && ticks > 0 && ticks <= TownVoyageSnapshot.MAX_ETA_TICKS
-                ? new RemainingRoute(OptionalLong.of(ticks), "", "") : RemainingRoute.unavailable();
+        OptionalLong finalEta = reliable && ticks > 0 && ticks <= TownVoyageSnapshot.MAX_ETA_TICKS
+                ? OptionalLong.of(ticks) : OptionalLong.empty();
+        return new RemainingRoute(activeLegEta, finalEta, "", "");
     }
 
     private static int remainingDwell(ScheduleRuntime runtime, int duration) {

@@ -51,13 +51,13 @@ public interface RailFreightNative {
 
     record NextStop(@Nullable RailStationRef station, String name, String atStation, LegState state) { }
 
-    record RemainingRoute(OptionalLong finalEtaTicks, String blockedFrom, String blockedTo) {
+    record RemainingRoute(OptionalLong activeLegEtaTicks, OptionalLong finalEtaTicks, String blockedFrom, String blockedTo) {
         public static RemainingRoute unavailable() {
-            return new RemainingRoute(OptionalLong.empty(), "", "");
+            return new RemainingRoute(OptionalLong.empty(), OptionalLong.empty(), "", "");
         }
 
-        public static RemainingRoute blocked(String from, String to) {
-            return new RemainingRoute(OptionalLong.empty(), from, to);
+        public static RemainingRoute blocked(OptionalLong activeLegEtaTicks, String from, String to) {
+            return new RemainingRoute(activeLegEtaTicks, OptionalLong.empty(), from, to);
         }
     }
 

@@ -13,7 +13,6 @@ import com.monpai.sailboatmod.transport.LogisticsCarrier;
 import com.monpai.sailboatmod.transport.SelectedCargoInventory;
 import com.monpai.sailboatmod.transport.TransportRegistry;
 import com.monpai.sailboatmod.transport.board.TownVoyagePublisher;
-import com.monpai.sailboatmod.transport.board.TownVoyageService;
 import com.monpai.sailboatmod.transport.board.TownVoyageSnapshot;
 import com.monpai.sailboatmod.transport.board.TownVoyageSnapshot.CarrierKey;
 import com.monpai.sailboatmod.transport.rail.RailFreightNative.LegState;
@@ -79,20 +78,9 @@ public final class RailFreightService {
         return read(level, Optional.empty(), api -> {
             RemainingRoute route = estimateRemaining(level, api, registration, job);
             return api.nextStop(level, trainId, registration.ownerId(), job.route().outboundStations(), job.ownedSchedule())
-                    .map(next -> {
-                        long nextTicks = 0;
-                        if (next.state() == LegState.MOVING && next.station() != null && !level.getServer().tickRateManager().isFrozen()) {
-                            long now = level.getServer().overworld().getGameTime();
-                            nextTicks = TownVoyageService.existing(level.getServer())
-                                    .map(service -> service.remainingEta(new CarrierKey(PROVIDER_ID, "global", trainId),
-                                            next.station().dimensionId(), next.station().stationPos().asLong(), now).orElse(0))
-                                    .orElse(0L);
-                        }
-                        long finalTicks = route.finalEtaTicks().orElse(0);
-                        if (finalTicks > 0 && nextTicks > 0 && job.route().target().equals(next.station())) finalTicks = nextTicks;
-                        return new NextStop(next.name(), next.atStation(), next.state(), etaSeconds(nextTicks),
-                                etaSeconds(finalTicks), route.blockedFrom(), route.blockedTo());
-                    });
+                    .map(next -> new NextStop(next.name(), next.atStation(), next.state(),
+                            etaSeconds(route.activeLegEtaTicks().orElse(0)), etaSeconds(route.finalEtaTicks().orElse(0)),
+                            route.blockedFrom(), route.blockedTo()));
         });
     }
 
