@@ -1,5 +1,6 @@
 package com.monpai.sailboatmod.transport.air.airport;
 
+import com.monpai.sailboatmod.SailboatMod;
 import com.monpai.sailboatmod.block.entity.AirportBlockEntity;
 import com.monpai.sailboatmod.dock.FacilityNames;
 import com.monpai.sailboatmod.nation.service.TownService;
@@ -10,17 +11,26 @@ import net.minecraft.core.BlockPos;
 import net.minecraft.core.Direction;
 import net.minecraft.nbt.CompoundTag;
 import net.minecraft.nbt.Tag;
+import net.minecraft.server.MinecraftServer;
 import net.minecraft.server.level.ServerLevel;
 import net.minecraft.server.level.ServerPlayer;
 import net.minecraft.world.phys.AABB;
+import net.neoforged.bus.api.SubscribeEvent;
+import net.neoforged.fml.common.EventBusSubscriber;
 import net.neoforged.neoforge.common.util.FakePlayer;
+import net.neoforged.neoforge.event.server.ServerStoppingEvent;
+import net.neoforged.neoforge.event.tick.ServerTickEvent;
+import org.jetbrains.annotations.Nullable;
 import com.monpai.sailboatmod.network.ModNetwork;
 import com.monpai.sailboatmod.network.packet.airport.AirportSnapshotPacket;
 
-/** Single server authority for airport UI and command edits; never loads a chunk or trusts client ownership. */
+/** Single server authority for airport UI and command edits, including bounded auto-layout terrain admission. */
+@EventBusSubscriber(modid = SailboatMod.MODID)
 public final class AirportManagementService {
     public record Result(boolean success,String code,long revision){}
-    private static final Map<net.minecraft.server.MinecraftServer,Map<UUID,Long>> REQUESTS=new WeakHashMap<>();
+    private static final Map<MinecraftServer,Map<UUID,Long>> REQUESTS=new WeakHashMap<>();
+    private static final int MAX_AUTO_EDITS = 64;
+    private static final Map<MinecraftServer, Map<AirportBlockEntity, AirportEditorSession>> AUTO_EDITS = new WeakHashMap<>();
     private AirportManagementService(){}
     static boolean acceptRequest(Map<UUID,Long> requests,UUID player,long now){
         Long previous=requests.get(player);if(previous!=null&&now>=previous&&now-previous<5)return false;
@@ -72,10 +82,20 @@ public final class AirportManagementService {
         if (kind.equals("auto_layout")) {
             if (!action.contains("CornerA", Tag.TAG_LONG) || !action.contains("CornerB", Tag.TAG_LONG))
                 return new Result(false, "invalid_geometry", revision);
-            var proposal = AirportAutoLayout.propose(BlockPos.of(action.getLong("CornerA")), BlockPos.of(action.getLong("CornerB")),
-                    airport.facilities(), airport.groundLayout());
-            return proposal.isPresent() ? validateAndQueue(player, airport, revision, proposal.orElseThrow())
-                    : new Result(false, "invalid_geometry", revision);
+            BlockPos cornerA = BlockPos.of(action.getLong("CornerA"));
+            BlockPos cornerB = BlockPos.of(action.getLong("CornerB"));
+            var planned = AirportAutoLayout.propose(cornerA, cornerB, airport.facilities(), airport.groundLayout());
+            if (planned.isEmpty()) return new Result(false, "invalid_geometry", revision);
+            var proposal = planned.orElseThrow();
+            if (action.getBoolean("Prefab")) {
+                var blocks = action.getBoolean("LitPrefab") ? AirportPrefab.planDetailed(proposal, cornerA, cornerB)
+                        : AirportPrefab.plan(proposal, cornerA, cornerB).map(positions -> positions.stream()
+                                .map(pos -> new AirportPrefab.Piece(pos, AirportPrefab.Part.STRUCTURE)).toList());
+                if (blocks.isEmpty()) return new Result(false, "prefab_invalid", revision);
+                proposal = new AirportEditorSession.Proposal(proposal.facilities(), proposal.ground(), proposal.changedRunway(),
+                        proposal.validationOnly(), proposal.additionalChecks(), blocks.orElseThrow());
+            }
+            return validateAndQueue(player, airport, revision, proposal, true);
         }
         if (kind.equals("publish_route")) {
             if (!action.contains("Target", Tag.TAG_LONG) || !action.contains("CruiseY", Tag.TAG_INT))
@@ -104,6 +124,10 @@ public final class AirportManagementService {
     }
     private static Result validateAndQueue(ServerPlayer player, AirportBlockEntity airport, long revision,
                                            AirportEditorSession.Proposal proposal) {
+        return validateAndQueue(player, airport, revision, proposal, false);
+    }
+    private static Result validateAndQueue(ServerPlayer player, AirportBlockEntity airport, long revision,
+                                           AirportEditorSession.Proposal proposal, boolean loadTerrain) {
         var facilities = proposal.facilities();
         var ground = proposal.ground();
         var airportPos = airport.getBlockPos();
@@ -123,13 +147,70 @@ public final class AirportManagementService {
         for (var route : ground.taxiRoutes())
             if (!AirportGroundValidation.withinManagementDistance(route, facilities, ground.stands(), airportPos))
                 return new Result(false, "invalid_geometry", revision);
-        return queue(player, airport, revision, proposal);
+        return queue(player, airport, revision, proposal, loadTerrain);
     }
-    private static Result queue(ServerPlayer player,AirportBlockEntity airport,long revision,AirportEditorSession.Proposal proposal){
-        var request=new AirportEditorSession(player.getUUID(),revision,player.serverLevel().getGameTime(),proposal,airport.getTownId());
-        if(!request.result().equals("pending"))return new Result(false,request.result(),revision);
-        if(!airport.queueEditor(request))return new Result(false,"occupied",revision);
-        return new Result(false,"pending",revision);
+    private static Result queue(ServerPlayer player, AirportBlockEntity airport, long revision, AirportEditorSession.Proposal proposal) {
+        return queue(player, airport, revision, proposal, false);
+    }
+    private static Result queue(ServerPlayer player, AirportBlockEntity airport, long revision, AirportEditorSession.Proposal proposal,
+                                boolean loadTerrain) {
+        ServerLevel level = player.serverLevel();
+        var request = new AirportEditorSession(player.getUUID(), revision, level.getGameTime(), proposal, airport.getTownId(),
+                loadTerrain ? AirportEditorTerrain.forLevel(level) : null);
+        if (!request.result().equals("pending")) return new Result(false, request.result(), revision);
+        Map<AirportBlockEntity, AirportEditorSession> active = loadTerrain
+                ? AUTO_EDITS.computeIfAbsent(level.getServer(), server -> new LinkedHashMap<>()) : null;
+        if (active != null && active.size() >= MAX_AUTO_EDITS && !active.containsKey(airport))
+            return new Result(false, "rate_limited", revision);
+        if (!airport.queueEditor(request)) return new Result(false, "occupied", revision);
+        if (active != null) active.put(airport, airport.editorSession());
+        return new Result(false, "pending", revision);
+    }
+    /** The airport can stop ticking when its owner leaves, even while its FULL terrain lease keeps it accessible. */
+    @SubscribeEvent
+    public static void checkAutoEditOwners(ServerTickEvent.Post event) {
+        MinecraftServer server = event.getServer();
+        if (server.getTickCount() % 20 != 0) return;
+        var active = AUTO_EDITS.get(server);
+        if (active == null) return;
+        var iterator = active.entrySet().iterator();
+        while (iterator.hasNext()) {
+            var entry = iterator.next();
+            var airport = entry.getKey();
+            var request = entry.getValue();
+            if (airport.editorSession() != request || !(airport.getLevel() instanceof ServerLevel level)) {
+                request.cancel();
+                iterator.remove();
+                continue;
+            }
+            ServerPlayer player = server.getPlayerList().getPlayer(request.owner);
+            long now = level.getGameTime();
+            boolean authorized = player != null && canManage(player, airport);
+            if (!request.isCurrent(airport.editorSession(), request.owner, airport.editorRevision(), authorized, now)) {
+                airport.clearEditor(request);
+                iterator.remove();
+                reply(player, airport, staleCode(request, airport, player, authorized, now), null);
+            }
+        }
+        if (active.isEmpty()) AUTO_EDITS.remove(server);
+    }
+
+    @SubscribeEvent
+    public static void stop(ServerStoppingEvent event) {
+        var active = AUTO_EDITS.remove(event.getServer());
+        if (active != null) active.forEach((airport, request) -> {
+            airport.clearEditor(request);
+            request.cancel();
+        });
+    }
+
+    private static String staleCode(AirportEditorSession request, AirportBlockEntity airport, @Nullable ServerPlayer player,
+                                    boolean authorized, long now) {
+        if (airport.editorRevision() != request.baseRevision) return "stale_revision";
+        if (authorized && request.expired(now)) return "validation_timeout";
+        if (player != null && player.serverLevel() == airport.getLevel()
+                && player.distanceToSqr(airport.getBlockPos().getCenter()) > 64) return "out_of_range";
+        return "forbidden";
     }
     /** Called only by the airport BE ticker; shares its existing per-tick budget with flight preflights. */
     public static int advanceEditor(AirportBlockEntity airport,int budget){
@@ -139,17 +220,17 @@ public final class AirportManagementService {
         long now=level.getGameTime();
         boolean authorized=player!=null&&player.serverLevel()==level&&canManage(player,airport);
         if(!request.isCurrent(airport.editorSession(),request.owner,airport.editorRevision(),authorized,now)){
-            String code=airport.editorRevision()!=request.baseRevision?"stale_revision":"forbidden";
-            airport.clearEditor(request);reply(player,airport,code);return 0;
+            String code = staleCode(request, airport, player, authorized, now);
+            airport.clearEditor(request);reply(player,airport,code,null);return 0;
         }
         if(airport.configurationOccupied(request.proposal.facilities(),request.proposal.ground())){
-            airport.clearEditor(request);reply(player,airport,"occupied");return 0;
+            airport.clearEditor(request);reply(player,airport,"occupied",null);return 0;
         }
         Function<BlockPos,String> townAt=pos->{var town=TownService.getManagedTownAt(player,pos);return town==null?"":town.townId();};
         NationSavedData authority=NationSavedData.get(level);
         String result=request.advance(Math.max(0,budget),townAt,p->!level.isOutsideBuildHeight(p)&&level.hasChunkAt(p),p->clear(level,p),p->support(level,p),authority::claimRevision);
         int used=request.stepsUsed();
-        if(result.equals("pending")){if(now%20==0)reply(player,airport,"pending");return used;}
+        if(result.equals("pending")){if(now%20==0)reply(player,airport,"pending",null);return used;}
         if(result.equals("valid")){
             boolean current=request.canCommit(airport.editorSession(),player.getUUID(),airport.editorRevision(),canManage(player,airport),now,authority.claimRevision());
             if(!current)result="stale_revision";
@@ -157,18 +238,24 @@ public final class AirportManagementService {
             else if(request.proposal.validationOnly()){
                 airport.editorValidatedFacility(request.proposal.changedRunway());
                 result="valid";
+            } else if (!request.proposal.prefabBlocks().isEmpty()) {
+                result = AirportPrefab.install(player, airport, request.proposal, request::recordFailurePosition);
             }else if(airport.replaceGroundConfiguration(request.proposal.ground().revision()-1,request.proposal.facilities(),request.proposal.ground())){
                 result="ok";
             }else result="occupied";
         }
         // An overwritten/cancelled job can never publish an old completion into a newer request.
-        if(airport.editorSession()==request){airport.clearEditor(request);reply(player,airport,result);}
+        if(airport.editorSession()==request){airport.clearEditor(request);reply(player,airport,result,request.failurePosition());}
         return used;
     }
-    private static void reply(ServerPlayer player,AirportBlockEntity airport,String code){
+    private static void reply(ServerPlayer player, AirportBlockEntity airport, String code, @Nullable BlockPos failurePosition) {
         if(player!=null&&player.serverLevel()==airport.getLevel()) {
-            ModNetwork.CHANNEL.send(player,new AirportSnapshotPacket(AirportScreenData.capture(player,airport,code),false));
-            if(!code.equals("pending")) player.sendSystemMessage(net.minecraft.network.chat.Component.translatable("screen.sailboatmod.airport.result."+code));
+            ModNetwork.CHANNEL.send(player, new AirportSnapshotPacket(AirportScreenData.capture(player, airport, code, failurePosition), false));
+            if (!code.equals("pending")) {
+                var message = net.minecraft.network.chat.Component.translatable("screen.sailboatmod.airport.result." + code);
+                if (failurePosition != null) message.append(" · ").append(failurePosition.toShortString());
+                player.sendSystemMessage(message);
+            }
         }
     }
     private static String toCode(AirportValidation.Result result){return result==AirportValidation.Result.VALID?"ok":result.name().toLowerCase(Locale.ROOT);}

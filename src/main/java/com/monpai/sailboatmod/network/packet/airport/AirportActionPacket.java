@@ -19,6 +19,7 @@ public record AirportActionPacket(ResourceLocation dimension, BlockPos airportPo
         String id, String runwayId, String standId, List<Vec3> points, boolean flag,
         double yaw, double length, double width, int clearance, double speed, int holdPoint) {
     public static final int MAX_POINTS = 64;
+    public static final String LIT_PREFAB_ID = "lit";
     public enum Action { REFRESH, RENAME, UPSERT_RUNWAY, REMOVE_RUNWAY, VALIDATE_RUNWAY,
         UPSERT_STAND, REMOVE_STAND, UPSERT_TAXI_ROUTE, REMOVE_TAXI_ROUTE, APPLY_AUTO_LAYOUT, PUBLISH_ROUTE, UPSERT_LANDING_FACILITY }
     public AirportActionPacket {
@@ -96,6 +97,10 @@ public record AirportActionPacket(ResourceLocation dimension, BlockPos airportPo
                 result.putString("Action", "auto_layout");
                 result.putLong("CornerA", wholeBlock(points.getFirst()).asLong());
                 result.putLong("CornerB", wholeBlock(points.getLast()).asLong());
+                if (flag) {
+                    result.putBoolean("Prefab", true);
+                    if (LIT_PREFAB_ID.equals(id)) result.putBoolean("LitPrefab", true);
+                }
             }
             case PUBLISH_ROUTE -> {
                 requirePoints(1);

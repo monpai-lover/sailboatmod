@@ -6,6 +6,7 @@ import io.netty.buffer.Unpooled;
 import net.minecraft.core.BlockPos;
 import net.minecraft.network.FriendlyByteBuf;
 import net.minecraft.resources.ResourceLocation;
+import net.minecraft.world.phys.AABB;
 import net.minecraft.world.phys.Vec3;
 import org.junit.jupiter.api.Test;
 
@@ -47,7 +48,7 @@ class AirportAutoLayoutTest {
         var added = AirportAutoLayout.propose(new BlockPos(-100, 81, -128), new BlockPos(-37, 81, -1),
                 original.facilities(), original.ground()).orElseThrow();
 
-        assertEquals(original.facilities().getFirst(), added.facilities().getFirst());
+        assertEquals(original.facilities(), added.facilities().subList(0, original.facilities().size()));
         assertEquals(original.ground().stands().getFirst(), added.ground().stands().getFirst());
         assertEquals(original.ground().taxiRoutes(), added.ground().taxiRoutes().subList(0, 2));
         assertEquals(original.ground().revision() + 1, added.ground().revision());
@@ -57,6 +58,61 @@ class AirportAutoLayoutTest {
         assertTrue(AirportAutoLayout.propose(FIRST, LAST, original.facilities(), original.ground()).isEmpty());
         assertTrue(AirportAutoLayout.propose(FIRST, LAST.above(), List.of(), AirportGroundLayout.empty()).isEmpty());
         assertTrue(AirportAutoLayout.propose(FIRST, LAST.west(), List.of(), AirportGroundLayout.empty()).isEmpty());
+    }
+
+    @Test void minimumAreaKeepsRotorPadClearOfRunwayApproachesHangarAndTaxiSegments() {
+        for (BlockPos opposite : List.of(LAST, new BlockPos(63, 81, 127))) {
+            var draft = AirportAutoLayout.propose(FIRST, opposite, List.of(), AirportGroundLayout.empty()).orElseThrow();
+            assertEquals(2, draft.facilities().size());
+            var pad = draft.facilities().stream().filter(f -> f.type() == AirportFacility.Type.HELIPAD).findFirst().orElseThrow();
+            var stand = draft.ground().stands().getFirst();
+            AABB padClearance = pad.clearanceBounds();
+            assertTrue(pad.width() >= 11);
+            assertFalse(padClearance.intersects(draft.changedRunway().clearanceBounds()));
+            assertFalse(padClearance.intersects(stand.bounds()));
+            for (var taxi : draft.ground().taxiRoutes()) {
+                for (int i = 1; i < taxi.points().size(); i++) {
+                    Vec3 a = taxi.points().get(i - 1), b = taxi.points().get(i);
+                    double radius = taxi.width() / 2;
+                    var segment = new AABB(Math.min(a.x, b.x) - radius, a.y, Math.min(a.z, b.z) - radius,
+                            Math.max(a.x, b.x) + radius, a.y + taxi.clearanceHeight(), Math.max(a.z, b.z) + radius);
+                    assertFalse(padClearance.intersects(segment), taxi.id());
+                }
+            }
+            var request = new AirportEditorSession(new UUID(0, 1), 0, 0, draft, "Town");
+            for (int ticks = 0; ticks < 1024 && request.result().equals("pending"); ticks++) {
+                request.advance(AirportEditorSession.PER_TICK_BUDGET, pos -> "Town", pos -> true,
+                        pos -> pos.getY() >= FIRST.getY(),
+                        pos -> pos.getY() == FIRST.getY() - 1 && pos.getX() >= FIRST.getX() && pos.getX() <= opposite.getX()
+                                && pos.getZ() >= FIRST.getZ() && pos.getZ() <= opposite.getZ());
+            }
+            assertEquals("valid", request.result());
+            assertTrue(request.canCommit(request, request.owner, 0, true, 1));
+        }
+    }
+
+    @Test void largerSelectionFitsTheProvenFixedWingFootprint() {
+        var compact = AirportAutoLayout.propose(FIRST, LAST, List.of(), AirportGroundLayout.empty()).orElseThrow();
+        var large = AirportAutoLayout.propose(FIRST, new BlockPos(363, 81, 103), List.of(), AirportGroundLayout.empty()).orElseThrow();
+        assertEquals(24, compact.changedRunway().width());
+        assertEquals(40, large.changedRunway().width());
+        assertTrue(large.changedRunway().length() >= 192);
+        assertTrue(large.ground().stands().getFirst().width() >= 48);
+        assertTrue(large.ground().stands().getFirst().length() >= 48);
+        assertTrue(large.ground().taxiRoutes().stream().allMatch(route -> route.width() >= 40));
+        assertTrue(large.facilities().stream().anyMatch(f -> f.type() == AirportFacility.Type.HELIPAD));
+    }
+
+    @Test void helipadObstructionRejectsTheEntireAutomaticLayout() {
+        var draft = AirportAutoLayout.propose(FIRST, LAST, List.of(), AirportGroundLayout.empty()).orElseThrow();
+        var pad = draft.facilities().stream().filter(f -> f.type() == AirportFacility.Type.HELIPAD).findFirst().orElseThrow();
+        var request = new AirportEditorSession(new UUID(0, 1), 0, 0, draft, "Town");
+        for (int ticks = 0; ticks < 1024 && request.result().equals("pending"); ticks++) {
+            request.advance(AirportEditorSession.PER_TICK_BUDGET, pos -> "Town", pos -> true,
+                    pos -> !pos.equals(pad.start()), pos -> true);
+        }
+        assertEquals("obstructed", request.result());
+        assertFalse(request.canCommit(request, request.owner, 0, true, 1));
     }
 
     @Test void regionActionCarriesWholeBlockCornersAndNoClientGeometry() {

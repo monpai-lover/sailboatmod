@@ -1,10 +1,13 @@
 package com.monpai.sailboatmod.transport.air.airport;
 
 import static org.junit.jupiter.api.Assertions.*;
+import java.util.HashSet;
 import java.util.List;
+import java.util.Set;
 import java.util.UUID;
 import java.util.concurrent.atomic.AtomicBoolean;
 import net.minecraft.core.BlockPos;
+import net.minecraft.world.level.ChunkPos;
 import org.junit.jupiter.api.Test;
 
 class AirportEditorSessionTest {
@@ -71,5 +74,74 @@ class AirportEditorSessionTest {
             session.advance(128,p->{if(terrain.get()&&++finalClaims[0]==2)epoch[0]++;return "town";},p->true,p->{terrain.set(true);return true;},p->true,()->epoch[0]);
         assertEquals("stale_permission",session.result());
         assertFalse(session.canCommit(session,owner,5,true,101,epoch[0]));
+    }
+
+    @Test void automaticEditorWaitsForAuthorizedColdChunksAndReleasesEveryTicket() {
+        var original = session();
+        var backend = new EditorChunks();
+        var request = new AirportEditorSession(owner, 5, 100, original.proposal, "town",
+                new AirportEditorTerrain(backend, new AirportEditorTerrain.Budget()));
+
+        request.advance(1, p -> "town", p -> true, p -> fail("Terrain read before ownership scan"), p -> true);
+        assertTrue(backend.tickets.isEmpty());
+        for (int i = 0; i < 100 && !request.loadingTerrain(); i++) {
+            backend.tick++;
+            request.advance(128, p -> "town", p -> false, p -> fail("Terrain read before FULL"), p -> true);
+        }
+        assertTrue(request.loadingTerrain());
+        assertFalse(backend.tickets.isEmpty());
+        assertEquals("pending", request.result());
+
+        backend.ready = true;
+        for (int i = 0; i < 10000 && request.result().equals("pending"); i++) {
+            backend.tick++;
+            request.advance(128, p -> "town", p -> backend.full(new ChunkPos(p)), p -> true, p -> true);
+        }
+        assertEquals("valid", request.result());
+        assertTrue(request.loadedBeforeCommit(p -> backend.full(new ChunkPos(p))));
+        request.cancel();
+        assertTrue(backend.tickets.isEmpty());
+    }
+
+    @Test void aForeignChunkNeverReceivesAnEditorTicket() {
+        var original = session();
+        var backend = new EditorChunks();
+        var request = new AirportEditorSession(owner, 5, 100, original.proposal, "town",
+                new AirportEditorTerrain(backend, new AirportEditorTerrain.Budget()));
+        while (request.result().equals("pending")) {
+            backend.tick++;
+            request.advance(128, p -> p.getX() == 32 ? "foreign" : "town", p -> false, p -> true, p -> true);
+        }
+        assertEquals("foreign_town", request.result());
+        assertEquals(32, request.failurePosition().getX());
+        assertTrue(backend.tickets.isEmpty());
+    }
+
+    @Test void aBlockedAdditionalLandingFacilityReportsTheExactBlock() {
+        var original = session();
+        var runway = original.proposal.changedRunway();
+        var pad = new AirportFacility("pad", AirportFacility.Type.HELIPAD,
+                new BlockPos(20, 80, 30), new BlockPos(22, 80, 30), 9, 6);
+        var obstruction = new BlockPos(21, 82, 30);
+        var proposal = new AirportEditorSession.Proposal(List.of(runway, pad), original.proposal.ground(), runway,
+                false, List.of(pad));
+        var request = new AirportEditorSession(owner, 5, 100, proposal, "town");
+        for (int i = 0; i < 10000 && request.result().equals("pending"); i++) {
+            request.advance(128, p -> "town", p -> true, p -> !p.equals(obstruction), p -> true);
+        }
+        assertEquals("obstructed", request.result());
+        assertEquals(obstruction, request.failurePosition());
+    }
+
+    private static final class EditorChunks implements AirportEditorTerrain.Backend {
+        final Set<ChunkPos> tickets = new HashSet<>();
+        long tick;
+        boolean ready;
+        @Override public long tick() { return tick; }
+        @Override public boolean full(ChunkPos chunk) { return ready && tickets.contains(chunk); }
+        @Override public boolean validHeight(int y) { return y >= -64 && y < 320; }
+        @Override public void ticket(UUID id, ChunkPos chunk, boolean retain) {
+            assertTrue(retain ? tickets.add(chunk) : tickets.remove(chunk));
+        }
     }
 }

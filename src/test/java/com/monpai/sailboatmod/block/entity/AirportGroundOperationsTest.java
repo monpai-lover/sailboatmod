@@ -228,11 +228,82 @@ class AirportGroundOperationsTest {
         level.unloaded.clear();set(AirportBlockEntity.class,airport,"groundLayout",null);
         assertEquals(AirportGroundLayout.empty(),airport.groundLayout());assertTrue(airport.preparedGroundDeparture(attempt,aircraft.proxy,0,0).isEmpty());
     }
+
+    @Test void mixedGuidedAircraftIgnoreSeparateParkingButKeepExclusiveLeases() throws Exception {
+        var layout = mixedLayout();
+        var pad = layout.additionalChecks().getFirst();
+        var stand = layout.ground().stands().getFirst();
+        var rotor = new Aircraft();
+        rotor.hull = hullAt(pad.landingPosition());
+        aircraft.hull = hullAt(stand.position());
+        TransportRegistry.register(level, rotor.proxy);
+        TransportRegistry.register(level, aircraft.proxy);
+        var direct = GroundAssignment.direct(layout.ground().revision(), pad);
+        var fixed = GroundAssignment.select(layout.ground(), layout.facilities(), layout.changedRunway().id(),
+                stand.id(), AirportTaxiRoute.Direction.OUTBOUND).orElseThrow();
+        assertTrue(layout.ground().taxiRoutes().getFirst().bounds().intersects(rotor.hull),
+                "A route-wide rectangle would misclassify the separate pad");
+
+        assertEquals("airport_reserved", airport.prepareGroundCandidate(attempt, aircraft.id, fixed).reason());
+        assertTrue(airport.configurationOccupied(layout.facilities(), layout.ground()));
+        assertRailReady(attempt, aircraft.id, fixed);
+        var rotorAttempt = UUID.randomUUID();
+        assertRailReady(rotorAttempt, rotor.id, direct);
+        assertTrue(airport.reserveRailGroundAssignment(rotorAttempt, direct, rotor.id, 100));
+        assertEquals("airport_reserved", airport.prepareRailGroundCandidate(attempt, aircraft.id, fixed).reason());
+        assertFalse(airport.reserveRailGroundAssignment(attempt, fixed, aircraft.id, 100));
+    }
+
+    @Test void guidedGroundRejectsRealIntrusionsInEachSelectedResource() throws Exception {
+        var layout = mixedLayout();
+        var pad = layout.additionalChecks().getFirst();
+        var runway = layout.changedRunway();
+        var stand = layout.ground().stands().getFirst();
+        var taxi = layout.ground().taxiRoutes().getFirst();
+        var fixed = GroundAssignment.select(layout.ground(), layout.facilities(), runway.id(), stand.id(),
+                AirportTaxiRoute.Direction.OUTBOUND).orElseThrow();
+        var direct = GroundAssignment.direct(layout.ground().revision(), pad);
+        var intruder = new Aircraft();
+        intruder.kind = LogisticsCarrier.Kind.LAND;
+        TransportRegistry.register(level, intruder.proxy);
+        for (var position : List.of(runway.landingPosition(), stand.position(), taxi.points().get(2))) {
+            intruder.hull = hullAt(position);
+            assertEquals("airport_reserved", airport.prepareRailGroundCandidate(attempt, aircraft.id, fixed).reason());
+        }
+        intruder.hull = hullAt(pad.landingPosition());
+        assertEquals("airport_reserved", airport.prepareRailGroundCandidate(attempt, aircraft.id, direct).reason());
+    }
+
+    private AirportEditorSession.Proposal mixedLayout() throws Exception {
+        var layout = AirportAutoLayout.propose(new BlockPos(0, 64, 0), new BlockPos(127, 64, 63),
+                List.of(), AirportGroundLayout.empty()).orElseThrow();
+        Map<String, AirportFacility> facilities = new LinkedHashMap<>();
+        for (var facility : layout.facilities()) facilities.put(facility.id(), facility);
+        set(AirportBlockEntity.class, airport, "facilities", facilities);
+        set(AirportBlockEntity.class, airport, "groundLayout", layout.ground());
+        return layout;
+    }
+
+    private static AABB hullAt(Vec3 point) {
+        return new AABB(point.x - 1, point.y, point.z - 1, point.x + 1, point.y + 3, point.z + 1);
+    }
+
+    private void assertRailReady(UUID attemptId, UUID id, GroundAssignment assignment) {
+        for (int i = 0; i < 200; i++, level.time += 5) {
+            var status = airport.prepareRailGroundCandidate(attemptId, id, assignment);
+            if (status.status() == AirportGroundPreparation.Status.READY) return;
+            assertNotEquals("airport_reserved", status.reason());
+            assertNotEquals(AirportGroundPreparation.Status.BLOCKED, status.status(), status.reason());
+        }
+        fail("bounded rail ground preparation did not finish");
+    }
+
     static final class Aircraft implements InvocationHandler{
         final UUID id=UUID.randomUUID();AABB hull=new AABB(-22,65,-1,-19,67,2);boolean grounded=true,assignedReady=false;
+        LogisticsCarrier.Kind kind = LogisticsCarrier.Kind.AIR;
         final LogisticsCarrier proxy=(LogisticsCarrier)Proxy.newProxyInstance(LogisticsCarrier.class.getClassLoader(),new Class<?>[]{LogisticsCarrier.class,AirportApproachState.class},this);
         public Object invoke(Object proxy,Method method,Object[] args)throws Throwable{return switch(method.getName()){
-            case "getTransportUuid"->id;case "transportKind"->LogisticsCarrier.Kind.AIR;case "dimensionId"->"minecraft:overworld";
+            case "getTransportUuid"->id;case "transportKind"->kind;case "dimensionId"->"minecraft:overworld";
             case "isTransportAlive"->true;case "transportBounds"->hull;case "transportPosition"->hull.getCenter();
             case "groundAssignedArrivalReady"->assignedReady&&BlockPos.ZERO.equals(args[0]);case "groundYawDegrees"->0D;case "physicalArrivalReady"->true;case "groundArrivalReady"->grounded;case "aircraftClass"->AircraftClass.FIXED_WING;case "velocityMetersPerSecond"->Vec3.ZERO;
             default->method.isDefault()?InvocationHandler.invokeDefault(proxy,method,args):null;};}

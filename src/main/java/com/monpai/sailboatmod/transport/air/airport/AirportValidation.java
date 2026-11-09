@@ -3,6 +3,7 @@ package com.monpai.sailboatmod.transport.air.airport;
 import net.minecraft.core.BlockPos;
 import net.minecraft.world.phys.AABB;
 import java.util.function.Predicate;
+import org.jetbrains.annotations.Nullable;
 
 /** Never asks the world to supply a chunk. Unknown cells cannot validate a facility. */
 public final class AirportValidation {
@@ -24,6 +25,7 @@ public final class AirportValidation {
         private int minX, maxX, minZ, maxZ, x, y, z, rowMaxZ, airBase, airEnd, phase, used, actualCells, maximumSteps;
         private boolean rowReady, columnReady, support;
         private Result result = Result.WAITING;
+        private BlockPos failurePosition;
         public Scan(AirportFacility facility) {
             this.facility = facility;
             if (facility == null || !facility.validGeometry()) { result = Result.INVALID_GEOMETRY; return; }
@@ -36,6 +38,7 @@ public final class AirportValidation {
             resetCursor();
         }
         public int stepsUsed() { return used; }
+        public @Nullable BlockPos failurePosition() { return failurePosition; }
         public Result advance(int budget, Predicate<BlockPos> loaded, Predicate<BlockPos> clear, Predicate<BlockPos> supported) {
             used = 0;
             if (loaded == null || clear == null || supported == null) return result = Result.INVALID_GEOMETRY;
@@ -61,16 +64,20 @@ public final class AirportValidation {
                 }
                 BlockPos pos = new BlockPos(x, y, z);
                 // Recheck in phase two: a chunk can unload while a long scan is pending.
-                if (!loaded.test(pos)) return result = Result.UNLOADED;
+                if (!loaded.test(pos)) return fail(Result.UNLOADED, pos);
                 boolean supportCell = support && y == facility.start().getY() - 1;
                 if (phase == 1) {
-                    if (supportCell && !supported.test(pos)) return result = Result.UNSUPPORTED;
-                    if (!supportCell && !clear.test(pos)) return result = Result.OBSTRUCTED;
+                    if (supportCell && !supported.test(pos)) return fail(Result.UNSUPPORTED, pos);
+                    if (!supportCell && !clear.test(pos)) return fail(Result.OBSTRUCTED, pos);
                 }
                 if (supportCell && airBase != Integer.MIN_VALUE) y = airBase;
                 else if (supportCell || ++y >= airEnd) nextColumn();
             }
             return result;
+        }
+        private Result fail(Result failure, BlockPos pos) {
+            failurePosition = pos;
+            return result = failure;
         }
         private void resetCursor() { x = minX; rowReady = false; columnReady = false; }
         private void nextColumn() {

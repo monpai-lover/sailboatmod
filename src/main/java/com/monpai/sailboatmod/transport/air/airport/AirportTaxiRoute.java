@@ -41,6 +41,27 @@ public record AirportTaxiRoute(String id, Direction direction, String runwayId, 
         double y=points.isEmpty()?0:points.getFirst().y;
         return new AABB(minX-width/2,y,minZ-width/2,maxX+width/2,y+clearanceHeight,maxZ+width/2);
     }
+    /** Intersect a physical hull with the union of the route's rounded ground corridors. */
+    public boolean intersectsHull(AABB hull) {
+        if (!AirportGroundLayout.finiteHull(hull) || !bounds().intersects(hull)) return false;
+        double y = points.getFirst().y;
+        var horizontal = new AABB(hull.minX, y - 1, hull.minZ, hull.maxX, y + 1, hull.maxZ);
+        double radius = width / 2;
+        for (int i = 1; i < points.size(); i++) {
+            Vec3 start = points.get(i - 1), end = points.get(i);
+            if (horizontal.clip(start, end).isPresent()
+                    || distanceToHull(start, hull) <= radius || distanceToHull(end, hull) <= radius
+                    || AirportGroundValidation.segmentDistance(hull.minX, hull.minZ, start, end) <= radius
+                    || AirportGroundValidation.segmentDistance(hull.minX, hull.maxZ, start, end) <= radius
+                    || AirportGroundValidation.segmentDistance(hull.maxX, hull.minZ, start, end) <= radius
+                    || AirportGroundValidation.segmentDistance(hull.maxX, hull.maxZ, start, end) <= radius) return true;
+        }
+        return false;
+    }
+    private static double distanceToHull(Vec3 point, AABB hull) {
+        return Math.hypot(point.x - Math.clamp(point.x, hull.minX, hull.maxX),
+                point.z - Math.clamp(point.z, hull.minZ, hull.maxZ));
+    }
     public CompoundTag save() {
         CompoundTag tag=new CompoundTag(); tag.putString("Id",id);tag.putString("Direction",direction.name());
         tag.putString("RunwayId",runwayId);tag.putString("StandId",standId);tag.putDouble("Width",width);

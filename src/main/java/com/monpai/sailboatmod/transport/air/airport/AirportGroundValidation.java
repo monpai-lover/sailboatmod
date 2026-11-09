@@ -5,6 +5,7 @@ import java.util.function.Predicate;
 import net.minecraft.core.BlockPos;
 import net.minecraft.world.phys.AABB;
 import net.minecraft.world.phys.Vec3;
+import org.jetbrains.annotations.Nullable;
 
 /** Bounded conservative swept-circle corridors. Unknown chunks are checked before all terrain reads. */
 public final class AirportGroundValidation {
@@ -69,6 +70,7 @@ public final class AirportGroundValidation {
         private Result result;private int cursor,phase,steps,buildSteps;
         private int areaIndex,x,z,y,minX,maxX,minZ,maxZ,minY,maxY;
         private boolean building=true,areaReady,columnReady;
+        private BlockPos failurePosition;
         public Scan(AirportGroundLayout layout,List<AirportFacility> facilities){
             result=references(layout,facilities);if(result!=Result.VALID)return;result=Result.WAITING;
             for(var stand:layout.stands())areas.add(new Area(stand.bounds(),null,null,0));
@@ -112,16 +114,24 @@ public final class AirportGroundValidation {
             if(++z>maxZ){z=minZ;if(++x>maxX){areaIndex++;areaReady=false;}}
         }
         public int stepsUsed(){return steps;}
+        public @Nullable BlockPos failurePosition() { return failurePosition; }
         public Result advance(int budget,Predicate<BlockPos> loaded,Predicate<BlockPos> clear,Predicate<BlockPos> supported){
             steps=0;if(loaded==null||clear==null||supported==null)return result=Result.INVALID_GEOMETRY;
             while(result==Result.WAITING&&steps<Math.max(0,budget)){
                 if(building){steps++;buildStep();continue;}
                 Cell cell=cells.get(cursor);steps++;
-                if(!loaded.test(cell.pos))return result=Result.UNLOADED;
-                if(phase==1){if(cell.support&&!supported.test(cell.pos))return result=Result.UNSUPPORTED;if(!cell.support&&!clear.test(cell.pos))return result=Result.OBSTRUCTED;}
+                if (!loaded.test(cell.pos)) return fail(Result.UNLOADED, cell.pos);
+                if (phase == 1) {
+                    if (cell.support && !supported.test(cell.pos)) return fail(Result.UNSUPPORTED, cell.pos);
+                    if (!cell.support && !clear.test(cell.pos)) return fail(Result.OBSTRUCTED, cell.pos);
+                }
                 if(++cursor==cells.size()){cursor=0;if(++phase==2)result=Result.VALID;}
             }
             return result;
+        }
+        private Result fail(Result failure, BlockPos pos) {
+            failurePosition = pos;
+            return result = failure;
         }
     }
 }

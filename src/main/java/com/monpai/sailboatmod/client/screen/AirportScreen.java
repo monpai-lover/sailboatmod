@@ -55,8 +55,10 @@ public final class AirportScreen extends ThemedScreen {
     private int selectedPoint;
     private AirportMapGeometry.Hit dragHandle;
     private boolean overview = true, precisionInvalid;
-    private boolean autoLayoutMode, autoLayoutPending;
-    private BlockPos autoLayoutFirst, autoLayoutSecond;
+    private boolean autoLayoutMode, autoLayoutPending, autoLayoutPrefab;
+    private BlockPos autoLayoutFirst, autoLayoutSecond, autoLayoutIssue;
+    private List<AirportPrefab.Piece> autoLayoutPrefabPieces = List.of();
+    private AirportPrefab.Materials autoLayoutPrefabMaterials;
     private String autoLayoutY;
     private AirportEditorSession.Proposal autoLayoutProposal;
     private long autoLayoutRevision = -1, autoLayoutReplyDeadline = -1;
@@ -169,6 +171,8 @@ public final class AirportScreen extends ThemedScreen {
         boolean nameChanged = !data().name().equals(update.name());
         boolean targetsChanged = !data().routeTargets().equals(update.routeTargets())
                 || data().hasRouteNameConflict() != update.hasRouteNameConflict();
+        boolean prefabSupportChanged = data().supportsPrefab() != update.supportsPrefab()
+                || data().supportsLitPrefab() != update.supportsLitPrefab();
         boolean toolbarChanged = data().canManage() != update.canManage()
                 || data().supportsAutoLayout() != update.supportsAutoLayout()
                 || data().supportsRoutePublication() != update.supportsRoutePublication();
@@ -182,12 +186,18 @@ public final class AirportScreen extends ThemedScreen {
         }
         boolean nameUnedited = nameDraft.equals(data().customName());
         planner.applySnapshot(update);
-        if (autoLayoutPending && update.revision() >= autoLayoutRevision && !update.result().isEmpty())
-            autoLayoutReplyDeadline = -1;
+        if (prefabSupportChanged) {
+            autoLayoutPrefab &= data().supportsPrefab();
+            updateAutoLayoutPrefabMaterials();
+        }
+        if (autoLayoutPending && update.revision() >= autoLayoutRevision && "pending".equals(update.result()))
+            autoLayoutReplyDeadline = ticks() + AUTO_LAYOUT_ACK_TIMEOUT;
         if (autoLayoutPending && update.revision() >= autoLayoutRevision && !update.result().isEmpty() && !"pending".equals(update.result())) {
             autoLayoutPending = false;
+            autoLayoutReplyDeadline = -1;
+            autoLayoutIssue = update.editorIssue().orElse(null);
             if ("ok".equals(update.result()) && update.revision() == autoLayoutRevision + 1
-                    && update.facilities().contains(autoLayoutProposal.changedRunway())
+                    && autoLayoutProposal != null && update.facilities().containsAll(autoLayoutProposal.facilities())
                     && update.groundLayout().stands().containsAll(autoLayoutProposal.ground().stands())
                     && update.groundLayout().taxiRoutes().containsAll(autoLayoutProposal.ground().taxiRoutes())) {
                 clearAutoLayoutSelection();
@@ -199,10 +209,11 @@ public final class AirportScreen extends ThemedScreen {
         if (nameUnedited) { nameDraft = update.customName(); nameRevision = update.revision(); }
         if (toolbarChanged) renderToolbar();
         refreshStatus();
-        if (!update.result().isEmpty() && !"pending".equals(update.result())) toast.show(t("result." + update.result()),
+        if (!update.result().isEmpty() && !"pending".equals(update.result())) toast.show(resultText(update.result(), update.editorIssue().orElse(null)),
                 "ok".equals(update.result()) || "valid".equals(update.result()), ticks());
         // Async replies must refresh existing controls without reopening a closed screen.
-        if (repaint || nameChanged || targetsChanged || previousRevision != data().revision() || (wasBusy && !busy())) renderInspector();
+        if (repaint || nameChanged || targetsChanged || prefabSupportChanged || previousRevision != data().revision() || (wasBusy && !busy()))
+            renderInspector();
         AirportClientHooks.updatePreview(this);
     }
     private Component statusText() {
@@ -211,9 +222,14 @@ public final class AirportScreen extends ThemedScreen {
         if (section != Section.HOME || autoLayoutMode || !state.equals("draft_saved")) text.append(" · ").append(t(state));
         if (!data().canManage()) text.append(" · ").append(t("read_only"));
         if (!planner.lastResult().isEmpty() && !List.of("ok", "valid").contains(planner.lastResult()))
-            text = text.copy().append(" · ").append(t("result." + planner.lastResult()));
+            text = text.copy().append(" · ").append(resultText(planner.lastResult(), autoLayoutMode ? autoLayoutIssue : null));
         if (busy()) text = text.copy().append("\n").append(Component.translatable("screen.sailboatmod.airport.validation_progress", planner.validationProgress()));
         return text;
+    }
+    private static Component resultText(String result, BlockPos issue) {
+        var message = t("result." + result);
+        return issue == null ? message : message.copy().append(" · ").append(
+                Component.translatable("screen.sailboatmod.airport.issue_position", issue.getX(), issue.getY(), issue.getZ()));
     }
     static String draftStatus(AirportPlannerModel model, boolean invalidText) {
         if (invalidText) return "draft_invalid";
@@ -231,7 +247,7 @@ public final class AirportScreen extends ThemedScreen {
         if (mapHint != null) mapHint.setDisplay(section == Section.PLANNING && !autoLayoutMode);
         refreshToolButtons();
         precisionFields.values().forEach(field -> field.setActive(data().canManage() && !busy()));
-        if (autoLayoutStatus != null) autoLayoutStatus.setValue(t(autoLayoutStatusKey()));
+        if (autoLayoutStatus != null) autoLayoutStatus.setValue(autoLayoutStatusText());
         if (autoLayoutSave != null) autoLayoutSave.setActive(canSaveAutoLayout());
         var target = routeTarget();
         boolean canPublish = target != null && data().canManage() && !busy() && !hasManualAirportDraft()
@@ -273,8 +289,11 @@ public final class AirportScreen extends ThemedScreen {
                 new RoadPlannerMapComponent(RoadMapRegion.centeredOn(airportPos(), 128, MapLod.LOD_1),
                         new RoadMapViewport(box.x(), box.y(), box.width(), box.height())), camera, terrain).render(graphics, font);
         AirportMapOverlay.render(graphics, font, camera, box, planner);
-        if (autoLayoutMode && autoLayoutFirst != null)
+        if (autoLayoutMode && autoLayoutFirst != null) {
             AirportMapOverlay.renderAutoLayout(graphics, font, camera, box, autoLayoutFirst, autoLayoutSecond, autoLayoutProposal);
+            if (!autoLayoutPrefabPieces.isEmpty()) AirportMapOverlay.renderPrefabDetails(graphics, camera, box, autoLayoutPrefabPieces);
+            if (autoLayoutIssue != null) AirportMapOverlay.renderIssue(graphics, font, camera, box, autoLayoutIssue);
+        }
         int x = camera.worldToScreenX(airportPos().getX() + .5, rect(box));
         int y = camera.worldToScreenZ(airportPos().getZ() + .5, rect(box));
         if (x >= box.x() && x < box.x() + box.width() && y >= box.y() && y < box.y() + box.height()) {
@@ -521,6 +540,7 @@ public final class AirportScreen extends ThemedScreen {
     private void beginAutoLayout() {
         if (!data().supportsAutoLayout() || !editable()) return;
         if (map != null) map.cancelCapture();
+        if (autoLayoutFirst == null) autoLayoutPrefab = data().supportsPrefab() && data().facilities().isEmpty();
         autoLayoutMode = true;
         renderToolbar();
         renderInspector(); refreshStatus(); AirportClientHooks.updatePreview(this);
@@ -532,6 +552,8 @@ public final class AirportScreen extends ThemedScreen {
     }
     private void clearAutoLayoutSelection() {
         autoLayoutFirst = null; autoLayoutSecond = null; autoLayoutProposal = null; autoLayoutRevision = -1;
+        autoLayoutIssue = null;
+        updateAutoLayoutPrefabMaterials();
     }
     private int autoLayoutGroundY() {
         int height = Integer.parseInt(autoLayoutY.trim());
@@ -552,6 +574,7 @@ public final class AirportScreen extends ThemedScreen {
             if (picked.getY() != autoLayoutFirst.getY()) { toast.show(t("auto_layout_level"), false, ticks()); return; }
             autoLayoutSecond = picked;
         }
+        autoLayoutIssue = null;
         previewAutoLayout(); renderInspector();
     }
     private void previewAutoLayout() {
@@ -564,40 +587,81 @@ public final class AirportScreen extends ThemedScreen {
             autoLayoutProposal = AirportAutoLayout.propose(autoLayoutFirst, autoLayoutSecond, data().facilities(), data().groundLayout()).orElse(null);
             if (autoLayoutProposal != null) autoLayoutRevision = data().revision();
         } catch (IllegalArgumentException ignored) { }
+        updateAutoLayoutPrefabMaterials();
         refreshStatus(); AirportClientHooks.updatePreview(this);
+    }
+    private boolean litPrefab() { return autoLayoutPrefab && data().supportsLitPrefab(); }
+    private void updateAutoLayoutPrefabMaterials() {
+        autoLayoutPrefabPieces = List.of();
+        autoLayoutPrefabMaterials = null;
+        if (!autoLayoutPrefab || autoLayoutProposal == null) return;
+        if (litPrefab()) {
+            autoLayoutPrefabPieces = AirportPrefab.planDetailed(autoLayoutProposal, autoLayoutFirst, autoLayoutSecond).orElse(List.of());
+            if (!autoLayoutPrefabPieces.isEmpty()) autoLayoutPrefabMaterials = AirportPrefab.materials(autoLayoutPrefabPieces);
+        } else {
+            autoLayoutPrefabMaterials = AirportPrefab.plan(autoLayoutProposal, autoLayoutFirst, autoLayoutSecond)
+                    .map(blocks -> new AirportPrefab.Materials(blocks.size(), 0, 0)).orElse(null);
+        }
     }
     private boolean hasManualAirportDraft() { return planner.dirty() || !nameDraft.equals(data().customName()); }
     private boolean canSaveAutoLayout() {
         return autoLayoutMode && data().supportsAutoLayout() && data().canManage() && !busy() && !hasManualAirportDraft()
-                && autoLayoutProposal != null && autoLayoutRevision == data().revision();
+                && autoLayoutProposal != null && autoLayoutRevision == data().revision()
+                && (!autoLayoutPrefab || data().supportsPrefab() && autoLayoutPrefabMaterials != null);
     }
     private void saveAutoLayout() {
         if (!canSaveAutoLayout()) return;
         AirportActionPacket packet = new AirportActionPacket(data().dimension(), airportPos(), autoLayoutRevision,
-                AirportActionPacket.Action.APPLY_AUTO_LAYOUT, "", "", "", List.of(Vec3.atLowerCornerOf(autoLayoutFirst), Vec3.atLowerCornerOf(autoLayoutSecond)),
-                false, 0, 0, 0, 0, 0, -1);
+                AirportActionPacket.Action.APPLY_AUTO_LAYOUT, litPrefab() ? AirportActionPacket.LIT_PREFAB_ID : "", "", "",
+                List.of(Vec3.atLowerCornerOf(autoLayoutFirst), Vec3.atLowerCornerOf(autoLayoutSecond)),
+                autoLayoutPrefab, 0, 0, 0, 0, 0, -1);
+        autoLayoutIssue = null;
         autoLayoutPending = true;
         autoLayoutReplyDeadline = ticks() + AUTO_LAYOUT_ACK_TIMEOUT;
         send(packet); refreshStatus();
     }
     private String autoLayoutStatusKey() {
-        if (autoLayoutPending) return "draft_pending";
+        if (autoLayoutPending) return data().statuses().contains("editor_terrain||loading")
+                ? "auto_layout_loading" : "draft_pending";
         if (autoLayoutFirst == null) return "auto_layout_first";
         if (autoLayoutSecond == null) return "auto_layout_second";
         if (autoLayoutProposal == null) return "auto_layout_invalid";
         if (autoLayoutRevision != data().revision()) return "auto_layout_stale";
         return "auto_layout_ready";
     }
+    private Component autoLayoutStatusText() {
+        String statusKey = autoLayoutStatusKey();
+        if (!autoLayoutPrefab || !statusKey.equals("auto_layout_ready")) return t(statusKey);
+        var cost = autoLayoutPrefabMaterials;
+        if (cost == null) return t("prefab_unavailable");
+        if (litPrefab()) return Component.translatable("screen.sailboatmod.airport.prefab_lit_cost",
+                cost.stone(), cost.markings(), cost.lights());
+        return Component.translatable("screen.sailboatmod.airport.prefab_cost", cost.stone());
+    }
+    private void chooseAutoLayoutMode(boolean prefab) {
+        if (!editable() || prefab && !data().supportsPrefab()) return;
+        autoLayoutPrefab = prefab;
+        autoLayoutIssue = null;
+        previewAutoLayout();
+        renderInspector();
+    }
     private void autoLayoutInspector() {
         text(Component.translatable("screen.sailboatmod.airport.auto_layout_hint",
                 AirportAutoLayout.MIN_LONG_SIDE, AirportAutoLayout.MIN_SHORT_SIDE, AirportAutoLayout.MAX_SIDE));
+        if (data().supportsPrefab()) actions(
+                Ui.button(t("auto_layout_register_existing"), autoLayoutPrefab ? Ui.Tone.SECONDARY : Ui.Tone.PRIMARY,
+                        () -> chooseAutoLayoutMode(false)),
+                Ui.button(t("auto_layout_build_prefab"), autoLayoutPrefab ? Ui.Tone.PRIMARY : Ui.Tone.SECONDARY,
+                        () -> chooseAutoLayoutMode(true)));
+        if (autoLayoutPrefab) text(t(litPrefab() ? "prefab_lit_hint" : "prefab_hint"));
         if (hasManualAirportDraft()) text(t("auto_layout_manual_draft"));
         precisionFields.put("autoLayoutY", field("map_plane_y", autoLayoutY, value -> { autoLayoutY = value; previewAutoLayout(); }));
-        autoLayoutStatus = Ui.paragraph(t(autoLayoutStatusKey()), "sm-muted");
+        autoLayoutStatus = Ui.paragraph(autoLayoutStatusText(), "sm-muted");
         inspector.addScrollViewChild(autoLayoutStatus);
         if (autoLayoutFirst != null) text(Component.literal("1 · " + pointLabel(Vec3.atLowerCornerOf(autoLayoutFirst))));
         if (autoLayoutSecond != null) text(Component.literal("2 · " + pointLabel(Vec3.atLowerCornerOf(autoLayoutSecond))));
-        autoLayoutSave = Ui.button(t("auto_layout_save"), Ui.Tone.PRIMARY, () -> safely(this::saveAutoLayout));
+        autoLayoutSave = Ui.button(t(autoLayoutPrefab ? "prefab_confirm" : "auto_layout_save"), Ui.Tone.PRIMARY,
+                () -> safely(this::saveAutoLayout));
         autoLayoutSave.setActive(canSaveAutoLayout());
         actions(button("auto_layout_pick", () -> {
                     if (editable()) AirportClientHooks.beginPick(this, guardedPick(this::pickAutoLayoutCorner));

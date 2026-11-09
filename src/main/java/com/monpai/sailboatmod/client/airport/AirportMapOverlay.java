@@ -27,8 +27,13 @@ public final class AirportMapOverlay {
             AirportScreenData data=model.snapshot();
             for(AirportFacility runway:data.facilities()) {
                 if(runway.type()!=AirportFacility.Type.RUNWAY && !data.supportsRoutePublication()) continue;
-                runway(graphics,font,view,viewport,runway.id(),center(runway.start()),center(runway.end()),runway.width(),
-                        stateColor(data,"runway",runway.id()),false,false);
+                Vec3 start = center(runway.start()), end = center(runway.end());
+                int color = stateColor(data, "runway", runway.id());
+                if (runway.type() == AirportFacility.Type.RUNWAY) {
+                    runway(graphics, font, view, viewport, runway.id(), start, end, runway.width(), color, false, false);
+                } else {
+                    areaFacility(graphics, font, view, viewport, runway.id(), start, end, runway.width(), color, false, false);
+                }
             }
             for(AirportTaxiRoute route:data.groundLayout().taxiRoutes())
                 taxi(graphics,font,view,viewport,route.id(),route.points(),route.width(),route.holdPointIndex(),
@@ -41,8 +46,12 @@ public final class AirportMapOverlay {
                 int color=model.conflict()?CONFLICT:model.dirty()?DRAFT:SELECTED;
                 switch(draft.kind()) {
                     case RUNWAY, HELIPAD, MOORING -> {
-                        if(draft.points().size()==2)runway(graphics,font,view,viewport,draft.id(),draft.points().get(0),draft.points().get(1),draft.width(),color,true,model.dirty());
-                        else if(draft.points().size()==1)point(graphics,font,view,viewport,draft.points().getFirst(),"1",color,true);
+                        if (draft.points().size() == 2) {
+                            Vec3 start = draft.points().get(0), end = draft.points().get(1);
+                            if (draft.kind() == AirportPlannerModel.Tool.RUNWAY)
+                                runway(graphics, font, view, viewport, draft.id(), start, end, draft.width(), color, true, model.dirty());
+                            else areaFacility(graphics, font, view, viewport, draft.id(), start, end, draft.width(), color, true, model.dirty());
+                        } else if (draft.points().size() == 1) point(graphics, font, view, viewport, draft.points().getFirst(), "1", color, true);
                     }
                     case OUTBOUND,INBOUND -> taxi(graphics,font,view,viewport,draft.id(),draft.points(),draft.width(),draft.holdPoint(),color,color,draft.kind()==AirportPlannerModel.Tool.OUTBOUND,true,model.dirty());
                     case STAND -> {
@@ -77,6 +86,10 @@ public final class AirportMapOverlay {
             AirportFacility proposedRunway = proposal.changedRunway();
             runway(g, font, view, vp, proposedRunway.id(), center(proposedRunway.start()), center(proposedRunway.end()),
                     proposedRunway.width(), DRAFT, false, true);
+            for (AirportFacility facility : proposal.additionalChecks()) {
+                areaFacility(g, font, view, vp, Component.translatable("screen.sailboatmod.airport.legend_helipad").getString(),
+                        center(facility.start()), center(facility.end()), facility.width(), SELECTED, false, true);
+            }
             String proposedStandId = "";
             for (AirportTaxiRoute route : proposal.ground().taxiRoutes()) {
                 if (!route.runwayId().equals(proposedRunway.id())) continue;
@@ -86,9 +99,42 @@ public final class AirportMapOverlay {
                         outbound ? OUTBOUND : INBOUND, SAVED, outbound, false, true);
             }
             proposal.ground().stand(proposedStandId).ifPresent(stand -> {
-                stand(g, font, view, vp, stand.id(), stand.position(), stand.yawDegrees(), stand.length(), stand.width(), VALID, false, true);
+                stand(g, font, view, vp, Component.translatable("screen.sailboatmod.airport.legend_hangar").getString(),
+                        stand.position(), stand.yawDegrees(), stand.length(), stand.width(), VALID, false, true);
             });
         } finally { g.disableScissor(); }
+    }
+    public static void renderPrefabDetails(GuiGraphics g, RoadPlannerMapView view, ClaimMapViewport vp,
+                                           List<AirportPrefab.Piece> pieces) {
+        double scale = view.scale();
+        if (vp.width() < 4 || vp.height() < 4 || scale < .2 || pieces.isEmpty()) return;
+        int blockPixels = Math.max(1, (int) Math.round(scale));
+        g.enableScissor(vp.x(), vp.y(), vp.right(), vp.bottom());
+        try {
+            for (AirportPrefab.Piece piece : pieces) {
+                AirportPrefab.Part part = piece.part();
+                boolean marking = part == AirportPrefab.Part.MARKING;
+                if (part == AirportPrefab.Part.STRUCTURE || marking && scale < .5) continue;
+                var p = AirportMapGeometry.project(center(piece.pos()), view, vp);
+                if (!onMap(p, vp)) continue;
+                int size = Math.max(blockPixels, part == AirportPrefab.Part.ROOF_LIGHT ? 3 : marking ? 1 : 2);
+                int x = (int) Math.round(p.x() - size / 2.0);
+                int y = (int) Math.round(p.y() - size / 2.0);
+                int color = switch (part) {
+                    case MARKING -> 0xFFF7FAFF;
+                    case RUNWAY_LIGHT -> 0xFF67EFDC;
+                    case ROOF_LIGHT -> 0xFFFFC16D;
+                    case STRUCTURE -> throw new IllegalStateException("Structure has no detail marker");
+                };
+                if (!marking) g.fill(x - 1, y - 1, x + size + 1, y + size + 1, 0xFF1A2934);
+                g.fill(x, y, x + size, y + size, color);
+            }
+        } finally { g.disableScissor(); }
+    }
+    public static void renderIssue(GuiGraphics g, Font font, RoadPlannerMapView view, ClaimMapViewport vp, BlockPos issue) {
+        g.enableScissor(vp.x(), vp.y(), vp.right(), vp.bottom());
+        try { point(g, font, view, vp, center(issue), "!", INVALID, true); }
+        finally { g.disableScissor(); }
     }
     static int stateColor(AirportScreenData data,String kind,String id) {
         for(String status:data.statuses()) {
@@ -117,6 +163,15 @@ public final class AirportMapOverlay {
         line(g,view,vp,start,end,color,2,true);arrow(g,view,vp,start,end,color);
         label(g,font,view,vp,start.add(end).scale(.5),id,color);
         if(handles){point(g,font,view,vp,start,"1",color,true);point(g,font,view,vp,end,"2",color,true);}
+    }
+    private static void areaFacility(GuiGraphics g, Font font, RoadPlannerMapView view, ClaimMapViewport vp, String label,
+                                     Vec3 start, Vec3 end, double width, int color, boolean handles, boolean dashed) {
+        polygon(g, view, vp, AirportMapGeometry.runwayFootprint(start, end, width), color, handles, dashed);
+        label(g, font, view, vp, start.add(end).scale(.5), label, color);
+        if (handles) {
+            point(g, font, view, vp, start, "1", color, true);
+            if (!start.equals(end)) point(g, font, view, vp, end, "2", color, true);
+        }
     }
     private static void taxi(GuiGraphics g,Font font,RoadPlannerMapView view,ClaimMapViewport vp,String id,List<Vec3> points,
                              double width,int hold,int color,int statusColor,boolean outbound,boolean handles,boolean dashed) {

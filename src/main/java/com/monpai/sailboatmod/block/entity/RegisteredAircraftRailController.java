@@ -80,15 +80,15 @@ final class RegisteredAircraftRailController {
             var admitted=admission==null?NativeControlResult.failure("fuel_unknown"):
                     admission.apply(new AdmissionPlan(selectedPath,selected.source().assignment(),selected.destination().assignment()));
             if(admitted==null||!admitted.success())return waitFor(admitted==null?"fuel_unknown":admitted.reason());
-            var from=source.prepareGroundCandidate(preparation,c.owner(),selected.source().assignment());
+            var from=source.prepareRailGroundCandidate(preparation,c.owner(),selected.source().assignment());
             if(from.status()==AirportGroundPreparation.Status.WAITING)return waitFor("airport_reserved".equals(from.reason())?from.reason():"waiting_airport_terrain");
             if(from.status()==AirportGroundPreparation.Status.BLOCKED){blockedSources.add(selected.source().assignment());selected=null;selectedPath=null;continue;}
-            var to=target.prepareGroundCandidate(preparation,c.owner(),selected.destination().assignment());
+            var to=target.prepareRailGroundCandidate(preparation,c.owner(),selected.destination().assignment());
             if(to.status()==AirportGroundPreparation.Status.WAITING)return waitFor("airport_reserved".equals(to.reason())?to.reason():"waiting_airport_terrain");
             if(to.status()==AirportGroundPreparation.Status.BLOCKED){blockedTargets.add(selected.destination().assignment());selected=null;selectedPath=null;continue;}
             if(c.view().worldPosition().distanceTo(selectedPath.sample(0).position())>.05)return waitFor("rail_start_alignment_required");
-            if(!source.reserveGroundAssignment(preparation,selected.source().assignment(),c.owner(),200)
-                    ||!target.reserveGroundAssignment(preparation,selected.destination().assignment(),c.owner(),200)){
+            if(!source.reserveRailGroundAssignment(preparation,selected.source().assignment(),c.owner(),200)
+                    ||!target.reserveRailGroundAssignment(preparation,selected.destination().assignment(),c.owner(),200)){
                 source.releaseReservation(c.owner());target.releaseReservation(c.owner());return waitFor("airport_reserved");
             }
             mission=RailAircraftMission.start(preparation,c.view().physicalId(),c.carrier().dimensionId(),source.getBlockPos(),selected.source().assignment(),
@@ -120,11 +120,11 @@ final class RegisteredAircraftRailController {
             reason="ground_binding_changed";hold(c);return;
         }
         if(now<renewedAt||now-renewedAt>=20||!source.holdsGroundAssignment(mission.sourceAssignment(),c.owner())||!target.holdsGroundAssignment(mission.targetAssignment(),c.owner())) {
-            var from=source.prepareGroundCandidate(mission.id(),c.owner(),mission.sourceAssignment());
-            var to=target.prepareGroundCandidate(mission.id(),c.owner(),mission.targetAssignment());
+            var from=source.prepareRailGroundCandidate(mission.id(),c.owner(),mission.sourceAssignment());
+            var to=target.prepareRailGroundCandidate(mission.id(),c.owner(),mission.targetAssignment());
             if(from.status()!=AirportGroundPreparation.Status.READY||to.status()!=AirportGroundPreparation.Status.READY
-                    ||!source.reserveGroundAssignment(mission.id(),mission.sourceAssignment(),c.owner(),200)
-                    ||!target.reserveGroundAssignment(mission.id(),mission.targetAssignment(),c.owner(),200)){
+                    ||!source.reserveRailGroundAssignment(mission.id(),mission.sourceAssignment(),c.owner(),200)
+                    ||!target.reserveRailGroundAssignment(mission.id(),mission.targetAssignment(),c.owner(),200)){
                 reason="waiting_airport_terrain";hold(c);return;
             }
             renewedAt=now;
