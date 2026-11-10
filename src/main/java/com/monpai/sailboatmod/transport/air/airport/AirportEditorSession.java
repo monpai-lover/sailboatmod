@@ -6,18 +6,25 @@ import java.util.function.Predicate;
 import java.util.function.LongSupplier;
 import net.minecraft.core.BlockPos;
 import net.minecraft.world.level.ChunkPos;
+import net.minecraft.world.level.block.state.BlockState;
 import net.minecraft.world.phys.AABB;
 import org.jetbrains.annotations.Nullable;
 
 /** One immutable airport edit, using the existing bounded terrain scanners. Never persists configuration. */
 public final class AirportEditorSession {
     public record Proposal(List<AirportFacility> facilities, AirportGroundLayout ground, AirportFacility changedRunway,
-                           boolean validationOnly, List<AirportFacility> additionalChecks, List<AirportPrefab.Piece> prefabBlocks) {
+                           boolean validationOnly, List<AirportFacility> additionalChecks, List<AirportPrefab.Piece> prefabBlocks,
+                           Map<BlockPos, BlockState> regionalBlocks) {
         public Proposal {
             facilities = List.copyOf(facilities);
             Objects.requireNonNull(ground);
             additionalChecks = List.copyOf(additionalChecks);
             prefabBlocks = List.copyOf(prefabBlocks);
+            regionalBlocks = Collections.unmodifiableMap(new LinkedHashMap<>(regionalBlocks));
+        }
+        public Proposal(List<AirportFacility> facilities, AirportGroundLayout ground, AirportFacility changedRunway,
+                        boolean validationOnly, List<AirportFacility> additionalChecks, List<AirportPrefab.Piece> prefabBlocks) {
+            this(facilities, ground, changedRunway, validationOnly, additionalChecks, prefabBlocks, Map.of());
         }
         public Proposal(List<AirportFacility> facilities, AirportGroundLayout ground, AirportFacility changedRunway,
                         boolean validationOnly) {
@@ -70,7 +77,10 @@ public final class AirportEditorSession {
         facilitiesToScan = List.copyOf(checks);
         if (baseRevision < 0 || townId.isBlank() || proposal.facilities().size() > 16
                 || !proposal.facilities().containsAll(checks) || proposal.prefabBlocks().size() > AirportPrefab.MAX_BLOCKS
-                || proposal.validationOnly() && !proposal.prefabBlocks().isEmpty()) result = "invalid_geometry";
+                || !proposal.regionalBlocks().isEmpty() && (proposal.regionalBlocks().size() != RegionalAirportTemplate.BLOCK_COUNT
+                    || !proposal.prefabBlocks().isEmpty())
+                || proposal.validationOnly() && (!proposal.prefabBlocks().isEmpty() || !proposal.regionalBlocks().isEmpty()))
+            result = "invalid_geometry";
         for (var facility : proposal.facilities()) {
             addClaim(facility.clearanceBounds(), facility.type() == AirportFacility.Type.RUNWAY ? AirportFacility.MAX_RUNWAY_CLEARANCE_SPAN : 2048);
             var footprint=facility.clearanceChunks();
@@ -86,6 +96,11 @@ public final class AirportEditorSession {
             BlockPos block = piece.pos();
             long chunk = ChunkPos.asLong(block);
             rememberChunk(chunk, piece.part().inlaid() ? block.getY() : block.getY() - 1, block.getY());
+            if (prefabClaims.add(chunk)) addClaim(new AABB(block), 16);
+        }
+        for (BlockPos block : proposal.regionalBlocks().keySet()) {
+            long chunk = ChunkPos.asLong(block);
+            rememberChunk(chunk, block.getY(), block.getY());
             if (prefabClaims.add(chunk)) addClaim(new AABB(block), 16);
         }
     }

@@ -30,7 +30,7 @@ import java.util.function.Predicate;
 /** Builds the airport structure and its inlaid runway details. */
 public final class AirportPrefab {
     static final int MAX_BLOCKS = 1792;
-    private static final int PLACEMENT_FLAGS = Block.UPDATE_CLIENTS | Block.UPDATE_KNOWN_SHAPE;
+    static final int PLACEMENT_FLAGS = Block.UPDATE_CLIENTS | Block.UPDATE_KNOWN_SHAPE;
 
     public enum Part {
         STRUCTURE, MARKING, RUNWAY_LIGHT, ROOF_LIGHT;
@@ -349,7 +349,7 @@ public final class AirportPrefab {
         return "ok";
     }
 
-    private static boolean replaceableSurface(BlockState state) {
+    static boolean replaceableSurface(BlockState state) {
         return state.is(Blocks.SMOOTH_STONE) || state.is(Blocks.STONE) || state.is(Blocks.STONE_BRICKS)
                 || state.is(Blocks.ANDESITE) || state.is(Blocks.POLISHED_ANDESITE)
                 || state.is(Blocks.GRAY_CONCRETE) || state.is(Blocks.LIGHT_GRAY_CONCRETE) || state.is(Blocks.BLACK_CONCRETE)

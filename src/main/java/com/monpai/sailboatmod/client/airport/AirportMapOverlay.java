@@ -9,6 +9,7 @@ import net.minecraft.client.gui.GuiGraphics;
 import net.minecraft.core.BlockPos;
 import net.minecraft.network.chat.Component;
 import net.minecraft.world.phys.Vec3;
+import org.jetbrains.annotations.Nullable;
 import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.List;
@@ -69,7 +70,8 @@ public final class AirportMapOverlay {
         } finally {graphics.disableScissor();}
     }
     public static void renderAutoLayout(GuiGraphics g, Font font, RoadPlannerMapView view, ClaimMapViewport vp,
-                                        BlockPos first, BlockPos second, AirportEditorSession.Proposal proposal) {
+                                        BlockPos first, BlockPos second, AirportEditorSession.Proposal proposal,
+                                        @Nullable BlockPos regionalOrigin) {
         if (vp.width() < 4 || vp.height() < 4) return;
         g.enableScissor(vp.x(), vp.y(), vp.right(), vp.bottom());
         try {
@@ -83,11 +85,18 @@ public final class AirportMapOverlay {
             point(g, font, view, vp, center(first), "1", AUTO_REGION, true);
             if (second != null) point(g, font, view, vp, center(second), "2", AUTO_REGION, true);
             if (proposal == null) return;
+            if (regionalOrigin != null) {
+                int x = regionalOrigin.getX(), y = regionalOrigin.getY() + 1, z = regionalOrigin.getZ();
+                int east = x + RegionalAirportLayout.TEMPLATE_WIDTH, south = z + RegionalAirportLayout.TEMPLATE_DEPTH;
+                polygon(g, view, vp, List.of(new Vec3(x,y,z), new Vec3(east,y,z), new Vec3(east,y,south), new Vec3(x,y,south)),
+                        SAVED, false, false);
+            }
             AirportFacility proposedRunway = proposal.changedRunway();
             runway(g, font, view, vp, proposedRunway.id(), center(proposedRunway.start()), center(proposedRunway.end()),
                     proposedRunway.width(), DRAFT, false, true);
             for (AirportFacility facility : proposal.additionalChecks()) {
-                areaFacility(g, font, view, vp, Component.translatable("screen.sailboatmod.airport.legend_helipad").getString(),
+                String label = facility.type() == AirportFacility.Type.MOORING ? "legend_mooring" : "legend_helipad";
+                areaFacility(g, font, view, vp, Component.translatable("screen.sailboatmod.airport." + label).getString(),
                         center(facility.start()), center(facility.end()), facility.width(), SELECTED, false, true);
             }
             String proposedStandId = "";
@@ -99,7 +108,8 @@ public final class AirportMapOverlay {
                         outbound ? OUTBOUND : INBOUND, SAVED, outbound, false, true);
             }
             proposal.ground().stand(proposedStandId).ifPresent(stand -> {
-                stand(g, font, view, vp, Component.translatable("screen.sailboatmod.airport.legend_hangar").getString(),
+                String label = regionalOrigin == null ? "legend_hangar" : "legend_stand";
+                stand(g, font, view, vp, Component.translatable("screen.sailboatmod.airport." + label).getString(),
                         stand.position(), stand.yawDegrees(), stand.length(), stand.width(), VALID, false, true);
             });
         } finally { g.disableScissor(); }

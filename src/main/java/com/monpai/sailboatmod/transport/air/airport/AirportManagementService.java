@@ -1,5 +1,6 @@
 package com.monpai.sailboatmod.transport.air.airport;
 
+import com.mojang.logging.LogUtils;
 import com.monpai.sailboatmod.SailboatMod;
 import com.monpai.sailboatmod.block.entity.AirportBlockEntity;
 import com.monpai.sailboatmod.dock.FacilityNames;
@@ -14,6 +15,7 @@ import net.minecraft.nbt.Tag;
 import net.minecraft.server.MinecraftServer;
 import net.minecraft.server.level.ServerLevel;
 import net.minecraft.server.level.ServerPlayer;
+import net.minecraft.world.level.block.state.BlockState;
 import net.minecraft.world.phys.AABB;
 import net.neoforged.bus.api.SubscribeEvent;
 import net.neoforged.fml.common.EventBusSubscriber;
@@ -84,6 +86,26 @@ public final class AirportManagementService {
                 return new Result(false, "invalid_geometry", revision);
             BlockPos cornerA = BlockPos.of(action.getLong("CornerA"));
             BlockPos cornerB = BlockPos.of(action.getLong("CornerB"));
+            if (action.getBoolean("Prefab") && action.getBoolean("RegionalPrefab")) {
+                if (!player.getAbilities().instabuild) return new Result(false, "regional_creative", revision);
+                var active = AUTO_EDITS.get(level.getServer());
+                if (active != null && active.entrySet().stream().anyMatch(entry -> entry.getKey() != airport
+                        && entry.getKey().editorSession() == entry.getValue() && !entry.getValue().proposal.regionalBlocks().isEmpty()))
+                    return new Result(false, "rate_limited", revision);
+                var regional = RegionalAirportLayout.propose(cornerA, cornerB, airportPos, airport.facilities(), airport.groundLayout());
+                if (regional.isEmpty()) return new Result(false, "regional_invalid", revision);
+                var layout = regional.orElseThrow();
+                Map<BlockPos, BlockState> blocks = new LinkedHashMap<>();
+                try {
+                    for (var piece : RegionalAirportTemplate.load(airportPos)) blocks.put(piece.pos(), piece.state());
+                } catch (IllegalStateException failure) {
+                    LogUtils.getLogger().error("Could not read the regional airport prefab", failure);
+                    return new Result(false, "prefab_failed", revision);
+                }
+                var proposal = new AirportEditorSession.Proposal(layout.facilities(), layout.ground(), layout.changedRunway(),
+                        false, layout.additionalChecks(), List.of(), blocks);
+                return validateAndQueue(player, airport, revision, proposal, true);
+            }
             var planned = AirportAutoLayout.propose(cornerA, cornerB, airport.facilities(), airport.groundLayout());
             if (planned.isEmpty()) return new Result(false, "invalid_geometry", revision);
             var proposal = planned.orElseThrow();
@@ -228,7 +250,9 @@ public final class AirportManagementService {
         }
         Function<BlockPos,String> townAt=pos->{var town=TownService.getManagedTownAt(player,pos);return town==null?"":town.townId();};
         NationSavedData authority=NationSavedData.get(level);
-        String result=request.advance(Math.max(0,budget),townAt,p->!level.isOutsideBuildHeight(p)&&level.hasChunkAt(p),p->clear(level,p),p->support(level,p),authority::claimRevision);
+        var regional = request.proposal.regionalBlocks();
+        String result=request.advance(Math.max(0,budget),townAt,p->!level.isOutsideBuildHeight(p)&&level.hasChunkAt(p),
+                p->clear(level,p,regional),p->support(level,p,regional),authority::claimRevision);
         int used=request.stepsUsed();
         if(result.equals("pending")){if(now%20==0)reply(player,airport,"pending",null);return used;}
         if(result.equals("valid")){
@@ -240,6 +264,8 @@ public final class AirportManagementService {
                 result="valid";
             } else if (!request.proposal.prefabBlocks().isEmpty()) {
                 result = AirportPrefab.install(player, airport, request.proposal, request::recordFailurePosition);
+            } else if (!regional.isEmpty()) {
+                result = RegionalAirportPlacement.install(player, airport, request.proposal, request::recordFailurePosition);
             }else if(airport.replaceGroundConfiguration(request.proposal.ground().revision()-1,request.proposal.facilities(),request.proposal.ground())){
                 result="ok";
             }else result="occupied";
@@ -259,8 +285,18 @@ public final class AirportManagementService {
         }
     }
     private static String toCode(AirportValidation.Result result){return result==AirportValidation.Result.VALID?"ok":result.name().toLowerCase(Locale.ROOT);}
-    private static boolean clear(ServerLevel level,BlockPos pos){return level.hasChunkAt(pos)&&level.getFluidState(pos).isEmpty()&&level.getBlockState(pos).getCollisionShape(level,pos).isEmpty();}
-    private static boolean support(ServerLevel level,BlockPos pos){return level.hasChunkAt(pos)&&level.getBlockState(pos).isFaceSturdy(level,pos,Direction.UP);}
+    private static BlockState plannedState(ServerLevel level, BlockPos pos, Map<BlockPos, BlockState> regional) {
+        var planned = regional.get(pos);
+        return planned == null ? level.getBlockState(pos) : planned;
+    }
+    private static boolean clear(ServerLevel level, BlockPos pos, Map<BlockPos, BlockState> regional) {
+        if (!level.hasChunkAt(pos)) return false;
+        var state = plannedState(level, pos, regional);
+        return state.getFluidState().isEmpty() && state.getCollisionShape(level, pos).isEmpty();
+    }
+    private static boolean support(ServerLevel level, BlockPos pos, Map<BlockPos, BlockState> regional) {
+        return level.hasChunkAt(pos) && plannedState(level, pos, regional).isFaceSturdy(level, pos, Direction.UP);
+    }
     public static boolean withinManagedTown(AABB area,String townId,Function<BlockPos,String> managedTown){
         if(area==null||townId==null||townId.isBlank()||managedTown==null||!Double.isFinite(area.minX)||!Double.isFinite(area.maxX)||!Double.isFinite(area.minZ)||!Double.isFinite(area.maxZ)
                 ||area.getXsize()>2048||area.getZsize()>2048)return false;

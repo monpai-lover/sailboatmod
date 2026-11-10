@@ -19,6 +19,7 @@ public record AirportScreenData(ResourceLocation dimension, BlockPos airportPos,
     private static final String AUTO_LAYOUT_FEATURE = "feature|auto_layout|1";
     private static final String PREFAB_FEATURE = "feature|airport_prefab|1";
     private static final String LIT_PREFAB_FEATURE = "feature|airport_lit_prefab|1";
+    private static final String REGIONAL_PREFAB_FEATURE = "feature|airport_regional_prefab|1";
     private static final String EDITOR_ISSUE_PREFIX = "editor_issue||";
     private static final String ROUTE_PUBLICATION_FEATURE = "feature|route_publication|1";
     private static final String ROUTE_NAME_CONFLICT = "feature|route_name_conflict|1";
@@ -52,6 +53,7 @@ public record AirportScreenData(ResourceLocation dimension, BlockPos airportPos,
     public boolean supportsAutoLayout() { return statuses.contains(AUTO_LAYOUT_FEATURE); }
     public boolean supportsPrefab() { return statuses.contains(PREFAB_FEATURE); }
     public boolean supportsLitPrefab() { return statuses.contains(LIT_PREFAB_FEATURE); }
+    public boolean supportsRegionalPrefab() { return statuses.contains(REGIONAL_PREFAB_FEATURE); }
     public Optional<BlockPos> editorIssue() {
         for (String status : statuses) {
             if (!status.startsWith(EDITOR_ISSUE_PREFIX)) continue;
@@ -86,6 +88,7 @@ public record AirportScreenData(ResourceLocation dimension, BlockPos airportPos,
         if (canManage && !airport.facilities().isEmpty() && statuses.size() < 160
                 && AirportRoutePublication.sourceNameConflict(player.serverLevel(), airport)) statuses.add(ROUTE_NAME_CONFLICT);
         if (statuses.size() < 160) statuses.add(LIT_PREFAB_FEATURE);
+        if (statuses.size() < 160) statuses.add(REGIONAL_PREFAB_FEATURE);
         List<RouteTarget> targets = canManage ? AirportRoutePublication.targets(player, airport) : List.of();
         long editorRevision = airport.editorRevision();
         AirportGroundLayout layout = airport.groundLayout();

@@ -34,6 +34,7 @@ import java.util.function.Consumer;
 public final class AirportScreen extends ThemedScreen {
     private static final long AUTO_LAYOUT_ACK_TIMEOUT = 100;
     private enum Section { HOME, PLANNING, SETTINGS }
+    private enum AutoLayoutKind { EXISTING, STANDARD, REGIONAL }
     private Section section = Section.HOME;
     private final AirportPlannerModel planner;
     private final Consumer<AirportActionPacket> packetSender;
@@ -55,7 +56,8 @@ public final class AirportScreen extends ThemedScreen {
     private int selectedPoint;
     private AirportMapGeometry.Hit dragHandle;
     private boolean overview = true, precisionInvalid;
-    private boolean autoLayoutMode, autoLayoutPending, autoLayoutPrefab;
+    private boolean autoLayoutMode, autoLayoutPending;
+    private AutoLayoutKind autoLayoutKind = AutoLayoutKind.EXISTING;
     private BlockPos autoLayoutFirst, autoLayoutSecond, autoLayoutIssue;
     private List<AirportPrefab.Piece> autoLayoutPrefabPieces = List.of();
     private AirportPrefab.Materials autoLayoutPrefabMaterials;
@@ -172,7 +174,8 @@ public final class AirportScreen extends ThemedScreen {
         boolean targetsChanged = !data().routeTargets().equals(update.routeTargets())
                 || data().hasRouteNameConflict() != update.hasRouteNameConflict();
         boolean prefabSupportChanged = data().supportsPrefab() != update.supportsPrefab()
-                || data().supportsLitPrefab() != update.supportsLitPrefab();
+                || data().supportsLitPrefab() != update.supportsLitPrefab()
+                || data().supportsRegionalPrefab() != update.supportsRegionalPrefab();
         boolean toolbarChanged = data().canManage() != update.canManage()
                 || data().supportsAutoLayout() != update.supportsAutoLayout()
                 || data().supportsRoutePublication() != update.supportsRoutePublication();
@@ -187,8 +190,9 @@ public final class AirportScreen extends ThemedScreen {
         boolean nameUnedited = nameDraft.equals(data().customName());
         planner.applySnapshot(update);
         if (prefabSupportChanged) {
-            autoLayoutPrefab &= data().supportsPrefab();
-            updateAutoLayoutPrefabMaterials();
+            if (standardPrefab() && !data().supportsPrefab() || regionalPrefab() && !data().supportsRegionalPrefab())
+                autoLayoutKind = AutoLayoutKind.EXISTING;
+            if (autoLayoutMode && !autoLayoutPending) previewAutoLayout();
         }
         if (autoLayoutPending && update.revision() >= autoLayoutRevision && "pending".equals(update.result()))
             autoLayoutReplyDeadline = ticks() + AUTO_LAYOUT_ACK_TIMEOUT;
@@ -290,7 +294,8 @@ public final class AirportScreen extends ThemedScreen {
                         new RoadMapViewport(box.x(), box.y(), box.width(), box.height())), camera, terrain).render(graphics, font);
         AirportMapOverlay.render(graphics, font, camera, box, planner);
         if (autoLayoutMode && autoLayoutFirst != null) {
-            AirportMapOverlay.renderAutoLayout(graphics, font, camera, box, autoLayoutFirst, autoLayoutSecond, autoLayoutProposal);
+            AirportMapOverlay.renderAutoLayout(graphics, font, camera, box, autoLayoutFirst, autoLayoutSecond, autoLayoutProposal,
+                    regionalPrefab() ? RegionalAirportLayout.origin(airportPos()) : null);
             if (!autoLayoutPrefabPieces.isEmpty()) AirportMapOverlay.renderPrefabDetails(graphics, camera, box, autoLayoutPrefabPieces);
             if (autoLayoutIssue != null) AirportMapOverlay.renderIssue(graphics, font, camera, box, autoLayoutIssue);
         }
@@ -540,8 +545,16 @@ public final class AirportScreen extends ThemedScreen {
     private void beginAutoLayout() {
         if (!data().supportsAutoLayout() || !editable()) return;
         if (map != null) map.cancelCapture();
-        if (autoLayoutFirst == null) autoLayoutPrefab = data().supportsPrefab() && data().facilities().isEmpty();
         autoLayoutMode = true;
+        if (autoLayoutFirst == null) {
+            autoLayoutKind = AutoLayoutKind.EXISTING;
+            if (data().facilities().isEmpty()) {
+                if (data().supportsRegionalPrefab() && creativeMode()) {
+                    autoLayoutKind = AutoLayoutKind.REGIONAL;
+                    selectRegionalFootprint();
+                } else if (data().supportsPrefab()) autoLayoutKind = AutoLayoutKind.STANDARD;
+            }
+        }
         renderToolbar();
         renderInspector(); refreshStatus(); AirportClientHooks.updatePreview(this);
     }
@@ -584,17 +597,22 @@ public final class AirportScreen extends ThemedScreen {
             int height = autoLayoutGroundY();
             if (autoLayoutFirst != null) autoLayoutFirst = autoLayoutFirst.atY(height);
             if (autoLayoutSecond != null) autoLayoutSecond = autoLayoutSecond.atY(height);
-            autoLayoutProposal = AirportAutoLayout.propose(autoLayoutFirst, autoLayoutSecond, data().facilities(), data().groundLayout()).orElse(null);
+            autoLayoutProposal = (regionalPrefab()
+                    ? RegionalAirportLayout.propose(autoLayoutFirst, autoLayoutSecond, airportPos(), data().facilities(), data().groundLayout())
+                    : AirportAutoLayout.propose(autoLayoutFirst, autoLayoutSecond, data().facilities(), data().groundLayout())).orElse(null);
             if (autoLayoutProposal != null) autoLayoutRevision = data().revision();
         } catch (IllegalArgumentException ignored) { }
         updateAutoLayoutPrefabMaterials();
         refreshStatus(); AirportClientHooks.updatePreview(this);
     }
-    private boolean litPrefab() { return autoLayoutPrefab && data().supportsLitPrefab(); }
+    private boolean standardPrefab() { return autoLayoutKind == AutoLayoutKind.STANDARD; }
+    private boolean regionalPrefab() { return autoLayoutKind == AutoLayoutKind.REGIONAL; }
+    private boolean litPrefab() { return standardPrefab() && data().supportsLitPrefab(); }
+    private boolean creativeMode() { return minecraft != null && minecraft.player != null && minecraft.player.getAbilities().instabuild; }
     private void updateAutoLayoutPrefabMaterials() {
         autoLayoutPrefabPieces = List.of();
         autoLayoutPrefabMaterials = null;
-        if (!autoLayoutPrefab || autoLayoutProposal == null) return;
+        if (!standardPrefab() || autoLayoutProposal == null) return;
         if (litPrefab()) {
             autoLayoutPrefabPieces = AirportPrefab.planDetailed(autoLayoutProposal, autoLayoutFirst, autoLayoutSecond).orElse(List.of());
             if (!autoLayoutPrefabPieces.isEmpty()) autoLayoutPrefabMaterials = AirportPrefab.materials(autoLayoutPrefabPieces);
@@ -607,14 +625,16 @@ public final class AirportScreen extends ThemedScreen {
     private boolean canSaveAutoLayout() {
         return autoLayoutMode && data().supportsAutoLayout() && data().canManage() && !busy() && !hasManualAirportDraft()
                 && autoLayoutProposal != null && autoLayoutRevision == data().revision()
-                && (!autoLayoutPrefab || data().supportsPrefab() && autoLayoutPrefabMaterials != null);
+                && (!standardPrefab() || data().supportsPrefab() && autoLayoutPrefabMaterials != null)
+                && (!regionalPrefab() || data().supportsRegionalPrefab() && creativeMode());
     }
     private void saveAutoLayout() {
         if (!canSaveAutoLayout()) return;
         AirportActionPacket packet = new AirportActionPacket(data().dimension(), airportPos(), autoLayoutRevision,
-                AirportActionPacket.Action.APPLY_AUTO_LAYOUT, litPrefab() ? AirportActionPacket.LIT_PREFAB_ID : "", "", "",
+                AirportActionPacket.Action.APPLY_AUTO_LAYOUT, regionalPrefab() ? AirportActionPacket.REGIONAL_PREFAB_ID
+                        : litPrefab() ? AirportActionPacket.LIT_PREFAB_ID : "", "", "",
                 List.of(Vec3.atLowerCornerOf(autoLayoutFirst), Vec3.atLowerCornerOf(autoLayoutSecond)),
-                autoLayoutPrefab, 0, 0, 0, 0, 0, -1);
+                autoLayoutKind != AutoLayoutKind.EXISTING, 0, 0, 0, 0, 0, -1);
         autoLayoutIssue = null;
         autoLayoutPending = true;
         autoLayoutReplyDeadline = ticks() + AUTO_LAYOUT_ACK_TIMEOUT;
@@ -625,42 +645,57 @@ public final class AirportScreen extends ThemedScreen {
                 ? "auto_layout_loading" : "draft_pending";
         if (autoLayoutFirst == null) return "auto_layout_first";
         if (autoLayoutSecond == null) return "auto_layout_second";
-        if (autoLayoutProposal == null) return "auto_layout_invalid";
+        if (autoLayoutProposal == null) return regionalPrefab() ? "result.regional_invalid" : "auto_layout_invalid";
         if (autoLayoutRevision != data().revision()) return "auto_layout_stale";
         return "auto_layout_ready";
     }
     private Component autoLayoutStatusText() {
         String statusKey = autoLayoutStatusKey();
-        if (!autoLayoutPrefab || !statusKey.equals("auto_layout_ready")) return t(statusKey);
+        if (!statusKey.equals("auto_layout_ready")) return t(statusKey);
+        if (regionalPrefab()) return t(creativeMode() ? "regional_ready" : "result.regional_creative");
+        if (!standardPrefab()) return t(statusKey);
         var cost = autoLayoutPrefabMaterials;
         if (cost == null) return t("prefab_unavailable");
         if (litPrefab()) return Component.translatable("screen.sailboatmod.airport.prefab_lit_cost",
                 cost.stone(), cost.markings(), cost.lights());
         return Component.translatable("screen.sailboatmod.airport.prefab_cost", cost.stone());
     }
-    private void chooseAutoLayoutMode(boolean prefab) {
-        if (!editable() || prefab && !data().supportsPrefab()) return;
-        autoLayoutPrefab = prefab;
+    private void selectRegionalFootprint() {
+        autoLayoutFirst = RegionalAirportLayout.firstCorner(airportPos());
+        autoLayoutSecond = RegionalAirportLayout.secondCorner(airportPos());
+        autoLayoutY = Integer.toString(airportPos().getY());
         autoLayoutIssue = null;
         previewAutoLayout();
+    }
+    private void chooseAutoLayoutMode(AutoLayoutKind kind) {
+        if (!editable()) return;
+        autoLayoutKind = kind;
+        autoLayoutIssue = null;
+        if (regionalPrefab()) selectRegionalFootprint();
+        else previewAutoLayout();
         renderInspector();
     }
     private void autoLayoutInspector() {
-        text(Component.translatable("screen.sailboatmod.airport.auto_layout_hint",
-                AirportAutoLayout.MIN_LONG_SIDE, AirportAutoLayout.MIN_SHORT_SIDE, AirportAutoLayout.MAX_SIDE));
         if (data().supportsPrefab()) actions(
-                Ui.button(t("auto_layout_register_existing"), autoLayoutPrefab ? Ui.Tone.SECONDARY : Ui.Tone.PRIMARY,
-                        () -> chooseAutoLayoutMode(false)),
-                Ui.button(t("auto_layout_build_prefab"), autoLayoutPrefab ? Ui.Tone.PRIMARY : Ui.Tone.SECONDARY,
-                        () -> chooseAutoLayoutMode(true)));
-        if (autoLayoutPrefab) text(t(litPrefab() ? "prefab_lit_hint" : "prefab_hint"));
+                Ui.button(t("auto_layout_register_existing"), autoLayoutKind == AutoLayoutKind.EXISTING ? Ui.Tone.PRIMARY : Ui.Tone.SECONDARY,
+                        () -> chooseAutoLayoutMode(AutoLayoutKind.EXISTING)),
+                Ui.button(t("auto_layout_build_prefab"), standardPrefab() ? Ui.Tone.PRIMARY : Ui.Tone.SECONDARY,
+                        () -> chooseAutoLayoutMode(AutoLayoutKind.STANDARD)));
+        if (data().supportsRegionalPrefab()) actions(Ui.button(t("regional_prefab"), regionalPrefab() ? Ui.Tone.PRIMARY : Ui.Tone.SECONDARY,
+                () -> chooseAutoLayoutMode(AutoLayoutKind.REGIONAL)));
+        if (regionalPrefab()) text(Component.translatable("screen.sailboatmod.airport.regional_hint",
+                RegionalAirportLayout.MIN_WIDTH, RegionalAirportLayout.MIN_DEPTH));
+        else text(Component.translatable("screen.sailboatmod.airport.auto_layout_hint",
+                AirportAutoLayout.MIN_LONG_SIDE, AirportAutoLayout.MIN_SHORT_SIDE, AirportAutoLayout.MAX_SIDE));
+        if (standardPrefab()) text(t(litPrefab() ? "prefab_lit_hint" : "prefab_hint"));
         if (hasManualAirportDraft()) text(t("auto_layout_manual_draft"));
-        precisionFields.put("autoLayoutY", field("map_plane_y", autoLayoutY, value -> { autoLayoutY = value; previewAutoLayout(); }));
+        if (!regionalPrefab())
+            precisionFields.put("autoLayoutY", field("map_plane_y", autoLayoutY, value -> { autoLayoutY = value; previewAutoLayout(); }));
         autoLayoutStatus = Ui.paragraph(autoLayoutStatusText(), "sm-muted");
         inspector.addScrollViewChild(autoLayoutStatus);
         if (autoLayoutFirst != null) text(Component.literal("1 · " + pointLabel(Vec3.atLowerCornerOf(autoLayoutFirst))));
         if (autoLayoutSecond != null) text(Component.literal("2 · " + pointLabel(Vec3.atLowerCornerOf(autoLayoutSecond))));
-        autoLayoutSave = Ui.button(t(autoLayoutPrefab ? "prefab_confirm" : "auto_layout_save"), Ui.Tone.PRIMARY,
+        autoLayoutSave = Ui.button(t(autoLayoutKind == AutoLayoutKind.EXISTING ? "auto_layout_save" : "prefab_confirm"), Ui.Tone.PRIMARY,
                 () -> safely(this::saveAutoLayout));
         autoLayoutSave.setActive(canSaveAutoLayout());
         actions(button("auto_layout_pick", () -> {
