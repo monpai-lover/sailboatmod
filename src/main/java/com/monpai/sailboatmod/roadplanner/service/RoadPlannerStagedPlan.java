@@ -1,6 +1,7 @@
 package com.monpai.sailboatmod.roadplanner.service;
 
 import com.monpai.sailboatmod.client.roadplanner.RoadPlannerSegmentType;
+import com.monpai.sailboatmod.roadplanner.corridor.RoadAlignment;
 import net.minecraft.core.BlockPos;
 import net.minecraft.world.level.ChunkPos;
 
@@ -10,13 +11,20 @@ import java.util.List;
 /** Compressed submitted geometry. A distant corridor is never enumerated before its window is needed. */
 public final class RoadPlannerStagedPlan {
     public static final int CORE_BLOCKS = 128;
-    public static final int HALO_BLOCKS = 32;
+    /**
+     * Route on each side of a stage that is sampled but not built. It must cover everything the
+     * road geometry looks at around a point, so that neighbouring stages agree where they meet.
+     */
+    public static final int HALO_BLOCKS = 120;
     public static final int MAX_NODES = 4096;
     public static final int MIN_PACKED_COORDINATE = -33_554_432;
     public static final int MAX_PACKED_COORDINATE = 33_554_431;
     private final List<BlockPos> nodes;
     private final List<RoadPlannerSegmentType> types;
-    private final int[] firstStage;
+    /** First leg of each stage group, then the leg count. A group is one long leg, or a run of short same-typed legs. */
+    private final int[] groupLeg;
+    /** First stage of each group, then the stage count. */
+    private final int[] groupStage;
     private final double[] lengths;
     private final double[] legDistances;
     private final int totalStages;
@@ -31,26 +39,45 @@ public final class RoadPlannerStagedPlan {
             }
         }
         List<RoadPlannerSegmentType> normalized = new ArrayList<>();
-        firstStage = new int[nodes.size()];
         lengths = new double[nodes.size() - 1];
         legDistances = new double[nodes.size()];
-        long count = 0;
         double totalDistance = 0;
         for (int leg = 0; leg < lengths.length; leg++) {
             BlockPos from = nodes.get(leg), to = nodes.get(leg + 1);
             double length = Math.hypot((double) to.getX() - from.getX(), (double) to.getZ() - from.getZ());
             lengths[leg] = length;
-            firstStage[leg] = (int) count;
-            count += Math.max(1L, (long) Math.ceil(length / CORE_BLOCKS));
-            if (count > Integer.MAX_VALUE) throw new IllegalArgumentException("Too many road stages");
             totalDistance += length;
             legDistances[leg + 1] = totalDistance;
             normalized.add(types != null && leg < types.size() && types.get(leg) != null ? types.get(leg) : RoadPlannerSegmentType.ROAD);
         }
-        firstStage[lengths.length] = (int) count;
         this.types = List.copyOf(normalized);
-        totalStages = (int) count;
         distance = totalDistance;
+        // A generated route arrives as many short legs. Building each as its own stage would sample
+        // the same surrounding terrain again for every few blocks of road, so short neighbours of one
+        // type share a stage; a leg longer than a stage is still cut into several.
+        int[] legs = new int[lengths.length + 1];
+        int[] stages = new int[lengths.length + 1];
+        int groups = 0;
+        long count = 0;
+        for (int leg = 0; leg < lengths.length; ) {
+            legs[groups] = leg;
+            stages[groups] = (int) count;
+            groups++;
+            double length = lengths[leg];
+            int next = leg + 1;
+            while (next < lengths.length && this.types.get(next) == this.types.get(leg)
+                    && length + lengths[next] <= CORE_BLOCKS) {
+                length += lengths[next++];
+            }
+            count += next == leg + 1 ? Math.max(1L, (long) Math.ceil(length / CORE_BLOCKS)) : 1L;
+            if (count > Integer.MAX_VALUE) throw new IllegalArgumentException("Too many road stages");
+            leg = next;
+        }
+        legs[groups] = lengths.length;
+        stages[groups] = (int) count;
+        groupLeg = java.util.Arrays.copyOf(legs, groups + 1);
+        groupStage = java.util.Arrays.copyOf(stages, groups + 1);
+        totalStages = (int) count;
     }
 
     public int storedNodeCount() { return nodes.size(); }
@@ -65,12 +92,14 @@ public final class RoadPlannerStagedPlan {
 
     public Stage stage(int index) {
         if (index < 0 || index >= totalStages) throw new IndexOutOfBoundsException(index);
-        int leg = java.util.Arrays.binarySearch(firstStage, index);
-        if (leg < 0) leg = -leg - 2;
-        BlockPos from = nodes.get(leg), to = nodes.get(leg + 1);
-        double length = lengths[leg];
-        double begin = (double) (index - firstStage[leg]) * CORE_BLOCKS;
-        double end = Math.min(length, begin + CORE_BLOCKS);
+        int group = java.util.Arrays.binarySearch(groupStage, index);
+        if (group < 0) group = -group - 2;
+        int leg = groupLeg[group];
+        int lastLeg = groupLeg[group + 1] - 1;
+        BlockPos from = nodes.get(leg), to = nodes.get(lastLeg + 1);
+        double length = leg == lastLeg ? lengths[leg] : legDistances[lastLeg + 1] - legDistances[leg];
+        double begin = leg == lastLeg ? (double) (index - groupStage[group]) * CORE_BLOCKS : 0;
+        double end = leg == lastLeg ? Math.min(length, begin + CORE_BLOCKS) : length;
         List<BlockPos> contextNodes = new ArrayList<>();
         List<RoadPlannerSegmentType> contextTypes = new ArrayList<>();
         double low = Math.max(0, legDistances[leg] + begin - HALO_BLOCKS);
@@ -83,9 +112,30 @@ public final class RoadPlannerStagedPlan {
             if (!contextNodes.get(contextNodes.size() - 1).equals(b)) { contextNodes.add(b); contextTypes.add(types.get(part)); }
         }
         if (contextNodes.size() < 2) { contextNodes = new ArrayList<>(List.of(from, to)); contextTypes = new ArrayList<>(List.of(types.get(leg))); }
-        return new Stage(index, leg, lerp(from, to, begin, length), lerp(from, to, end, length),
+        return new Stage(index, leg, leg == lastLeg ? lerp(from, to, begin, length) : from,
+                leg == lastLeg ? lerp(from, to, end, length) : to,
                 contextNodes.get(0), contextNodes.get(contextNodes.size() - 1), from, to, types.get(leg),
-                begin, end, length, List.copyOf(contextNodes), List.copyOf(contextTypes), index == totalStages - 1);
+                begin, end, length, List.copyOf(contextNodes), List.copyOf(contextTypes), index == totalStages - 1,
+                legDistances[leg] + begin, legDistances[leg] + end);
+    }
+
+    /** The rounded road geometry around a stage, addressed by distance along the submitted route. */
+    public RoadAlignment alignment(Stage stage) {
+        return RoadAlignment.slice(nodes, types, legDistances, stage.routeFrom() - HALO_BLOCKS, stage.routeTo() + HALO_BLOCKS);
+    }
+
+    /** Columns the finished centreline passes through inside a stage, in travel order. Y is not meaningful. */
+    public List<BlockPos> centerColumns(Stage stage) {
+        RoadAlignment alignment = alignment(stage);
+        List<BlockPos> columns = new ArrayList<>();
+        double[] point = new double[4];
+        long first = (long) Math.ceil(stage.routeFrom() - 1.0e-9);
+        for (long at = first; stage.terminal() ? at <= Math.ceil(distance) : at < stage.routeTo() - 1.0e-9; at++) {
+            alignment.evaluate(Math.min(distance, at), point);
+            BlockPos column = new BlockPos((int) Math.round(point[0]), stage.coreFrom().getY(), (int) Math.round(point[1]));
+            if (columns.isEmpty() || !columns.get(columns.size() - 1).equals(column)) columns.add(column);
+        }
+        return columns;
     }
 
     private static BlockPos lerp(BlockPos from, BlockPos to, double at, double length) {
@@ -98,7 +148,21 @@ public final class RoadPlannerStagedPlan {
     public record Stage(int index, int leg, BlockPos coreFrom, BlockPos coreTo, BlockPos sampleFrom,
                         BlockPos sampleTo, BlockPos spanFrom, BlockPos spanTo, RoadPlannerSegmentType type,
                         double fromDistance, double toDistance, double spanLength,
-                        List<BlockPos> nodes, List<RoadPlannerSegmentType> types, boolean terminal) {
+                        List<BlockPos> nodes, List<RoadPlannerSegmentType> types, boolean terminal,
+                        double routeFrom, double routeTo) {
+
+        /**
+         * Start of the route range this stage builds. The first stage also takes anything before
+         * the route and the last anything after it, so every column near the road belongs to
+         * exactly one stage.
+         */
+        public double ownedFrom() {
+            return index == 0 ? Double.NEGATIVE_INFINITY : routeFrom;
+        }
+
+        public double ownedTo() {
+            return terminal ? Double.POSITIVE_INFINITY : routeTo;
+        }
 
         /** Includes support/lighting margins along the corridor, without a diagonal bounding rectangle. */
         public List<Long> chunks() {
@@ -114,25 +178,6 @@ public final class RoadPlannerStagedPlan {
                 }
             }
             return List.copyOf(chunks);
-        }
-
-        /** Halo samples guide smoothing; only this core owns emitted placement columns. */
-        public boolean ownsColumn(int x, int z) {
-            if (spanLength == 0) return true;
-            double dx = (double) spanTo.getX() - spanFrom.getX();
-            double dz = (double) spanTo.getZ() - spanFrom.getZ();
-            double at = (((double) x - spanFrom.getX()) * dx + ((double) z - spanFrom.getZ()) * dz) / spanLength;
-            return (index == 0 || at >= fromDistance - 1.0e-6) && (terminal || at < toDistance - 1.0e-6);
-        }
-
-        /** Actual profile checks exclude smoothing halo and end caps that another stage may already have built. */
-        public boolean coreContains(int x, int z) {
-            if (spanLength == 0) return x == coreFrom.getX() && z == coreFrom.getZ();
-            double dx = (double) spanTo.getX() - spanFrom.getX(), dz = (double) spanTo.getZ() - spanFrom.getZ();
-            double at = (((double) x - spanFrom.getX()) * dx + ((double) z - spanFrom.getZ()) * dz) / spanLength;
-            double perpendicular = (((double) x - spanFrom.getX()) * dz - ((double) z - spanFrom.getZ()) * dx) / spanLength;
-            return Math.abs(perpendicular) <= 1.0 && at >= fromDistance - 1.0e-6
-                    && (terminal ? at <= toDistance + 1.0e-6 : at < toDistance - 1.0e-6);
         }
     }
 }

@@ -2,8 +2,9 @@ package com.monpai.sailboatmod.roadplanner.structure;
 
 import com.monpai.sailboatmod.client.roadplanner.RoadPlannerBuildSettings;
 import com.monpai.sailboatmod.client.roadplanner.RoadPlannerSegmentType;
+import com.monpai.sailboatmod.roadplanner.corridor.RoadAlignment;
+import com.monpai.sailboatmod.roadplanner.corridor.RoadCorridorCompiler;
 import net.minecraft.core.BlockPos;
-import com.monpai.sailboatmod.road.model.BuildPhase;
 import com.monpai.sailboatmod.road.model.BuildStep;
 import net.minecraft.server.level.ServerLevel;
 
@@ -42,37 +43,34 @@ public final class RoadNodeStructureExpander {
         List<RoadPlannerSegmentType> canonicalSegmentTypes = RoadRouteSectionNormalizer.flattenSegmentTypes(sections);
         java.util.List<RoadCenterlinePoint> allCenterline = new java.util.ArrayList<>();
         java.util.List<RoadSpan> allSpans = new java.util.ArrayList<>();
-        int centerlineOffset = 0;
-        for (RoadRouteSection section : sections) {
-            List<RoadCenterlinePoint> rawCenterline = RoadCenterlineBuilder.build(section, terrainSampler);
-            List<RoadSpan> rawSpans = RoadSpanClassifier.classify(rawCenterline);
-            List<RoadCenterlinePoint> smoothedCenterline = RoadHeightProfileSmoother.smooth(rawCenterline, rawSpans);
-            for (RoadSpan span : rawSpans) {
-                allSpans.add(new RoadSpan(span.type(), span.startIndex() + centerlineOffset, span.endIndex() + centerlineOffset, span.sourceSegmentType()));
-            }
-            allCenterline.addAll(smoothedCenterline);
-            centerlineOffset += smoothedCenterline.size();
-        }
         java.util.List<BuildStep> steps = new java.util.ArrayList<>();
-        steps.addAll(RoadSurfaceStepEmitter.emit(allCenterline, allSpans, settings, steps.size()));
-        int bridgeStartOrder = steps.size();
-        BridgeEmissionResult bridgeEmission = BridgeStructureEmitter.emitWithTransitions(
-                allCenterline,
-                allSpans,
-                settings,
-                BridgeTemplateProvider.empty(),
-                bridgeStartOrder,
-                terrainSampler
-        );
-        steps.addAll(bridgeEmission.steps());
-        java.util.List<BuildStep> dedupedSteps = dedupeAndReorder(steps, bridgeEmission.transitionColumns(), bridgeStartOrder);
-        java.util.List<RoadPreviewBlock> previewBlocks = previewBlocksFromSteps(dedupedSteps);
+        for (RoadRouteSection section : sections) {
+            RoadCorridorCompiler.Result compiled = RoadCorridorCompiler.compile(
+                    RoadAlignment.of(section.nodes(), section.segmentTypes()), settings, terrainSampler);
+            int centerlineOffset = allCenterline.size();
+            for (RoadSpan span : compiled.spans()) {
+                allSpans.add(new RoadSpan(span.type(), span.startIndex() + centerlineOffset,
+                        span.endIndex() + centerlineOffset, span.sourceSegmentType()));
+            }
+            allCenterline.addAll(compiled.centerline());
+            steps.addAll(compiled.steps());
+        }
+        return result(canonicalNodes, canonicalSegmentTypes, allCenterline, allSpans, steps);
+    }
+
+    /** Packages compiled road steps: one final block per position, renumbered in build order. */
+    public static RoadNodeExpansionResult result(List<BlockPos> canonicalNodes,
+                                                 List<RoadPlannerSegmentType> canonicalSegmentTypes,
+                                                 List<RoadCenterlinePoint> centerline,
+                                                 List<RoadSpan> spans,
+                                                 List<BuildStep> steps) {
+        java.util.List<BuildStep> dedupedSteps = dedupeAndReorder(steps);
         return new RoadNodeExpansionResult(
                 canonicalNodes,
                 canonicalSegmentTypes,
-                allCenterline,
-                allSpans,
-                previewBlocks,
+                centerline,
+                spans,
+                previewBlocksFromSteps(dedupedSteps),
                 dedupedSteps,
                 List.of()
         );
@@ -102,61 +100,31 @@ public final class RoadNodeStructureExpander {
     }
 
     private static java.util.List<BuildStep> dedupeAndReorder(java.util.List<BuildStep> steps) {
-        return dedupeAndReorder(steps, java.util.Set.of(), Integer.MAX_VALUE);
-    }
-
-    private static java.util.List<BuildStep> dedupeAndReorder(java.util.List<BuildStep> steps,
-                                                              java.util.Set<Long> bridgeSurfaceColumns,
-                                                              int bridgeStartOrder) {
         java.util.Map<BlockPos, BuildStep> selectedByPosition = new java.util.LinkedHashMap<>();
         if (steps != null) {
             for (BuildStep step : steps) {
                 if (step == null || step.pos() == null || step.state() == null || step.phase() == null) {
                     continue;
                 }
-                if (isRoadSurfaceCoveredByBridge(step, bridgeSurfaceColumns, bridgeStartOrder)) {
-                    continue;
-                }
                 BlockPos key = step.pos().immutable();
                 BuildStep existing = selectedByPosition.get(key);
                 if (existing == null || shouldReplace(existing, step)) {
-                    selectedByPosition.put(key, new BuildStep(step.order(), key, step.state(), step.phase()));
+                    selectedByPosition.put(key, new BuildStep(existing == null ? step.order() : existing.order(),
+                            key, step.state(), step.phase()));
                 }
             }
         }
-        java.util.List<BuildStep> ordered = selectedByPosition.values().stream()
-                .sorted(java.util.Comparator.comparingInt(BuildStep::order))
-                .toList();
-        java.util.List<BuildStep> deduped = new java.util.ArrayList<>(ordered.size());
-        for (BuildStep step : ordered) {
+        java.util.List<BuildStep> deduped = new java.util.ArrayList<>(selectedByPosition.size());
+        for (BuildStep step : selectedByPosition.values()) {
             deduped.add(new BuildStep(deduped.size(), step.pos(), step.state(), step.phase()));
         }
         return java.util.List.copyOf(deduped);
     }
 
-    private static boolean isRoadSurfaceCoveredByBridge(BuildStep step,
-                                                        java.util.Set<Long> bridgeSurfaceColumns,
-                                                        int bridgeStartOrder) {
-        if (bridgeSurfaceColumns == null || bridgeSurfaceColumns.isEmpty() || step.order() >= bridgeStartOrder) {
-            return false;
-        }
-        if (step.phase() != BuildPhase.SURFACE && step.phase() != BuildPhase.RAMP) {
-            return false;
-        }
-        return bridgeSurfaceColumns.contains(columnKey(step.pos()));
-    }
-
-    private static long columnKey(BlockPos pos) {
-        return (((long) pos.getX()) << 32) ^ (pos.getZ() & 0xffffffffL);
-    }
-
     private static boolean shouldReplace(BuildStep existing, BuildStep candidate) {
         int existingPriority = finalBlockPriority(existing);
         int candidatePriority = finalBlockPriority(candidate);
-        if (candidatePriority != existingPriority) {
-            return candidatePriority > existingPriority;
-        }
-        return candidate.order() > existing.order();
+        return candidatePriority != existingPriority ? candidatePriority > existingPriority : true;
     }
 
     private static int finalBlockPriority(BuildStep step) {

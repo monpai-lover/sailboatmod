@@ -35,7 +35,7 @@ class RoadPlannerBuildStepCompilerTest {
     }
 
     @Test
-    void longMajorBridgeCreatesDeckRampPierAndRailingStepsWithoutSurfaceRoad() {
+    void longMajorBridgeCreatesDeckPierAndRailingStepsWithoutSurfaceRoad() {
         List<BuildStep> steps = RoadPlannerBuildStepCompiler.compileForTest(
                 List.of(new BlockPos(0, 64, 0), new BlockPos(48, 64, 0)),
                 List.of(RoadPlannerSegmentType.BRIDGE_MAJOR),
@@ -44,7 +44,6 @@ class RoadPlannerBuildStepCompilerTest {
 
         assertFalse(steps.isEmpty());
         assertTrue(steps.stream().anyMatch(step -> step.phase() == BuildPhase.DECK));
-        assertTrue(steps.stream().anyMatch(step -> step.phase() == BuildPhase.RAMP));
         assertTrue(steps.stream().anyMatch(step -> step.phase() == BuildPhase.PIER));
         assertTrue(steps.stream().anyMatch(step -> step.phase() == BuildPhase.RAILING));
         assertFalse(steps.stream().anyMatch(step -> step.phase() == BuildPhase.SURFACE));

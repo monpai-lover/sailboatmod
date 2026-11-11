@@ -280,7 +280,7 @@ public class RoadPlannerBuildControlService {
             } : new RoadPlannerChunkTickets(level);
             RoadPlannerStagedBuildQueue staged = new RoadPlannerStagedBuildQueue(jobId.toString(), plan, port,
                     stage -> filterOwnedBuildSteps(compiler.expand(stage,
-                            com.monpai.sailboatmod.roadplanner.structure.RoadTerrainSampler.fromLevel(level), false).buildSteps(), snapshot.reusePlan()));
+                            com.monpai.sailboatmod.roadplanner.structure.RoadTerrainSampler.fromLevel(level)).buildSteps(), snapshot.reusePlan()));
             if (level != null) staged.onWindowCompleted(steps -> {
                 RoadPlannerBuiltRoadMapRefresh.enqueueBuildStepRefresh(level, steps);
                 resendAffectedChunks(level, steps);

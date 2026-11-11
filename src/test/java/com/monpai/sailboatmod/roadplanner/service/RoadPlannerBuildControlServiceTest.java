@@ -631,7 +631,7 @@ class RoadPlannerBuildControlServiceTest {
     }
 
     @Test
-    void confirmedLongBridgePreviewQueuesRampPierAndRailingSteps() {
+    void confirmedBridgePreviewQueuesDeckPierAndRailingSteps() {
         RoadPlannerBuildControlService service = new RoadPlannerBuildControlService();
         UUID playerId = UUID.randomUUID();
         UUID previewId = service.startPreview(
@@ -644,7 +644,6 @@ class RoadPlannerBuildControlServiceTest {
         UUID jobId = service.confirmPreview(playerId, previewId).orElseThrow();
 
         var queue = service.buildQueueForTest(jobId).orElseThrow();
-        assertTrue(queue.getSteps().stream().anyMatch(step -> step.phase() == BuildPhase.RAMP));
         assertTrue(queue.getSteps().stream().anyMatch(step -> step.phase() == BuildPhase.PIER));
         assertTrue(queue.getSteps().stream().anyMatch(step -> step.phase() == BuildPhase.RAILING));
         assertTrue(queue.getSteps().stream().anyMatch(step -> step.phase() == BuildPhase.DECK));

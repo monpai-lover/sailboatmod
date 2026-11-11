@@ -100,15 +100,9 @@ public final class RoadPlannerStagedBuildQueue extends ConstructionQueue {
                     && step.phase() != com.monpai.sailboatmod.road.model.BuildPhase.DECK)) continue;
             tops.merge(net.minecraft.world.level.ChunkPos.asLong(step.pos().getX(), step.pos().getZ()), step.pos().getY() + 1, Math::max);
         }
-        double dx = (double) stage.coreTo().getX() - stage.coreFrom().getX();
-        double dz = (double) stage.coreTo().getZ() - stage.coreFrom().getZ();
-        int count = Math.max(1, (int) Math.ceil(Math.hypot(dx, dz)));
-        for (int i = 0; i <= count; i++) {
-            int x = (int) Math.round(stage.coreFrom().getX() + dx * i / count);
-            int z = (int) Math.round(stage.coreFrom().getZ() + dz * i / count);
-            if (!stage.ownsColumn(x, z)) continue;
-            int y = tops.getOrDefault(net.minecraft.world.level.ChunkPos.asLong(x, z), stage.coreFrom().getY());
-            var point = new net.minecraft.core.BlockPos(x, y, z);
+        for (net.minecraft.core.BlockPos column : plan.centerColumns(stage)) {
+            int y = tops.getOrDefault(net.minecraft.world.level.ChunkPos.asLong(column.getX(), column.getZ()), stage.coreFrom().getY());
+            var point = new net.minecraft.core.BlockPos(column.getX(), y, column.getZ());
             if (actualCenters.isEmpty() || !actualCenters.get(actualCenters.size() - 1).equals(point)) actualCenters.add(point);
         }
     }

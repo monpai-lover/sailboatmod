@@ -332,7 +332,7 @@ class RoadPlannerPreviewRequestPacketTest {
         List<SyncRoadPlannerPreviewPacket.GhostBlock> ghostBlocks = packet.toPreviewPacketForTest().ghostBlocks();
 
         assertTrue(ghostBlocks.stream().anyMatch(block -> block.state().getBlock() == Blocks.STONE_BRICKS));
-        assertTrue(ghostBlocks.stream().anyMatch(block -> block.state().getBlock() == Blocks.OAK_FENCE));
+        assertTrue(ghostBlocks.stream().anyMatch(block -> block.state().getBlock() == Blocks.STONE_BRICK_WALL));
         assertFalse(ghostBlocks.stream().anyMatch(block -> block.state().getBlock() == Blocks.DIRT));
         assertFalse(ghostBlocks.stream().anyMatch(block -> block.state().getBlock() == Blocks.COBBLESTONE));
     }
@@ -390,25 +390,22 @@ class RoadPlannerPreviewRequestPacketTest {
     }
 
     @Test
-    void previewPacketRoundTripPreservesBridgeSlabStates() {
+    void previewPacketRoundTripPreservesHalfStepSlabStates() {
         RoadPlannerPreviewRequestPacket packet = new RoadPlannerPreviewRequestPacket(
                 "A",
                 "B",
-                List.of(
-                        new BlockPos(0, 63, -4),
-                        new BlockPos(0, 63, 0),
-                        new BlockPos(12, 63, 0)
-                ),
-                List.of(RoadPlannerSegmentType.ROAD, RoadPlannerSegmentType.BRIDGE_MAJOR),
+                List.of(new BlockPos(0, 64, 0), new BlockPos(60, 64, 0)),
+                List.of(RoadPlannerSegmentType.ROAD),
                 RoadPlannerBuildSettings.DEFAULTS
         );
-        SyncRoadPlannerPreviewPacket preview = packet.toPreviewPacketForTest(deepWaterSampler());
+        RoadTerrainSampler gentleSlope = (x, z) -> 64 + Math.max(0, Math.min(8, (x - 20) / 4));
+        SyncRoadPlannerPreviewPacket preview = packet.toPreviewPacketForTest(gentleSlope);
 
         SyncRoadPlannerPreviewPacket decoded = roundTripPreview(preview);
 
         assertEquals(ghostStatesByPos(preview.ghostBlocks()), ghostStatesByPos(decoded.ghostBlocks()));
-        assertTrue(decoded.ghostBlocks().stream().anyMatch(block -> isSlabType(block.state(), SlabType.BOTTOM)));
-        assertTrue(decoded.ghostBlocks().stream().anyMatch(block -> isSlabType(block.state(), SlabType.TOP)));
+        assertTrue(decoded.ghostBlocks().stream().anyMatch(block -> isSlabType(block.state(), SlabType.BOTTOM)),
+                "a climbing road is laid in half steps, and those slabs must survive the trip to the client");
     }
 
     @Test

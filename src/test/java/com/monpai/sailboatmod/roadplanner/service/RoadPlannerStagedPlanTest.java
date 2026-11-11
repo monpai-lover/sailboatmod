@@ -18,7 +18,7 @@ class RoadPlannerStagedPlanTest {
         Object first = stage(plan, 0);
         assertEquals(new BlockPos(0, 64, 0), call(first, "coreFrom"));
         assertEquals(128, ((BlockPos) call(first, "coreTo")).getX());
-        assertEquals(160, ((BlockPos) call(first, "sampleTo")).getX());
+        assertEquals(128 + 120, ((BlockPos) call(first, "sampleTo")).getX());
         assertTrue(((List<?>) call(first, "chunks")).size() <= 128,
                 "only one bounded sampling window may be enumerated, never the whole remote corridor");
         Object last = stage(plan, 1562);
@@ -34,7 +34,7 @@ class RoadPlannerStagedPlanTest {
         assertEquals(from, call(middle, "spanFrom"));
         assertEquals(to, call(middle, "spanTo"));
         assertEquals(RoadPlannerSegmentType.BRIDGE_MAJOR, call(middle, "type"));
-        assertTrue(((BlockPos) call(middle, "sampleFrom")).distManhattan((BlockPos) call(middle, "sampleTo")) <= 194);
+        assertTrue(((BlockPos) call(middle, "sampleFrom")).distManhattan((BlockPos) call(middle, "sampleTo")) <= 128 + 2 * 120 + 2);
     }
 
     @Test
@@ -55,8 +55,8 @@ class RoadPlannerStagedPlanTest {
                 new BlockPos(100, 64, 0), new BlockPos(140, 64, 0)), List.of(RoadPlannerSegmentType.ROAD,
                 RoadPlannerSegmentType.BRIDGE_MAJOR, RoadPlannerSegmentType.ROAD));
         Object bridge = stage(plan, 1);
-        assertEquals(List.of(new BlockPos(-32, 64, 0), new BlockPos(0, 64, 0),
-                new BlockPos(100, 64, 0), new BlockPos(132, 64, 0)), call(bridge, "nodes"));
+        assertEquals(List.of(new BlockPos(-40, 64, 0), new BlockPos(0, 64, 0),
+                new BlockPos(100, 64, 0), new BlockPos(140, 64, 0)), call(bridge, "nodes"));
         assertEquals(List.of(RoadPlannerSegmentType.ROAD, RoadPlannerSegmentType.BRIDGE_MAJOR,
                 RoadPlannerSegmentType.ROAD), call(bridge, "types"));
     }
@@ -68,14 +68,32 @@ class RoadPlannerStagedPlanTest {
     }
 
     @Test
-    void typedHaloDoesNotExecuteAlreadyOwnedPreviousOrFutureLegColumns() throws Exception {
+    void neighbouringStagesShareABoundaryAndTheEndStagesTakeEverythingBeyondTheRoute() throws Exception {
         Object plan = plan(List.of(new BlockPos(-40, 64, 0), new BlockPos(0, 64, 0),
                 new BlockPos(400, 64, 0), new BlockPos(440, 64, 0)), List.of(RoadPlannerSegmentType.ROAD,
                 RoadPlannerSegmentType.BRIDGE_MAJOR, RoadPlannerSegmentType.ROAD));
-        Object approach = stage(plan, 0), firstBridge = stage(plan, 1);
-        assertEquals(false, approach.getClass().getMethod("ownsColumn", int.class, int.class).invoke(approach, 10, 0));
-        assertEquals(false, firstBridge.getClass().getMethod("ownsColumn", int.class, int.class).invoke(firstBridge, -1, 0));
-        assertEquals(true, firstBridge.getClass().getMethod("ownsColumn", int.class, int.class).invoke(firstBridge, 0, 0));
+        Object approach = stage(plan, 0), firstBridge = stage(plan, 1), last = stage(plan, 5);
+        assertEquals(Double.NEGATIVE_INFINITY, call(approach, "ownedFrom"));
+        assertEquals(40.0, call(approach, "ownedTo"));
+        assertEquals(40.0, call(firstBridge, "ownedFrom"));
+        assertEquals(168.0, call(firstBridge, "ownedTo"));
+        assertEquals(Double.POSITIVE_INFINITY, call(last, "ownedTo"));
+    }
+
+    @Test
+    void shortLegsOfOneTypeShareAStageButNeverAcrossAChangeOfType() throws Exception {
+        List<BlockPos> nodes = new java.util.ArrayList<>();
+        List<RoadPlannerSegmentType> types = new java.util.ArrayList<>();
+        for (int i = 0; i <= 20; i++) nodes.add(new BlockPos(i * 24, 64, 0));
+        for (int i = 0; i < 20; i++) types.add(i == 10 ? RoadPlannerSegmentType.BRIDGE_SMALL : RoadPlannerSegmentType.ROAD);
+        Object plan = plan(nodes, types);
+        assertEquals(5, call(plan, "totalStages"), "five 24 block legs fill one 128 block stage");
+        assertEquals(new BlockPos(0, 64, 0), call(stage(plan, 0), "coreFrom"));
+        assertEquals(new BlockPos(120, 64, 0), call(stage(plan, 0), "coreTo"));
+        assertEquals(new BlockPos(240, 64, 0), call(stage(plan, 1), "coreTo"));
+        assertEquals(RoadPlannerSegmentType.BRIDGE_SMALL, call(stage(plan, 2), "type"));
+        assertEquals(new BlockPos(264, 64, 0), call(stage(plan, 2), "coreTo"));
+        assertEquals(new BlockPos(480, 64, 0), call(stage(plan, 4), "coreTo"));
     }
 
     private static Object plan(List<BlockPos> nodes, List<RoadPlannerSegmentType> types) throws Exception {

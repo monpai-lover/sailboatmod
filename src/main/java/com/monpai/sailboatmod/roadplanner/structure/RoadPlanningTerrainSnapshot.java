@@ -141,4 +141,8 @@ public final class RoadPlanningTerrainSnapshot implements RoadTerrainSampler {
     @Override public boolean isWater(int x, int y, int z) {
         return y >= minY && y < maxY && !column(x, z).getBlock(y).getFluidState().isEmpty();
     }
+    @Override public BlockState groundCover(int x, int z) {
+        int y = terrainY(x, z) - 1;
+        return y >= minY && y < maxY ? column(x, z).getBlock(y) : null;
+    }
 }

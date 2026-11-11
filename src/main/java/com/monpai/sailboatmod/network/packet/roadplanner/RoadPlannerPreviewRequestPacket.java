@@ -187,7 +187,7 @@ public record RoadPlannerPreviewRequestPacket(String startTownName,
             RoadPlannerStagedPreviewJob work = RoadPlannerStagedPreviewJob.prepared(plan, stage -> {
                 if (player.isRemoved() || player.serverLevel() != level) throw new IllegalStateException("玩家已离开当前维度。");
                 RoadPlanningTerrainSnapshot owned = RoadPlanningTerrainSnapshot.capture(level, stage);
-                return () -> safePacket.packetForExpansion(compiler.expand(stage, owned, true), false);
+                return () -> safePacket.packetForExpansion(compiler.expand(stage, owned), false);
             }, jobs.terrainWorker());
             jobs.submitStreaming(player.getUUID(), level.dimension(), work, update -> {
                 accumulator.add(plan.stage(work.completedStages() - 1), update);

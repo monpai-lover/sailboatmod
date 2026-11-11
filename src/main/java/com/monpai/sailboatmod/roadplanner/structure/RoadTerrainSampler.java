@@ -20,14 +20,12 @@ public interface RoadTerrainSampler {
         return false;
     }
 
-    /** Optional full-span coordinates for a streamed bridge; ordinary samplers retain the original geometry path. */
-    default BridgeWindow bridgeWindow(java.util.List<RoadCenterlinePoint> points) { return null; }
-
-    record BridgeWindow(int offset, int length, int entryY, int exitY, int waterY,
-                        com.monpai.sailboatmod.client.roadplanner.RoadPlannerSegmentType sourceType) {
-        public BridgeWindow(int offset, int length, int entryY, int exitY, int waterY) {
-            this(offset, length, entryY, exitY, waterY, null);
-        }
+    /**
+     * The block the ground is finished with at this column (grass, sand, stone...), or null when
+     * unknown. Used to dress embankments and cuttings so the roadside matches its surroundings.
+     */
+    default net.minecraft.world.level.block.state.BlockState groundCover(int x, int z) {
+        return null;
     }
 
     static RoadTerrainSampler flat(int y) {
@@ -66,6 +64,11 @@ public interface RoadTerrainSampler {
             @Override
             public boolean isWater(int x, int y, int z) {
                 return !level.getFluidState(new BlockPos(x, y, z)).isEmpty();
+            }
+
+            @Override
+            public net.minecraft.world.level.block.state.BlockState groundCover(int x, int z) {
+                return level.getBlockState(new BlockPos(x, terrainY(x, z) - 1, z));
             }
         };
     }
