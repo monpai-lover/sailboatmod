@@ -16,6 +16,20 @@ public class RoadPlannerAutoCompleteService {
     static final int MAX_OUTPUT_NODES = 16_384;
     private java.util.function.Supplier<String> planningNote = () -> "";
 
+    private com.monpai.sailboatmod.roadplanner.corridor.RoadRouteRefiner.Terrain routeTerrain;
+    private long refineBudgetMillis = 6_000L;
+
+    RoadPlannerAutoCompleteService withRefineBudgetMillis(long millis) {
+        refineBudgetMillis = millis;
+        return this;
+    }
+
+    /** Ground to judge route shortcuts against. Without it the searched path is only smoothed geometrically. */
+    RoadPlannerAutoCompleteService withRouteTerrain(com.monpai.sailboatmod.roadplanner.corridor.RoadRouteRefiner.Terrain terrain) {
+        routeTerrain = terrain;
+        return this;
+    }
+
     RoadPlannerAutoCompleteService withPlanningNote(java.util.function.Supplier<String> note) {
         planningNote = java.util.Objects.requireNonNull(note);
         return this;
@@ -88,10 +102,10 @@ public class RoadPlannerAutoCompleteService {
         if (length > 1_000_000) return RoadPlannerAutoCompleteResult.failure("道路过长，请分段规划");
         spacing = Math.max(spacing, (int)Math.ceil(length / (MAX_OUTPUT_NODES / 2.0)));
         List<BlockPos> rawNodes = suffixNodes;
-        // 关键修复:A* 是 8 邻网格寻路,接近水平/对角方向时在「对角格+正交格」间交替 → 规则 W 锯齿。
-        // 这些节点就是预览青色节点 + 实际建路中心线的源头。必须在「分段(classifySegments)之前」对 A* 节点
-        // 做样条平滑——分段在平滑后重新分类,segmentType 不会错乱;预览与建路都用同一条平滑节点序列。
-        suffixNodes = com.monpai.sailboatmod.route.PathSmoother.smooth2DInterpolatedY(suffixNodes, spacing);
+        // The search moves on an eight-direction grid, so its path is a chain of 45 degree doglegs.
+        // Pull it taut and sweep curves through what remains before the legs are classified, so the
+        // preview, the bridge detection and the built road all follow the same refined line.
+        suffixNodes = refine(suffixNodes, spacing);
         RoadSearchBudget.check();
         // Do not turn a dry detour into a new sea crossing just to round grid corners.
         // Existing river/bridge runs remain allowed. This is a 4-block preview check,
@@ -117,6 +131,24 @@ public class RoadPlannerAutoCompleteService {
                 normalized.segmentTypes(),
                 "自动补全完成: " + normalized.nodes().size() + " 节点" + planningNote.get(),
                 sampleTerrain(normalized.nodes()));
+    }
+
+    /**
+     * Judging shortcuts against the terrain costs terrain samples, and on a very long route the
+     * search may already have used most of the request's time. The terrain-aware pass therefore
+     * gets its own allowance; if that runs out the route is still smoothed, by distance alone.
+     */
+    private List<BlockPos> refine(List<BlockPos> searched, int spacing) {
+        if (routeTerrain != null) {
+            try {
+                return RoadSearchBudget.run(refineBudgetMillis, () ->
+                        com.monpai.sailboatmod.roadplanner.corridor.RoadRouteRefiner.refine(searched, spacing, routeTerrain));
+            } catch (RoadSearchBudget.DeadlineExceeded expired) {
+                // Only the refinement allowance may be absorbed; the request's own deadline still ends it.
+                RoadSearchBudget.check();
+            }
+        }
+        return com.monpai.sailboatmod.roadplanner.corridor.RoadRouteRefiner.refine(searched, spacing, null);
     }
 
     private double longestWaterRun(List<BlockPos> path) {

@@ -96,6 +96,15 @@ NPC system with jobs, families, armies, and economy — the largest subsystem.
 ### Route System (`route/`)
 `RouteDefinition` record holds waypoints, author info, distances, and dock names. Routes serialize to NBT via `RouteNbtUtil` and are stored on sailboat entities or route book items.
 
+### Road Planner Geometry (`roadplanner/corridor/`)
+The road planner compiles a node route into blocks through one pipeline; see `docs/handoff/ROAD_CORRIDOR_GEOMETRY.md`.
+- `RoadRouteRefiner` — turns a grid search result into a smooth route (auto-complete only).
+- `RoadAlignment` — smoothed centreline, addressed by distance along the submitted node polyline.
+- `RoadCorridorProfile` — grade-limited, smoothed height profile and where the road is carried on a deck.
+- `RoadCorridorCompiler` — assigns each column to its nearest centreline point and emits `BuildStep`s.
+
+Every step reads only a fixed distance along the route, so a stage of a long road (`RoadPlannerStagedPlan`, `RoadPlannerStageCompiler`) compiled alone equals the whole road compiled at once. Keep `RoadPlannerStagedPlan.HALO_BLOCKS >= RoadCorridorCompiler.CONTEXT` and keep new geometry steps local, or stages will disagree where they meet; `RoadPlannerStageCompilerTest` checks this block for block.
+
 ### Economy (`economy/`)
 `VaultEconomyBridge` resolves Vault's Economy provider via reflection at runtime — no hard dependency. Methods return null when Vault is absent.
 

@@ -67,7 +67,7 @@ public final class RoadPlanningTerrainSnapshot implements RoadTerrainSampler {
             Optional<OfflineChunkPalette.OfflineChunkBlocks> blocks = saved.computeIfAbsent(key, ignored ->
                     OfflineChunkNbtReader.readSafeFromWorkerThread(level, new ChunkPos(key), 1000, false)
                             .map(tag -> OfflineChunkPalette.decode(tag, minY, maxY)));
-            // This cache belongs to one <=192-block sampling window and is discarded with its worker task.
+            // This cache belongs to one stage's sampling window and is discarded with its worker task.
             if (blocks.isEmpty()) return Optional.empty();
             return Optional.of(column(minY, maxY, y -> state(blocks.get().paletteTag(x & 15, y, z & 15), states)));
         };
@@ -109,7 +109,8 @@ public final class RoadPlanningTerrainSnapshot implements RoadTerrainSampler {
         checkCancelled();
         if (result == null) throw new IllegalStateException("道路地形数据尚不可用：" + x + "," + z);
         columns.put(key, result);
-        while (columns.size() > 4096) columns.remove(columns.keySet().iterator().next());
+        // One stage reads the centreline and both verges across its core and halo: a few thousand columns.
+        while (columns.size() > 8192) columns.remove(columns.keySet().iterator().next());
         return result;
     }
 

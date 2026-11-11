@@ -68,13 +68,30 @@ final class RoadWorldRenderer {
         ImageIO.write(image, "png", file);
     }
 
-    private static int topY(SyntheticRoadWorld world, int x, int z) {
-        for (int y = 140; y > 0; y--) {
-            if (!world.block(x, y, z).isAir()) {
-                return y;
+    /** The top-down view with routes drawn over it, each as {@code {rgb, x0, z0, x1, z1, ...}}. */
+    static void topDownWithRoutes(SyntheticRoadWorld world, int minX, int minZ, int maxX, int maxZ, int scale,
+                                  File file, int[]... routes) throws IOException {
+        topDown(world, List.of(), minX, minZ, maxX, maxZ, scale, file);
+        BufferedImage image = ImageIO.read(file);
+        Graphics2D g = image.createGraphics();
+        g.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON);
+        for (int[] route : routes) {
+            g.setColor(new Color(route[0]));
+            g.setStroke(new java.awt.BasicStroke(Math.max(2f, scale * 0.9f)));
+            for (int i = 3; i + 1 < route.length; i += 2) {
+                g.drawLine((route[i - 2] - minX) * scale + scale / 2, (route[i - 1] - minZ) * scale + scale / 2,
+                        (route[i] - minX) * scale + scale / 2, (route[i + 1] - minZ) * scale + scale / 2);
+            }
+            for (int i = 1; i + 1 < route.length; i += 2) {
+                g.fillOval((route[i] - minX) * scale - scale / 2, (route[i + 1] - minZ) * scale - scale / 2, scale * 2, scale * 2);
             }
         }
-        return 0;
+        g.dispose();
+        ImageIO.write(image, "png", file);
+    }
+
+    private static int topY(SyntheticRoadWorld world, int x, int z) {
+        return world.highestBlock(x, z);
     }
 
     private static Color scaled(Color color, double factor) {

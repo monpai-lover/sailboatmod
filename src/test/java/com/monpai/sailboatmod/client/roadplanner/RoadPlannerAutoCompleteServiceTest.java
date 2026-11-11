@@ -65,6 +65,62 @@ class RoadPlannerAutoCompleteServiceTest {
         assertEquals(result.nodes().size() - 1, result.segmentTypes().size());
     }
 
+    private static List<BlockPos> gridStaircase() {
+        List<BlockPos> path = new java.util.ArrayList<>();
+        for (int i = 0; i <= 40; i++) {
+            path.add(new BlockPos(i * 8, 64, (i / 2) * 8));
+        }
+        return path;
+    }
+
+    private static double sharpestTurnDegrees(List<BlockPos> path) {
+        double sharpest = 0;
+        for (int i = 1; i < path.size() - 1; i++) {
+            double in = Math.atan2(path.get(i).getZ() - path.get(i - 1).getZ(), path.get(i).getX() - path.get(i - 1).getX());
+            double out = Math.atan2(path.get(i + 1).getZ() - path.get(i).getZ(), path.get(i + 1).getX() - path.get(i).getX());
+            sharpest = Math.max(sharpest, Math.abs(Math.toDegrees(Math.atan2(Math.sin(out - in), Math.cos(out - in)))));
+        }
+        return sharpest;
+    }
+
+    @Test
+    void aSearchedGridPathIsDeliveredWithoutItsDoglegs() {
+        List<BlockPos> searched = gridStaircase();
+        var flat = new com.monpai.sailboatmod.roadplanner.corridor.RoadRouteRefiner.Terrain() {
+            @Override public int height(int x, int z) { return 64; }
+            @Override public boolean water(int x, int z) { return false; }
+            @Override public boolean blocked(int x, int z) { return false; }
+        };
+        RoadPlannerAutoCompleteService service = new RoadPlannerAutoCompleteService((from, to) -> searched).withRouteTerrain(flat);
+
+        RoadPlannerAutoCompleteResult result = service.complete(searched.get(0), searched.get(searched.size() - 1), List.of(), 24);
+
+        assertTrue(result.success());
+        assertTrue(sharpestTurnDegrees(searched) >= 45);
+        assertTrue(sharpestTurnDegrees(result.nodes()) < 5, "sharpest turn left in the route: " + sharpestTurnDegrees(result.nodes()));
+    }
+
+    @Test
+    void aRouteIsStillSmoothedWhenTerrainChecksRunOutOfTime() {
+        List<BlockPos> searched = gridStaircase();
+        var slow = new com.monpai.sailboatmod.roadplanner.corridor.RoadRouteRefiner.Terrain() {
+            @Override public int height(int x, int z) {
+                long until = System.nanoTime() + 2_000_000L;
+                while (System.nanoTime() < until) Thread.onSpinWait();
+                return 64;
+            }
+            @Override public boolean water(int x, int z) { return false; }
+            @Override public boolean blocked(int x, int z) { return false; }
+        };
+        RoadPlannerAutoCompleteService service = new RoadPlannerAutoCompleteService((from, to) -> searched)
+                .withRouteTerrain(slow).withRefineBudgetMillis(20);
+
+        RoadPlannerAutoCompleteResult result = service.complete(searched.get(0), searched.get(searched.size() - 1), List.of(), 24);
+
+        assertTrue(result.success(), result.message());
+        assertTrue(sharpestTurnDegrees(result.nodes()) < 5);
+    }
+
     @Test
     void usesInjectedPathfinderAndResamplesItsRoute() {
         BlockPos start = new BlockPos(0, 64, 0);

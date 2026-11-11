@@ -25,13 +25,14 @@ package com.monpai.sailboatmod.roadplanner.corridor;
 public final class RoadCorridorProfile {
     /** Rise per block of travel. One half-slab every three blocks at the limit. */
     public static final double MAX_GRADE = 1.0D / 3.0D;
-    static final int CLOSE_RADIUS = 10;
+    /** Dips up to twice this wide are spanned level, which is what turns a gorge into a viaduct. */
+    static final int CLOSE_RADIUS = 14;
     static final int OPEN_RADIUS = 3;
     /**
      * How far the grade limit looks. It is exact for climbs of up to {@code GRADE_WINDOW * MAX_GRADE}
      * blocks; a taller face is still crossed, but more steeply than the limit.
      */
-    static final int GRADE_WINDOW = 58;
+    static final int GRADE_WINDOW = 50;
     static final int SMOOTH_RADIUS = 5;
     /** Reach of the ramps that carry the road up to a height it must clear. */
     static final int LIFT_WINDOW = 30;

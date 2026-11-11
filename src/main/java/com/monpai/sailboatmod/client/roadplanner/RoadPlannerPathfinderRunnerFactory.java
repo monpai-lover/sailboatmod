@@ -36,7 +36,7 @@ public final class RoadPlannerPathfinderRunnerFactory {
         PathfindingConfig config = new PathfindingConfig();
         // 用全局默认算法(POTENTIAL_FIELD,势场+等高线代价,沿地形等高线走更自然)。
         // 之前这里硬编码 BIDIRECTIONAL_ASTAR 覆盖了默认 → 自动补全实际跑的是双向A*,非本意的 potential field。
-        // 注意:potential field 同为 8 邻网格,仍会有离散锯齿,锯齿由下游 PathSmoother 样条平滑抹掉。
+        // 注意:potential field 同为 8 邻网格,仍会有离散锯齿,由下游 RoadRouteRefiner 拉直并圆角。
         config.setAlgorithm(PathfindingConfig.Algorithm.POTENTIAL_FIELD);
         // 寻路精度:玩家在道路规划器工具栏切换(真实区块 HIGH / 噪声 NORMAL)。
         config.setSamplingPrecision(useRealChunk
@@ -56,7 +56,11 @@ public final class RoadPlannerPathfinderRunnerFactory {
                 new RoadPlannerTerrainSegmentClassifier(cache, new RoadConfig().getBridge()),
                 (x, z) -> !cache.isWater(x, z) || cache.getWaterDepth(x, z) <= 0,
                 nodes -> RoadPlannerTerrainSampleCollector.collect(cache, nodes)
-        ).withPlanningNote(() -> {
+        ).withRouteTerrain(new com.monpai.sailboatmod.roadplanner.corridor.RoadRouteRefiner.Terrain() {
+            @Override public int height(int x, int z) { return cache.getHeight(x, z); }
+            @Override public boolean water(int x, int z) { return cache.isWater(x, z) && cache.getWaterDepth(x, z) > 0; }
+            @Override public boolean blocked(int x, int z) { return cache.isBlocked(x, z); }
+        }).withPlanningNote(() -> {
             var result = lastPlan.get();
             return result != null && result.refinedWindows() < result.windows()
                     ? "（部分区段为粗略预览，建造前需复核）" : "";

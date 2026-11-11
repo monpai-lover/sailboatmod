@@ -54,7 +54,7 @@ public final class RoadCorridorCompiler {
     private static final int MAX_FILL_DEPTH = 8;
     private static final int MAX_VERGE_FILL = 6;
     private static final int MAX_PIER_DEPTH = 96;
-    /** Highest a planned bridge is trusted to stand above the ground; guards against a bad node height. */
+    /** Furthest a planned bridge or tunnel is trusted to leave the ground; guards against a bad node height. */
     private static final double MAX_SPAN_HEIGHT = 48.0D;
     private static final double UNKNOWN_WATER_DEPTH = 6.0D;
     /** Stations beyond an owned range that must be computed for the owned part to be exact. */
@@ -197,8 +197,9 @@ public final class RoadCorridorCompiler {
                 }
                 double natural = s.wet[i] ? centre + waterClearance(s.type[i]) : s.ground[i];
                 if (s.type[i] == RoadPlannerSegmentType.TUNNEL) {
-                    // A tunnel holds the line between its portals whatever the hill above does.
-                    virtual[i] = nodeHeight;
+                    // A tunnel holds the line between its portals whatever the hill above does. A node
+                    // height far below the ground is not a portal but a missing height, and is ignored.
+                    virtual[i] = nodeHeight >= s.ground[i] - MAX_SPAN_HEIGHT ? Math.min(nodeHeight, s.ground[i]) : s.ground[i];
                 } else if (bridge) {
                     // A planned bridge flies straight between its end nodes, so a valley too wide
                     // to be spanned automatically is still crossed level rather than descended into.

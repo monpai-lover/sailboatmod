@@ -6,31 +6,27 @@ import net.minecraft.core.BlockPos;
 import java.util.List;
 
 /**
- * Horizontal road geometry: the submitted node polyline with every corner replaced by a tangent
- * parabolic arc.
+ * Horizontal road geometry: the submitted node polyline, smoothed into a continuous curve.
  *
- * <p>Positions are addressed by {@code u}, the distance along the <em>submitted</em> polyline. That
- * makes every station a pure function of at most three neighbouring nodes, so two overlapping
- * construction windows always compute bit-identical geometry for the stations they share — the
- * property the staged builder relies on to join windows without gaps or steps.</p>
+ * <p>The centreline at a position is the average of the polyline over the stretch of route within
+ * {@link #SMOOTHING_RADIUS} either side of it. A lone corner therefore becomes a parabolic arc
+ * tangent to both of its legs, a straight stays exactly where it was drawn, and a run of closely
+ * spaced nodes blends into one flowing curve whether the nodes are a few blocks apart or many. The
+ * small sideways jitter that rounding nodes to whole blocks introduces is averaged away as well.</p>
  *
- * <p>A corner is trimmed by {@code min(MAX_CORNER_TRIM, half of each adjacent leg)}. Nodes spaced
- * closer than twice the trim therefore blend into one continuous curve that touches each leg at its
- * midpoint, while a long leg keeps its straight run and only rounds the ends.</p>
+ * <p>Positions are addressed by {@code u}, the distance along the <em>submitted</em> polyline, and
+ * depend only on the nodes within the smoothing radius. Two overlapping construction windows thus
+ * compute bit-identical geometry for the stations they share, which is what lets the staged builder
+ * join windows without gaps or steps.</p>
  */
 public final class RoadAlignment {
-    /** Longest distance a corner may be cut back along each adjacent leg. */
-    public static final double MAX_CORNER_TRIM = 16.0D;
-    /** A turn sharper than this reverses on itself; rounding it would fold the road over. */
-    private static final double REVERSAL_COS = Math.cos(Math.toRadians(170.0D));
+    /** Route on each side of a point that is averaged to place the centreline there. */
+    public static final double SMOOTHING_RADIUS = 16.0D;
 
     private final double[] nodeX;
     private final double[] nodeZ;
     private final double[] nodeY;
     private final double[] nodeAt;
-    private final double[] trim;
-    private final double[] legDirX;
-    private final double[] legDirZ;
     private final RoadPlannerSegmentType[] legType;
     private final int firstLegIndex;
     private final boolean startsRoute;
@@ -47,26 +43,6 @@ public final class RoadAlignment {
         this.firstLegIndex = firstLegIndex;
         this.startsRoute = startsRoute;
         this.endsRoute = endsRoute;
-        int legs = nodeX.length - 1;
-        legDirX = new double[legs];
-        legDirZ = new double[legs];
-        for (int leg = 0; leg < legs; leg++) {
-            double dx = nodeX[leg + 1] - nodeX[leg];
-            double dz = nodeZ[leg + 1] - nodeZ[leg];
-            double length = Math.hypot(dx, dz);
-            legDirX[leg] = length == 0 ? 1.0D : dx / length;
-            legDirZ[leg] = length == 0 ? 0.0D : dz / length;
-        }
-        trim = new double[nodeX.length];
-        for (int node = 1; node < nodeX.length - 1; node++) {
-            double turnCos = legDirX[node - 1] * legDirX[node] + legDirZ[node - 1] * legDirZ[node];
-            if (turnCos <= REVERSAL_COS) {
-                continue;
-            }
-            double before = nodeAt[node] - nodeAt[node - 1];
-            double after = nodeAt[node + 1] - nodeAt[node];
-            trim[node] = Math.max(0.0D, Math.min(MAX_CORNER_TRIM, Math.min(before, after) / 2.0D));
-        }
     }
 
     /** The whole route, measured from zero. Consecutive nodes must differ in X or Z. */
@@ -90,11 +66,11 @@ public final class RoadAlignment {
         }
         int last = nodes.size() - 1;
         int first = 0;
-        while (first < last - 1 && nodeDistances[first + 1] <= from - MAX_CORNER_TRIM) {
+        while (first < last - 1 && nodeDistances[first + 1] <= from - SMOOTHING_RADIUS) {
             first++;
         }
         int end = last;
-        while (end > first + 1 && nodeDistances[end - 1] >= to + MAX_CORNER_TRIM) {
+        while (end > first + 1 && nodeDistances[end - 1] >= to + SMOOTHING_RADIUS) {
             end--;
         }
         int count = end - first + 1;
@@ -134,43 +110,64 @@ public final class RoadAlignment {
         return endsRoute;
     }
 
-    /** Evaluates the rounded centreline at {@code u}; {@code out} receives x, z, tangentX, tangentZ. */
+    /** Evaluates the smoothed centreline at {@code u}; {@code out} receives x, z, tangentX, tangentZ. */
     public void evaluate(double u, double[] out) {
-        int leg = legAt(u);
-        double fromStart = u - nodeAt[leg];
-        double toEnd = nodeAt[leg + 1] - u;
-        if (fromStart < trim[leg]) {
-            corner(leg, (fromStart + trim[leg]) / (2.0D * trim[leg]), out);
-        } else if (toEnd < trim[leg + 1]) {
-            corner(leg + 1, (trim[leg + 1] - toEnd) / (2.0D * trim[leg + 1]), out);
-        } else {
-            out[0] = nodeX[leg] + legDirX[leg] * fromStart;
-            out[1] = nodeZ[leg] + legDirZ[leg] * fromStart;
-            out[2] = legDirX[leg];
-            out[3] = legDirZ[leg];
+        // The averaging window narrows to nothing at either end of the route, so the road starts
+        // and finishes exactly on its first and last node.
+        double radius = SMOOTHING_RADIUS;
+        if (startsRoute) {
+            radius = Math.min(radius, u - nodeAt[0]);
         }
+        if (endsRoute) {
+            radius = Math.min(radius, nodeAt[nodeAt.length - 1] - u);
+        }
+        int leg = legAt(u);
+        double legLength = nodeAt[leg + 1] - nodeAt[leg];
+        double legX = legLength == 0 ? 1.0D : (nodeX[leg + 1] - nodeX[leg]) / legLength;
+        double legZ = legLength == 0 ? 0.0D : (nodeZ[leg + 1] - nodeZ[leg]) / legLength;
+        if (radius < 1.0E-6D) {
+            polyline(u, out);
+            out[2] = legX;
+            out[3] = legZ;
+            return;
+        }
+        double from = u - radius;
+        double to = u + radius;
+        double sumX = 0.0D;
+        double sumZ = 0.0D;
+        double[] middle = new double[2];
+        for (int i = legAt(from); i < nodeAt.length - 1 && nodeAt[i] < to; i++) {
+            double a = Math.max(from, nodeAt[i]);
+            double b = Math.min(to, nodeAt[i + 1]);
+            if (b <= a) {
+                continue;
+            }
+            onLeg(i, (a + b) / 2.0D, middle);
+            sumX += middle[0] * (b - a);
+            sumZ += middle[1] * (b - a);
+        }
+        double[] ahead = new double[2];
+        polyline(to, ahead);
+        polyline(from, middle);
+        double tangentX = ahead[0] - middle[0];
+        double tangentZ = ahead[1] - middle[1];
+        double length = Math.hypot(tangentX, tangentZ);
+        out[0] = sumX / (2.0D * radius);
+        out[1] = sumZ / (2.0D * radius);
+        out[2] = length < 1.0E-6D ? legX : tangentX / length;
+        out[3] = length < 1.0E-6D ? legZ : tangentZ / length;
     }
 
-    private void corner(int node, double s, double[] out) {
-        double t = trim[node];
-        double inX = legDirX[node - 1];
-        double inZ = legDirZ[node - 1];
-        double outX = legDirX[node];
-        double outZ = legDirZ[node];
-        double startX = nodeX[node] - inX * t;
-        double startZ = nodeZ[node] - inZ * t;
-        double endX = nodeX[node] + outX * t;
-        double endZ = nodeZ[node] + outZ * t;
-        double a = (1.0D - s) * (1.0D - s);
-        double b = 2.0D * s * (1.0D - s);
-        double c = s * s;
-        out[0] = a * startX + b * nodeX[node] + c * endX;
-        out[1] = a * startZ + b * nodeZ[node] + c * endZ;
-        double tangentX = (1.0D - s) * inX + s * outX;
-        double tangentZ = (1.0D - s) * inZ + s * outZ;
-        double length = Math.hypot(tangentX, tangentZ);
-        out[2] = length < 1.0E-9D ? outX : tangentX / length;
-        out[3] = length < 1.0E-9D ? outZ : tangentZ / length;
+    /** The point at {@code u} on the unsmoothed polyline. */
+    private void polyline(double u, double[] out) {
+        onLeg(legAt(u), u, out);
+    }
+
+    private void onLeg(int leg, double u, double[] out) {
+        double length = nodeAt[leg + 1] - nodeAt[leg];
+        double t = length == 0 ? 0.0D : Math.max(0.0D, Math.min(1.0D, (u - nodeAt[leg]) / length));
+        out[0] = nodeX[leg] + (nodeX[leg + 1] - nodeX[leg]) * t;
+        out[1] = nodeZ[leg] + (nodeZ[leg + 1] - nodeZ[leg]) * t;
     }
 
     /** Index, within this slice, of the leg containing {@code u}. */

@@ -144,7 +144,11 @@ public final class RoadPlannerRouteExpander {
             double t = step / (double) steps;
             int x = (int) Math.round(from.getX() + dx * t);
             int z = (int) Math.round(from.getZ() + dz * t);
-            int y = heightSampler.heightAt(x, z);
+            // A bridge or tunnel runs straight between its ends, so its inner points keep that line
+            // rather than dropping to the valley floor or climbing the hill it passes through.
+            int y = type == RoadPlannerSegmentType.ROAD
+                    ? heightSampler.heightAt(x, z)
+                    : (int) Math.round(from.getY() + ((double) to.getY() - from.getY()) * t);
             points.add(new SegmentPoint(new BlockPos(x, y, z), type));
         }
         return points;

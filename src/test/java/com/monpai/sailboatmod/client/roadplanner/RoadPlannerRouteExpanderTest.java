@@ -66,6 +66,25 @@ class RoadPlannerRouteExpanderTest {
                 .stream().anyMatch(step -> step.phase() == BuildPhase.DECK));
     }
     @Test
+    void aBridgeOrTunnelKeepsTheStraightLineBetweenItsEndsInsteadOfFollowingTheGround() {
+        for (RoadPlannerSegmentType type : List.of(RoadPlannerSegmentType.BRIDGE_MAJOR, RoadPlannerSegmentType.TUNNEL)) {
+            RoadPlannerRouteExpander.Result expanded = RoadPlannerRouteExpander.expand(
+                    List.of(new BlockPos(0, 90, 0), new BlockPos(80, 100, 0)),
+                    List.of(type),
+                    (x, z) -> true,
+                    (x, z) -> x == 0 || x == 80 ? 90 : 60
+            );
+
+            assertTrue(expanded.success());
+            assertTrue(expanded.nodes().size() > 4);
+            for (BlockPos node : expanded.nodes()) {
+                assertEquals(90 + Math.round(node.getX() / 8.0), node.getY(), 1.0,
+                        type + " node at x=" + node.getX() + " must lie on the line between the end nodes");
+            }
+        }
+    }
+
+    @Test
     void sparseRoadCrossingWaterPromotesGeneratedMiddleSegmentsToBridge() {
         RoadPlannerRouteExpander.Result expanded = RoadPlannerRouteExpander.expand(
                 List.of(new BlockPos(0, 64, 0), new BlockPos(40, 64, 0)),

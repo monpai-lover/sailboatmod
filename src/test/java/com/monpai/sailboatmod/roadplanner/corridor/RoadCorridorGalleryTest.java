@@ -34,7 +34,7 @@ class RoadCorridorGalleryTest {
                 new BlockPos(110, 0, 30), new BlockPos(170, 0, 40), new BlockPos(215, 0, 85),
                 new BlockPos(300, 0, 85), new BlockPos(340, 0, 40));
         List<RoadPlannerSegmentType> types = List.of(
-                RoadPlannerSegmentType.ROAD, RoadPlannerSegmentType.ROAD, RoadPlannerSegmentType.BRIDGE_MAJOR,
+                RoadPlannerSegmentType.ROAD, RoadPlannerSegmentType.ROAD, RoadPlannerSegmentType.ROAD,
                 RoadPlannerSegmentType.ROAD, RoadPlannerSegmentType.ROAD, RoadPlannerSegmentType.ROAD,
                 RoadPlannerSegmentType.ROAD);
         RoadNodeExpansionResult result = RoadNodeStructureExpander.expand(nodes, types,
@@ -42,8 +42,8 @@ class RoadCorridorGalleryTest {
         world.apply(result.buildSteps());
         RoadWorldRenderer.topDown(world, result.centerline(), 0, -110, 360, 110, 3, new File(OUT, "hills-top.png"));
         RoadWorldRenderer.profile(world, result.centerline(), 4, new File(OUT, "hills-profile.png"));
-        RoadWorldRenderer.isometricFromSouthWest(world, 55, -40, 110, 30, 52, 90, 10, new File(OUT, "hills-river-iso.png"));
-        RoadWorldRenderer.isometric(world, 225, 60, 300, 105, 50, 90, 10, new File(OUT, "hills-ravine-iso.png"));
+        RoadWorldRenderer.isometricFromSouthWest(world, 40, -55, 125, 50, 50, 92, 9, new File(OUT, "hills-river-iso.png"));
+        RoadWorldRenderer.isometric(world, 225, 60, 300, 105, 55, 92, 10, new File(OUT, "hills-ravine-iso.png"));
         assertTrue(new File(OUT, "hills-top.png").length() > 0);
     }
 }

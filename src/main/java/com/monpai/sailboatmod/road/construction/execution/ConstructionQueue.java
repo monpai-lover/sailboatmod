@@ -5,6 +5,8 @@ import com.monpai.sailboatmod.road.model.BuildStep;
 import net.minecraft.core.BlockPos;
 import net.minecraft.server.level.ServerLevel;
 import net.minecraft.world.level.block.Block;
+import net.minecraft.world.level.block.CrossCollisionBlock;
+import net.minecraft.world.level.block.WallBlock;
 import net.minecraft.world.level.block.state.BlockState;
 
 import java.util.ArrayList;
@@ -52,8 +54,20 @@ public class ConstructionQueue {
             return;
         }
         rollbackEntries.add(new RollbackEntry(step.pos(), prev));
-        level.setBlock(step.pos(), step.state(), blockUpdateFlags(step.state()));
+        level.setBlock(step.pos(), connected(step.state(), level, step.pos()), blockUpdateFlags(step.state()));
         ConstructionStepEffects.playPlacementEffect(level, step);
+    }
+
+    /**
+     * Walls and fences are planned as bare posts. Placing a block only tells its neighbours about
+     * it, never the block itself about them, so a post placed after its neighbour would stay
+     * unjoined on that side and a parapet would be left with a gap at every other block.
+     */
+    private static BlockState connected(BlockState state, ServerLevel level, BlockPos pos) {
+        if (state.getBlock() instanceof WallBlock || state.getBlock() instanceof CrossCollisionBlock) {
+            return Block.updateFromNeighbourShapes(state, level, pos);
+        }
+        return state;
     }
 
     private static void ensureChunkLoaded(ServerLevel level, BlockPos pos) {
